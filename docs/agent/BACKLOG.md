@@ -12,7 +12,23 @@ commands) · Context brief (exact files to read — keep it minimal and current)
 
 ## Phase 0 — Walking skeleton (Milestone M0)
 
-### WU-000 · Toolchain audit & task-runner decision — S · `todo`
+### WU-000 · Toolchain audit & task-runner decision — S · `active`
+
+**Audit results (2026-07-06):**
+| tool | status |
+|---|---|
+| git | 2.52.0.windows.1 |
+| gh | 2.91.0 |
+| node / npm | v22.14.0 / 10.9.2 |
+| python | 3.14.2 (`py`/`python`/`python3` all resolve); pip 25.3 via `python -m pip`; venv OK |
+| uv, pipx | absent (uv to be installed user-space in WU-001) |
+| just, make | absent |
+| docker | ABSENT — Docker Desktop uninstalled 2026-05-13 (ProgramData installer log) |
+| WSL2 | enabled (default version 2), NO distro installed |
+
+Python 3.14 is bleeding-edge → risk of missing wheels; mitigation: uv manages interpreter,
+pin 3.12 if WU-003 hits wheel gaps (record outcome there).
+Container decision: **blocked on user** — see STATE.md. Task runner: ADR-007 (npm scripts).
 **Goal:** know exactly what this Windows machine can run before scaffolding anything.
 **Deliverables:** audit results recorded here; ADR-007 (task runner) in DECISIONS.md;
 CLAUDE.md "Commands" section updated with reality.

@@ -58,7 +58,20 @@ only). The research assumes the FULL product (3 personas, approvals, SSO, Semaph
 MVP deliberately narrows it — on any conflict, D1–D7 win. The design brief (research 05)
 remains the UI's visual authority where it doesn't conflict (e.g., Approvals nav: out).
 
-### ADR-007 · Task runner — `todo` (decided by WU-000 after toolchain audit)
+### ADR-007 · Task runner: root `package.json` npm scripts — `accepted` (WU-000, 2026-07-06)
+Audit found node 22 + npm 10 present and identical in Git Bash and PowerShell; `just` and
+`make` absent. npm scripts need zero new installs and behave the same in both shells, so
+the root `package.json` is the task runner: `npm run check | fmt | up | down | db-reset |
+dev:be | dev:fe`, delegating into `backend/` and `frontend/`. Backend Python environments
+are managed by `uv` (user-space install, no admin; also our escape hatch to pin
+Python 3.12 if 3.14 wheel gaps bite — decided in WU-003). **Rejected:** `just` (extra
+install, low added value here), Make (absent on Windows), PowerShell-only scripts
+(break Git Bash usage).
+
+### ADR-008 · Dev containers runtime — `todo` (blocked on user; see STATE.md)
+Docker Desktop was uninstalled 2026-05-13; WSL2 enabled but distro-less. Compose shape
+(WU-002: Postgres+mailpit; M3: Semaphore, minio) needs a runtime. Options + recommendation
+put to the user 2026-07-06.
 
 ## Open (inherited from architecture doc §10)
 
