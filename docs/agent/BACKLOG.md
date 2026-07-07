@@ -195,12 +195,20 @@ compose PG up / 503 degraded without). Evidence in JOURNAL s03.
 
 ## Phase 1 — Hero flow: dump run-now, end to end (Milestone M1)
 
+> Groomed 2026-07-07 (s03, M0 close): § refs below corrected to the real
+> ARCHITECTURE.md outline (§2 components · §3 workflows · §4 guardrails · §5 audit);
+> design brief = `docs/specs/design-brief.md`; WU-010 spec = `docs/specs/inventory.md`.
+> Sizes rechecked: all fit a session; WU-012 is the widest — if it runs heavy, land
+> the audit migration + append-only grant tests first, checkpoint, then the flow.
+
 ### WU-010 · Inventory schema + CSV import — M · `todo`
 Instance/cluster tables (env enum, platform, patroni ref, owner, maintenance window field —
 O-3); CSV import with per-row validation + quarantine for failures (no connectivity probe
 yet — that needs real targets; validation is structural). Import is idempotent (natural key).
 **Verify:** import fixture CSV twice → same row count; malformed rows quarantined with reasons.
-**Context brief:** ARCHITECTURE.md §Inventory; sample CSV to be created in `infra/fixtures/`.
+**Context brief:** `docs/specs/inventory.md` (SPEC-010 — schema, CSV contract, 8 numbered
+behaviors, import = `portal import` CLI); fixture EXISTS at `infra/fixtures/instances.csv`;
+ARCHITECTURE.md §2 (Inventory, Portal DB).
 
 ### WU-011 · Instance API + cards/table UI — M · `todo`
 List/detail endpoints with env filter; cards view per design brief Screen 1 (health dot,
@@ -210,10 +218,11 @@ badges, last-backup line) + `Cards ⇄ Table` toggle (Screen 2, minus bulk actio
 ### WU-012 · Catalog + run-now dump (hero) — M · `todo`
 Operation catalog (data-driven, `dump` only); launch drawer (Screen 3 pattern); POST run →
 audit record (`submitted`) → MockEngine job → status polling; run list in Activity.
-Audit schema per ARCHITECTURE.md §8.1 — append-only from the first migration
+Audit schema per ARCHITECTURE.md §5 — append-only from the first migration
 (no UPDATE/DELETE grants for the app role).
 **Depends:** O-1 (artifact storage) decided — mock path acceptable: artifact metadata only.
-**Context brief:** ARCHITECTURE.md §6.1 + §8.1; WU-005 adapter; design brief Screen 3.
+**Context brief:** ARCHITECTURE.md §3 (hero workflow) + §5 (audit record); WU-005 adapter;
+design brief Screen 3.
 
 ### WU-013 · Run detail + live logs — M · `todo`
 Run page with stage state + log pane streaming from `stream_logs` (SSE or WebSocket —
@@ -231,7 +240,8 @@ for prod actions (paste disabled); non-prod = one click; env stamped in every au
 (already in schema — assert it in tests). Guardrail layer 3 (separate engine credentials)
 is asserted at the adapter-registry level: prod jobs MUST resolve a different engine
 config object than nonprod, even while both are mocks.
-**Context brief:** ARCHITECTURE.md §7; design brief Screen 4 (adapt: no approval flow in MVP).
+**Context brief:** ARCHITECTURE.md §4 (guardrails); design brief Screen 4 (adapt: no
+approval flow in MVP).
 
 **M1 exit = the demo:** import CSV → see fleet → run dump on a TEST instance (1 click) →
 watch live logs → succeed with artifact → audit row + email on a failure case → typed-name
@@ -276,6 +286,8 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
 - Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
+- Inventory: UI/API upload + import-history screen (MVP import is `portal import` CLI — SPEC-010)
+- Inventory: Excel/.xlsx ingestion (MVP is CSV-only — SPEC-010)
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
 - Portal self-target ban (research gotcha #2) — enforce in inventory layer when real targets exist

@@ -1,0 +1,9 @@
+instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window
+billing-prod,billing,prod,k8s_patroni,16.3,412,billing-team,Sat 02:00-06:00
+billing-test,billing,test,k8s_patroni,16.3,38,billing-team,
+shop-prod,shop,prod,k8s_patroni,16.2,280,shop-team,Sat 02:00-06:00
+crm-prod,crm,prod,vm,16.3,120,crm-team,Sun 01:00-05:00
+crm-test,crm,test,vm,16.3,15,crm-team,
+wms-prod,wms,prod,vm,15.7,95,wms-team,Sat 22:00-02:00
+analytics-dev,analytics,dev,k8s_patroni,17.1,52,analytics-team,
+hr-test,hr,test,vm,16.4,8,hr-team,
