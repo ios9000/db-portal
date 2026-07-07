@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ios9000/db-portal/backend/internal/db"
@@ -45,14 +46,25 @@ func TestMigrateUpDown(t *testing.T) {
 		"SELECT value FROM app_meta WHERE key = 'schema_baseline'").Scan(&baseline)
 	require.NoError(t, err)
 	require.Equal(t, "0001", baseline)
+	require.True(t, tableExists(t, pool, "instance"), "0002 up must create the inventory tables")
+
+	// goose down reverts one migration at a time; walk back to zero and
+	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "instance"), "0002 down must remove the inventory tables")
+	require.True(t, tableExists(t, pool, "app_meta"))
 
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "app_meta"), "0001 down must remove the baseline table")
+}
 
+func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
+	t.Helper()
 	var exists bool
-	err = pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'app_meta')").Scan(&exists)
+	err := pool.QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = $1)", name).Scan(&exists)
 	require.NoError(t, err)
-	require.False(t, exists, "goose down must remove the baseline table")
+	return exists
 }
 
 func TestMigrateUnknownCommand(t *testing.T) {

@@ -1,0 +1,10 @@
+instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window
+good-prod,good,prod,vm,16.3,100,team-a,Sat 02:00-06:00
+bad-env,good,prod2,vm,16.3,10,team-a,
+,good,test,vm,16.3,10,team-a,
+bad-size,good,test,vm,16.3,ten,team-a,
+short-row,good,test,vm
+good-prod,good,prod,vm,17.0,100,team-a,
+Bad_Name,good,test,vm,16.3,10,team-a,
+conflict-inst,good,test,k8s_patroni,16.3,10,team-a,
+good-test,good,test,vm,16.4,20,team-a,
