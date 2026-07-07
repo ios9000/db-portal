@@ -53,7 +53,7 @@ Roadmap commitment: dedicated vault (OpenBao) is the first post-MVP infra item.
 atomic cross-stack WUs, one quality gate. Split later only if team shape demands it.
 
 ### ADR-006 · Docs precedence & research corpus — `accepted`
-DECISIONS.md → ARCHITECTURE.md → VISION.md → `~/Projects/db-portal-research/*` (reference
+DECISIONS.md → ARCHITECTURE.md → VISION.md → `P:/Projects/db-portal-research/*` (reference
 only). The research assumes the FULL product (3 personas, approvals, SSO, Semaphore Pro);
 MVP deliberately narrows it — on any conflict, D1–D7 win. The design brief (research 05)
 remains the UI's visual authority where it doesn't conflict (e.g., Approvals nav: out).

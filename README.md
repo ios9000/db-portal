@@ -21,7 +21,7 @@ Documentation package complete; code not yet scaffolded. Next: `WU-000` (toolcha
 | How the AI-driven development works | `docs/agent/STRATEGY.md` |
 
 Research corpus (business/system/UX analysis, clickable prototype, architecture doc):
-`~/Projects/db-portal-research/` — reference material; `docs/DECISIONS.md` is authoritative.
+`P:/Projects/db-portal-research/` — reference material; `docs/DECISIONS.md` is authoritative.
 
 ## Working with the agent
 

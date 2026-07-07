@@ -16,7 +16,7 @@ adapter, every action is attributable and replayable.
 **North star (research corpus):** 14 modules — catalog, engine integration, inventory,
 scheduling, workflows with resume, approvals, notifications, history/live logs, RBAC,
 audit, surveys, maintenance windows, concurrency locks, dry-run. Three personas
-(app admin / DBA / team lead). See `~/Projects/db-portal-research/02-system-analysis.md`.
+(app admin / DBA / team lead). See `P:/Projects/db-portal-research/02-system-analysis.md`.
 
 **MVP (decisions D1–D7):** Backup + Restore, DBA-only, prod guardrails, append-only
 audit (1y), email notifications, chains that halt-notify-resume. Acceptance: customer

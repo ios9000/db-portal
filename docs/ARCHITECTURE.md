@@ -1,7 +1,7 @@
 # Architecture (MVP)
 
 Agent-readable distillation of the v0.1 architecture document
-(`~/Projects/db-portal-research/pg-ops-portal-architecture.html`). This file is the
+(`P:/Projects/db-portal-research/pg-ops-portal-architecture.html`). This file is the
 technical authority (below DECISIONS.md); the HTML is the presentation form.
 
 ## 1. Shape

@@ -44,7 +44,7 @@ journal with evidence, STATE → WU-001, commit.
 - Toolchain: node 22/npm 10, python 3.14.2 (pip via `python -m pip`), git 2.52, gh 2.91;
   no docker/just/make/uv. Python 3.14 wheel risk → uv + possible 3.12 pin (WU-003).
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
-- Research corpus: `~/Projects/db-portal-research/` — reference, not authority.
+- Research corpus: `P:/Projects/db-portal-research/` — reference, not authority.
 
 ## Checkpoint log (last 3, newest first)
 

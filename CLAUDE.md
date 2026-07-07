@@ -27,7 +27,7 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
   session: code, tests, STATE.md, JOURNAL.md, or DECISIONS.md. Conversation context is a cache.
 - **Decision precedence:** `docs/DECISIONS.md` (D1–D7 business, ADRs technical)
   → `docs/ARCHITECTURE.md` → `docs/VISION.md` → research folder
-  (`~/Projects/db-portal-research/`). When docs conflict, the leftmost wins.
+  (`P:/Projects/db-portal-research/`). When docs conflict, the leftmost wins.
 - **Verify, don't claim.** Never report a WU complete without running its verification
   commands and pasting real output into the journal entry.
 - **Tests are ground truth.** New behavior ships with tests in the same WU. A red suite blocks
