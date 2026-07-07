@@ -144,7 +144,12 @@ probing `/healthz`.
 **Verify:** `<runner> check`; dev server renders against running backend.
 **Context brief:** ADR-001; design brief §Design system + Screen 1 (skim); WU-003 API shape.
 
-### WU-005 · ExecutionAdapter + MockEngine — M · `todo`
+### WU-005 · ExecutionAdapter + MockEngine — M · `done` (2026-07-07, commit 6124732)
+**Evidence:** `npm run check` green with engine tests visible (`ok internal/engine`);
+12 tests pass `-race` at `-count=5` (AC quartet + replay-after-finish, stream-ctx-drop
+≠ job cancel, unknown-job errors, registry fail-closed ×2, ClassForEnv). grep
+`MockEngine` outside internal/engine → 0 hits. Interface lives as `engine.Adapter`
+(Go idiom per ADR-010; doc comment names it the ExecutionAdapter seam).
 **Goal:** the engine seam (THE architectural bet, ADR-002) proven with a fake engine good
 enough to build the whole UI against.
 **Deliverables:** `ExecutionAdapter` Go interface — `StartJob(ctx, template, params)
@@ -153,9 +158,9 @@ enough to build the whole UI against.
 metadata on success) with failure injection (`params["mock_fail_at"]`); engine registry
 keyed by env class (prod/nonprod separation from day one, per guardrail layer 3).
 **AC:**
-- [ ] Tests: happy path, injected failure, cancel mid-run, two concurrent jobs isolated —
+- [x] Tests: happy path, injected failure, cancel mid-run, two concurrent jobs isolated —
       all `-race` clean (channels + goroutines are exactly where races hide).
-- [ ] No portal code references MockEngine concretely — only the interface + registry.
+- [x] No portal code references MockEngine concretely — only the interface + registry.
 **Verify:** `npm run check` (adapter tests visible in output).
 **Context brief:** ARCHITECTURE.md §4.1 + §Components→Execution engine; ADR-002; ADR-010.
 
