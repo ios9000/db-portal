@@ -8,9 +8,17 @@ afterEach(() => {
 });
 
 test('shell renders nav, redirects / to My Databases, and shows healthz status', async () => {
+  // The shell fires two fetches on load: the footer's /healthz probe and
+  // MyDatabases' instance list (WU-011) — answer each by path.
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok', db: 'ok' })))),
+    vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        String(input).includes('/healthz')
+          ? new Response(JSON.stringify({ status: 'ok', db: 'ok' }))
+          : new Response(JSON.stringify({ instances: [] })),
+      ),
+    ),
   );
 
   render(

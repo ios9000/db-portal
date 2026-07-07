@@ -22,10 +22,14 @@ type Pinger interface {
 // NewRouter builds the portal's HTTP handler with the full middleware
 // stack. Kept separate from Server so handler tests exercise exactly
 // what production serves.
-func NewRouter(log *slog.Logger, db Pinger) http.Handler {
+func NewRouter(log *slog.Logger, db Pinger, inv InstanceReader) http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger(log))
 	r.Get("/healthz", healthz(db))
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/instances", listInstances(log, inv))
+		r.Get("/instances/{name}", getInstance(log, inv))
+	})
 	// Everything unmatched goes to the embedded SPA (WU-006): real files
 	// as-is, client-side routes fall back to index.html, /api misses stay 404.
 	r.NotFound(webui.Handler().ServeHTTP)
@@ -38,11 +42,11 @@ type Server struct {
 	log  *slog.Logger
 }
 
-func New(addr string, log *slog.Logger, db Pinger) *Server {
+func New(addr string, log *slog.Logger, db Pinger, inv InstanceReader) *Server {
 	return &Server{
 		http: &http.Server{
 			Addr:              addr,
-			Handler:           NewRouter(log, db),
+			Handler:           NewRouter(log, db, inv),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		log: log,

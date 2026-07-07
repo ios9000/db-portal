@@ -251,3 +251,136 @@ h1 {
 .health-dot.unreachable {
   background: var(--status-failed-fg);
 }
+
+/* no monitoring data source yet (WU-011 renders unknown) */
+.health-dot.unknown {
+  background: var(--status-queued-fg);
+  opacity: 0.4;
+}
+
+/* ---- My Databases (WU-011): toolbar, cards, fleet table ---- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+.toolbar input[type='search'] {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  padding: var(--space-05) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 240px;
+}
+
+.pill-group {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pill {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: none;
+  padding: var(--space-05) var(--space-2);
+  cursor: pointer;
+}
+
+.pill + .pill {
+  border-left: 1px solid var(--border);
+}
+
+.pill:hover {
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.pill[aria-pressed='true'] {
+  color: var(--text-strong);
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.instance-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-2);
+  background: var(--bg);
+}
+
+.instance-card header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+
+/* PROD carries a red left edge on top of the badge (redundant encoding) */
+.instance-card.prod-edge {
+  border-left: 3px solid var(--env-prod-fg);
+}
+
+tr.prod-edge td:first-child {
+  box-shadow: inset 3px 0 0 var(--env-prod-fg);
+}
+
+.instance-name {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.instance-meta {
+  margin: 0 0 var(--space-05);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.instance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.instance-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.36px;
+  color: var(--text-muted);
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.instance-table td {
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

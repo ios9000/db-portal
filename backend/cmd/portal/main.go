@@ -70,7 +70,7 @@ func run(log *slog.Logger, args []string) error {
 	defer pool.Close()
 
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
-	return server.New(cfg.HTTPAddr, log, pool).Run(ctx)
+	return server.New(cfg.HTTPAddr, log, pool, inventory.NewStore(pool)).Run(ctx)
 }
 
 // runImport implements `portal import <file>`. Exit 0 means the file was

@@ -37,6 +37,27 @@ export async function getJSON<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type InstanceEnv = 'dev' | 'test' | 'prod';
+
+/** One inventory row as served by GET /api/instances (WU-011). */
+export interface Instance {
+  name: string;
+  cluster: string;
+  env: InstanceEnv;
+  platform: 'k8s_patroni' | 'vm';
+  pg_version: string;
+  size_gb: number | null;
+  owner: string;
+  maintenance_window: string | null;
+}
+
+/** List instances, optionally narrowed to one environment (server-side). */
+export async function fetchInstances(env?: InstanceEnv): Promise<Instance[]> {
+  const path = env ? `/api/instances?env=${env}` : '/api/instances';
+  const body = await getJSON<{ instances: Instance[] }>(path);
+  return body.instances;
+}
+
 export interface Healthz {
   status: 'ok' | 'degraded';
   db: 'ok' | 'down';
