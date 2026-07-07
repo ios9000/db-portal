@@ -5,10 +5,11 @@
 
 ## Now
 
-- **Active WU:** WU-004 — Frontend shell (router, nav, EnvBadge/RunStatus, healthz footer)
-- **Status:** not started. WU-003 closed 2026-07-07 (aee80cc): Go chassis live —
-  chi + graceful shutdown, config (env > .env > defaults), /healthz (200/503),
-  goose migrate subcommand w/ embedded 0001, slog JSON request logging, tests -race clean.
+- **Active WU:** WU-005 — ExecutionAdapter + MockEngine (the engine seam, ADR-002)
+- **Status:** not started. WU-004 closed 2026-07-07 (2304b9c): frontend shell live —
+  react-router nav, EnvBadge/RunStatus (all variants tested), typed API client,
+  StatusFooter probing /healthz, tokens in index.css, tsc strict, vitest 18/18.
+  WU-003 closed same day (aee80cc): Go chassis (chi, config, /healthz, goose, slog).
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -17,18 +18,20 @@
 
 ## Next action (be exact)
 
-Start WU-004 per its BACKLOG entry, ON THE VM: router + top nav (My Databases ·
-Activity · Schedules), typed API client, EnvBadge (PROD red / TEST amber / DEV gray,
-never color alone) + RunStatus components with vitest coverage, status footer probing
-`/healthz`. Design tokens per design brief §Design system (Inter, 8px grid) — brief is
-in the research corpus on the workstation; ask user to copy the §Design system extract
-if not already in docs/. Backend for dev: `cd backend && go run ./cmd/portal`
-(serves :8080; compose PG must be up: `npm run up`).
+Start WU-005 per its BACKLOG entry, ON THE VM: `ExecutionAdapter` Go interface
+(StartJob/Status/StreamLogs/Cancel), goroutine-driven MockEngine with realistic timed
+log lines + failure injection (`params["mock_fail_at"]`), registry keyed by env class
+(prod/nonprod never share config). Tests: happy path, injected failure, cancel mid-run,
+two concurrent jobs isolated — all `-race` clean. No portal code may reference
+MockEngine concretely (interface + registry only).
 
 ## Blocked / needs user
 
-- (nothing) — WU-004 wants design-brief §Design system + Screen 1; if missing on VM,
-  request a copy from `P:/Projects/db-portal-research/05-claude-design-brief.md`.
+- **Design brief extract** (nice-to-have, not blocking): copy §Design system + Screen 1
+  from `P:/Projects/db-portal-research/05-claude-design-brief.md` to the VM (docs/specs/)
+  so WU-004's placeholder hex tokens can be reconciled (icebox item).
+- CI status can't be verified FROM THE VM (`gh` not installed — icebox item); check
+  Actions on GitHub directly. Local `npm run check` (the same gate) is green.
 - O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
 
 ## Standing context (stable facts worth re-stating)
@@ -36,10 +39,15 @@ if not already in docs/. Backend for dev: `cd backend && go run ./cmd/portal`
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
 - Backend chassis (WU-003): config.Load(dotenv) merges env>file>defaults without
   mutating process env; server.NewRouter(log, Pinger) is what tests exercise;
-  migrations live in backend/internal/db/migrations/ (goose, embed.FS);
+  migrations in backend/internal/db/migrations/ (goose, embed.FS);
   `portal migrate up|down|status`; testutil.DB(t) skips when compose PG absent (CI-safe).
+- Frontend (WU-004): react-router v7 (`react-router` package, NOT react-router-dom);
+  tokens live ONLY in src/index.css; components/{EnvBadge,RunStatus,StatusFooter};
+  lib/api.ts = typed client (ApiError, status 0 = unreachable; healthz 503 = degraded,
+  not an error). Vite proxies /api + /healthz → :8080. tsc strict is ON.
 - VM toolchain (audited): Docker 29.6.1, Compose v5.3.0, node 22.23.1, Go 1.26.4,
-  golangci-lint 2.12.2, git 2.43. CI = check.yml (no Postgres service — DB tests skip).
+  golangci-lint 2.12.2, git 2.43. CI = check.yml (no Postgres service — DB tests skip;
+  no `gh` on VM).
 - GitHub: private repo `ios9000/db-portal`; VM pushes via write-enabled deploy key
   (`~/.ssh/dbportal_deploy`, Host github.com stanza in VM ssh config).
 - Research corpus stays on the workstation (`P:/Projects/db-portal-research/`),
@@ -50,6 +58,6 @@ if not already in docs/. Backend for dev: `cd backend && go run ./cmd/portal`
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-07 — WU-003 done (aee80cc, evidence in BACKLOG/JOURNAL); active → WU-004.
+- 2026-07-07 — WU-004 done (2304b9c, evidence in BACKLOG/JOURNAL); active → WU-005.
+- 2026-07-07 — WU-003 done (aee80cc, evidence in BACKLOG/JOURNAL).
 - 2026-07-06 — WU-002 done (44325db: compose postgres+mailpit, up/down/db-reset).
-- 2026-07-06 — WU-001R done (4122ac7: backend Python → Go per ADR-010).

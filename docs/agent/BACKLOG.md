@@ -122,7 +122,13 @@ middleware; httptest-based handler tests + a DB-backed test helper.
 **Verify:** `npm run check`; `curl localhost:8080/healthz`.
 **Context brief:** ADR-010; ARCHITECTURE.md §Components→Portal application; WU-002 env vars.
 
-### WU-004 · Frontend shell — M · `todo`
+### WU-004 · Frontend shell — M · `done` (2026-07-07, commit 2304b9c)
+**Evidence:** `npm run check` green (oxlint · tsc strict · vitest 18/18); `npm run build`
+clean; live dev-server check: Vite :5173 served shell (`<title>DB Portal</title>`) and
+proxied `/healthz` → Go :8080 → 200 `{"db":"ok","status":"ok"}`. EnvBadge 3/3 +
+RunStatus 5/5 variants tested; App test covers nav + index redirect + footer status.
+Tokens: Inter self-hosted (@fontsource-variable), 8px grid, PROD/TEST/DEV per docs —
+exact hexes are placeholders; reconcile vs brief §Design system when extract lands (icebox).
 **Goal:** navigable app shell speaking to the backend; the visual grammar (env badges,
 status colors) established once, reused everywhere.
 **Deliverables:** router + top nav (`My Databases · Activity · Schedules` — no Approvals in
@@ -130,10 +136,11 @@ MVP); API client with typed error handling; `EnvBadge` (PROD red / TEST amber / 
 redundant encoding, never color alone) and `RunStatus` chip components; a status footer
 probing `/healthz`.
 **AC:**
-- [ ] `build` and dev server both work; shell renders with nav + healthz status.
-- [ ] EnvBadge/RunStatus have component tests (vitest) covering all variants.
-- [ ] Design tokens follow the design brief (`db-portal-research/05-claude-design-brief.md`
-      §Design system) — Inter, 8px grid, defined status colors.
+- [x] `build` and dev server both work; shell renders with nav + healthz status.
+- [x] EnvBadge/RunStatus have component tests (vitest) covering all variants.
+- [x] Design tokens follow the design brief (`db-portal-research/05-claude-design-brief.md`
+      §Design system) — Inter, 8px grid, defined status colors. *(structure/rules yes;
+      exact hex values pending brief extract on VM — see icebox item.)*
 **Verify:** `<runner> check`; dev server renders against running backend.
 **Context brief:** ADR-001; design brief §Design system + Screen 1 (skim); WU-003 API shape.
 
@@ -251,6 +258,8 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
 - Bump GH Actions action versions (checkout/setup-node/setup-uv emit node20-deprecation warnings)
+- Reconcile WU-004 token hex values vs design brief §Design system once the extract is copied to the VM (`P:/Projects/db-portal-research/05-claude-design-brief.md`)
+- Install `gh` CLI on the VM (bootstrap-vm.sh) — CI runs can't be checked from the VM today
 
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
