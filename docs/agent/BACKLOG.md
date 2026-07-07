@@ -12,9 +12,16 @@ commands) · Context brief (exact files to read — keep it minimal and current)
 
 ## Phase 0 — Walking skeleton (Milestone M0)
 
-### WU-000 · Toolchain audit & task-runner decision — S · `active`
+### WU-000 · Toolchain audit & task-runner decision — S · `done` (2026-07-06)
 
-**Audit results (2026-07-06):**
+**VM audit — PRIMARY environment (`wdsvc55@80.85.254.99` "compute-ins-0018", Ubuntu 24.04
+LTS, 4 vCPU / 15 GB RAM / 96 GB disk):** git 2.43.0 · Docker 29.6.1 + Compose v5.3.0
+(hello-world verified) · node v22.23.1 / npm 10.9.8 · Python 3.12.3 (3.14 wheel risk
+GONE) · uv 0.11.27. ADR-007 confirmed (npm scripts; single shell now). Repo cloned at
+`~/db-portal` via write-enabled deploy key. The docker-absent AC branch was resolved by
+ADR-009 (native docker on the VM), not by a Windows fallback.
+
+**Workstation audit (secondary, docs-only — kept for history):**
 | tool | status |
 |---|---|
 | git | 2.52.0.windows.1 |

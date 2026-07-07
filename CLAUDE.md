@@ -43,11 +43,14 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 Task runner = root `package.json` npm scripts (ADR-007). Scaffolded by WU-001.
 Planned targets: `check` `fmt` `up` `down` `db-reset` `dev:be` `dev:fe`.
 
-- Primary environment (ADR-009): a dedicated cloud Ubuntu 24.04 VM — native docker,
-  node 22, uv. First VM session: follow STATE.md "Next action" (bootstrap + WU-000 re-audit),
-  then replace this bullet with the audited versions.
+- Primary environment (ADR-009): cloud VM `dbportal-vm` (wdsvc55@80.85.254.99,
+  "compute-ins-0018"), repo at `~/db-portal`. Audited 2026-07-06: Docker 29.6.1 +
+  Compose v5.3.0 · node v22.23.1 / npm 10.9.8 · Python 3.12.3 · uv 0.11.27 · git 2.43.
+  Passwordless sudo; `docker` group membership needs a fresh login to take effect —
+  until then prefix one-off docker calls with sudo only if group isn't active yet.
 - The Windows workstation clone (`P:\Projects\db-portal`) is secondary: docs work only,
-  NO docker there (WSL track dead — ADR-008). Research corpus lives there:
+  NO docker there (WSL track dead — ADR-008). It reaches the VM via `ssh dbportal-vm`
+  (alias in workstation `~/.ssh/config`). Research corpus lives on the workstation:
   `P:/Projects/db-portal-research/`.
 
 ## Repo map
