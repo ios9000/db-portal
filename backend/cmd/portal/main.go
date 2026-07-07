@@ -18,7 +18,9 @@ import (
 
 	"github.com/ios9000/db-portal/backend/internal/config"
 	"github.com/ios9000/db-portal/backend/internal/db"
+	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
+	"github.com/ios9000/db-portal/backend/internal/runs"
 	"github.com/ios9000/db-portal/backend/internal/server"
 	"github.com/ios9000/db-portal/backend/internal/version"
 )
@@ -69,8 +71,28 @@ func run(log *slog.Logger, args []string) error {
 	}
 	defer pool.Close()
 
+	// Composition root for the engine seam (ADR-002): one adapter instance
+	// per env class, never shared (guardrail layer 3). MockEngine until
+	// WU-033 wires Semaphore.
+	registry := engine.NewRegistry()
+	registry.Register(engine.ClassProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-prod"}))
+	registry.Register(engine.ClassNonProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}))
+
+	runSvc := runs.NewService(pool, registry, log)
+	// Finalize runs orphaned by a previous process (SPEC-012). A down DB
+	// must not stop the server (degraded mode) — warn and continue.
+	if n, err := runSvc.SweepOrphans(ctx); err != nil {
+		log.Warn("orphan sweep skipped", "err", err.Error())
+	} else if n > 0 {
+		log.Info("orphaned runs finalized", "count", n)
+	}
+
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
-	return server.New(cfg.HTTPAddr, log, pool, inventory.NewStore(pool)).Run(ctx)
+	return server.New(cfg.HTTPAddr, log, server.Deps{
+		DB:        pool,
+		Instances: inventory.NewStore(pool),
+		Runs:      runSvc,
+	}).Run(ctx)
 }
 
 // runImport implements `portal import <file>`. Exit 0 means the file was

@@ -19,16 +19,28 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Deps are the router's feature dependencies. Production wires the real
+// implementations in main; tests substitute per-seam stubs.
+type Deps struct {
+	DB        Pinger
+	Instances InstanceReader
+	Runs      RunService
+}
+
 // NewRouter builds the portal's HTTP handler with the full middleware
 // stack. Kept separate from Server so handler tests exercise exactly
 // what production serves.
-func NewRouter(log *slog.Logger, db Pinger, inv InstanceReader) http.Handler {
+func NewRouter(log *slog.Logger, d Deps) http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger(log))
-	r.Get("/healthz", healthz(db))
+	r.Get("/healthz", healthz(d.DB))
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/instances", listInstances(log, inv))
-		r.Get("/instances/{name}", getInstance(log, inv))
+		r.Get("/instances", listInstances(log, d.Instances))
+		r.Get("/instances/{name}", getInstance(log, d.Instances))
+		r.Get("/operations", listOperations())
+		r.Post("/runs", startRun(log, d.Runs))
+		r.Get("/runs", listRuns(log, d.Runs))
+		r.Get("/runs/{id}", getRun(log, d.Runs))
 	})
 	// Everything unmatched goes to the embedded SPA (WU-006): real files
 	// as-is, client-side routes fall back to index.html, /api misses stay 404.
@@ -42,11 +54,11 @@ type Server struct {
 	log  *slog.Logger
 }
 
-func New(addr string, log *slog.Logger, db Pinger, inv InstanceReader) *Server {
+func New(addr string, log *slog.Logger, d Deps) *Server {
 	return &Server{
 		http: &http.Server{
 			Addr:              addr,
-			Handler:           NewRouter(log, db, inv),
+			Handler:           NewRouter(log, d),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		log: log,

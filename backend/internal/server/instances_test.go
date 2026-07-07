@@ -53,8 +53,13 @@ func (s stubReader) GetInstance(_ context.Context, name string) (inventory.Insta
 
 func apiServer(t *testing.T, inv server.InstanceReader) *httptest.Server {
 	t.Helper()
+	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: inv, Runs: stubRuns{}})
+}
+
+func depsServer(t *testing.T, d server.Deps) *httptest.Server {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ts := httptest.NewServer(server.NewRouter(log, fakePinger{}, inv))
+	ts := httptest.NewServer(server.NewRouter(log, d))
 	t.Cleanup(ts.Close)
 	return ts
 }
