@@ -32,10 +32,11 @@ golden-thread smoke test now.
 
 ## Blocked / needs user
 
-- **`gh auth login`** (user, one-time, device flow): gh 2.96.0 installed but
-  unauthenticated — CI runs for today's pushes (now 8+) still UNVERIFIED from the VM.
-  Local gate green throughout.
 - O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
+- ~~gh auth~~ RESOLVED 2026-07-07: user ran device-flow login; gh authed as ios9000.
+  CI VERIFIED from the VM: all of today's runs success, incl. WU-006/M0 push
+  (run 28864460359, 2m2s). Two benign annotations filed in icebox (action-version
+  bump + setup-go cache-dependency-path).
 - ~~Design brief extract~~ RESOLVED 2026-07-07: user copied full brief to VM; now at
   `docs/specs/design-brief.md` (88a66a6). Token-reconcile icebox item is unblocked.
 
@@ -60,8 +61,8 @@ golden-thread smoke test now.
   docs/specs/design-brief.md is an icebox item); lib/api.ts typed client (status 0 =
   unreachable; healthz 503 = degraded, not an error). tsc strict ON.
 - VM toolchain (audited): Docker 29.6.1, Compose v5.3.0, node 22.23.1, Go 1.26.4,
-  golangci-lint 2.12.2, gh 2.96.0 (unauthenticated), git 2.43, `file` added 2026-07-07.
-  CI = check.yml (no Postgres service — DB tests skip).
+  golangci-lint 2.12.2, gh 2.96.0 (authed as ios9000, 2026-07-07), git 2.43,
+  `file` added 2026-07-07. CI = check.yml (no Postgres service — DB tests skip).
 - GitHub: private repo `ios9000/db-portal`; VM pushes via write-enabled deploy key
   (`~/.ssh/dbportal_deploy`, Host github.com stanza in VM ssh config).
 - Research corpus stays on the workstation (`P:/Projects/db-portal-research/`),

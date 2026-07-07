@@ -273,8 +273,8 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
-- Bump GH Actions action versions (checkout/setup-node/setup-uv emit node20-deprecation warnings)
-- Reconcile WU-004 token hex values vs design brief §Design system once the extract is copied to the VM (`P:/Projects/db-portal-research/05-claude-design-brief.md`)
+- Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
+- Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
