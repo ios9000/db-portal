@@ -47,9 +47,14 @@ func TestMigrateUpDown(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "0001", baseline)
 	require.True(t, tableExists(t, pool, "instance"), "0002 up must create the inventory tables")
+	require.True(t, tableExists(t, pool, "audit_event"), "0003 up must create the runs/audit tables")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "audit_event"), "0003 down must remove the runs/audit tables")
+	require.True(t, tableExists(t, pool, "instance"))
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "instance"), "0002 down must remove the inventory tables")
 	require.True(t, tableExists(t, pool, "app_meta"))
