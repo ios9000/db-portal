@@ -34,6 +34,13 @@ var (
 	ErrEngine = errors.New("runs: engine refused the job")
 	// ErrNotFound is returned by Get for an unknown run id.
 	ErrNotFound = errors.New("runs: run not found")
+	// ErrNoLogs means the run's logs cannot be streamed: no engine job was
+	// ever started, or the engine no longer knows the job (post-restart
+	// orphans). Logs are not persisted — SPEC-013 mini-ADR 3.
+	ErrNoLogs = errors.New("runs: logs unavailable")
+	// ErrNotCancelable means the run is already terminal or its engine job
+	// is lost — there is nothing left to cancel.
+	ErrNotCancelable = errors.New("runs: run is not cancelable")
 )
 
 // actor is the audit identity placeholder until authn/authz land

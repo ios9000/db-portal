@@ -3,6 +3,8 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/runs"
 	"github.com/ios9000/db-portal/backend/internal/server"
 )
@@ -18,10 +21,14 @@ import (
 // stubRuns fakes internal/runs for handler tests (the real Service is
 // covered by DB-backed tests in internal/runs).
 type stubRuns struct {
-	run     runs.Run
-	list    []runs.Run
-	err     error
-	started *startRunCall
+	run       runs.Run
+	list      []runs.Run
+	err       error
+	started   *startRunCall
+	logs      []engine.LogLine
+	logsErr   error
+	cancelErr error
+	canceled  *int64
 }
 
 type startRunCall struct {
@@ -45,6 +52,27 @@ func (s stubRuns) Get(context.Context, int64) (runs.Run, error) {
 
 func (s stubRuns) List(context.Context, string) ([]runs.Run, error) {
 	return s.list, s.err
+}
+
+// StreamLogs replays the stubbed lines and closes — the finished-job shape;
+// live-follow behavior belongs to the engine/service tests.
+func (s stubRuns) StreamLogs(context.Context, int64) (<-chan engine.LogLine, error) {
+	if s.logsErr != nil {
+		return nil, s.logsErr
+	}
+	ch := make(chan engine.LogLine, len(s.logs))
+	for _, l := range s.logs {
+		ch <- l
+	}
+	close(ch)
+	return ch, nil
+}
+
+func (s stubRuns) Cancel(_ context.Context, id int64) error {
+	if s.canceled != nil {
+		*s.canceled = id
+	}
+	return s.cancelErr
 }
 
 func sampleRun() runs.Run {
@@ -172,5 +200,101 @@ func TestGetRunNotFound(t *testing.T) {
 		resp := apiGet(t, ts, path, &body)
 		require.Equal(t, http.StatusNotFound, resp.StatusCode, path)
 		require.Contains(t, body["error"], "no such run")
+	}
+}
+
+// SPEC-013 behavior 3: log events stream in order, then exactly one `end`
+// event carrying the run state, then the connection closes.
+func TestStreamRunLogsSSE(t *testing.T) {
+	run := sampleRun()
+	run.State = "success"
+	ts := runsServer(t, stubRuns{
+		run: run,
+		logs: []engine.LogLine{
+			{TS: time.Now(), Line: "PLAY [dump] start"},
+			{TS: time.Now(), Line: "TASK [dump : run pg_dump] ok"},
+		},
+	})
+
+	resp, err := http.Get(ts.URL + "/api/runs/7/logs")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+
+	raw, err := io.ReadAll(resp.Body) // the end event closes the stream
+	require.NoError(t, err)
+	body := string(raw)
+	require.Contains(t, body, `event: log`)
+	require.Contains(t, body, `"line":"PLAY [dump] start"`)
+	require.Contains(t, body, `"line":"TASK [dump : run pg_dump] ok"`)
+	require.Contains(t, body, "event: end\ndata: {\"state\":\"success\"}")
+	require.Less(t, strings.LastIndex(body, "event: log"), strings.Index(body, "event: end"),
+		"all log events precede the end event")
+	require.Equal(t, 1, strings.Count(body, "event: end"))
+}
+
+// SPEC-013 behavior 4, HTTP mapping: 404 unknown run, 410 logs gone.
+func TestStreamRunLogsErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{"unknown run", runs.ErrNotFound, http.StatusNotFound},
+		{"logs gone", runs.ErrNoLogs, http.StatusGone},
+		{"backend broken", errors.New("boom"), http.StatusInternalServerError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := runsServer(t, stubRuns{logsErr: tc.err})
+			var body map[string]string
+			resp := apiGet(t, ts, "/api/runs/7/logs", &body)
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			require.NotEmpty(t, body["error"])
+		})
+	}
+}
+
+func postCancel(t *testing.T, ts *httptest.Server, path string, out any) *http.Response {
+	t.Helper()
+	resp, err := http.Post(ts.URL+path, "application/json", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(out))
+	return resp
+}
+
+// SPEC-013: cancel is accepted asynchronously — 202, outcome via polling.
+func TestCancelRun(t *testing.T) {
+	var canceled int64
+	ts := runsServer(t, stubRuns{canceled: &canceled})
+
+	var body map[string]string
+	resp := postCancel(t, ts, "/api/runs/7/cancel", &body)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.Equal(t, "canceling", body["status"])
+	require.EqualValues(t, 7, canceled)
+}
+
+func TestCancelRunErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{"unknown run", runs.ErrNotFound, http.StatusNotFound},
+		{"already terminal", runs.ErrNotCancelable, http.StatusConflict},
+		{"engine refused", runs.ErrEngine, http.StatusBadGateway},
+		{"backend broken", errors.New("boom"), http.StatusInternalServerError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := runsServer(t, stubRuns{cancelErr: tc.err})
+			var body map[string]string
+			resp := postCancel(t, ts, "/api/runs/7/cancel", &body)
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			require.NotEmpty(t, body["error"])
+		})
 	}
 }

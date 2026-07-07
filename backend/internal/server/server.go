@@ -41,6 +41,8 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 		r.Post("/runs", startRun(log, d.Runs))
 		r.Get("/runs", listRuns(log, d.Runs))
 		r.Get("/runs/{id}", getRun(log, d.Runs))
+		r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
+		r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
 	})
 	// Everything unmatched goes to the embedded SPA (WU-006): real files
 	// as-is, client-side routes fall back to index.html, /api misses stay 404.

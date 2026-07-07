@@ -22,6 +22,13 @@ import (
 // imported and fast mock engines for both env classes.
 func newService(t *testing.T) (*runs.Service, *pgxpool.Pool) {
 	t.Helper()
+	return newServiceWithDelay(t, time.Millisecond)
+}
+
+// newServiceWithDelay is newService with a chosen mock step delay — slower
+// engines give tests a window to act while a job is still running.
+func newServiceWithDelay(t *testing.T, delay time.Duration) (*runs.Service, *pgxpool.Pool) {
+	t.Helper()
 	pool := testutil.MigratedDB(t)
 
 	f, err := os.Open("../../../infra/fixtures/instances.csv")
@@ -32,9 +39,9 @@ func newService(t *testing.T) (*runs.Service, *pgxpool.Pool) {
 
 	reg := engine.NewRegistry()
 	reg.Register(engine.ClassProd,
-		engine.NewMockEngine(engine.MockConfig{Name: "mock-prod", StepDelay: time.Millisecond}))
+		engine.NewMockEngine(engine.MockConfig{Name: "mock-prod", StepDelay: delay}))
 	reg.Register(engine.ClassNonProd,
-		engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod", StepDelay: time.Millisecond}))
+		engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod", StepDelay: delay}))
 
 	svc := runs.NewService(pool, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	svc.PollInterval = time.Millisecond
