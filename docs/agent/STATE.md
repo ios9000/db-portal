@@ -5,10 +5,9 @@
 
 ## Now
 
-- **Active WU:** WU-002 — Dev environment: docker-compose Postgres 16 + mailpit
-- **Status:** not started. WU-001R closed 2026-07-06 (commit 4122ac7): backend is Go
-  1.26.4 (ADR-010), gate = golangci-lint + fmt-diff + `go test -race`, CI green on
-  clean runner, zero Python remnants.
+- **Active WU:** WU-003 — Backend skeleton (Go chassis: chi, config, /healthz, goose, slog)
+- **Status:** not started. WU-002 closed 2026-07-06 (44325db): compose env live on VM —
+  postgres:16 + mailpit healthy, `up`/`down`/`db-reset` targets work, `.env` present.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -17,9 +16,10 @@
 
 ## Next action (be exact)
 
-Start WU-002 per its BACKLOG entry, ON THE VM: `infra/compose.yaml` (postgres:16 with
-healthcheck + mailpit), `.env.example`, root npm targets `up`/`down`/`db-reset`.
-Verify per the WU entry, then flip → done, STATE → WU-003 (Go chassis).
+Start WU-003 per its BACKLOG entry, ON THE VM (M-sized — plan a mid-WU checkpoint):
+chi server + graceful shutdown, caarlos0/env config, pgx pool + /healthz with DB ping,
+goose migration 0001 embedded, slog JSON + request logging, httptest tests (healthz ok /
+db-down 503 / config precedence), `-race` clean. Compose env from WU-002 is up on the VM.
 
 ## Blocked / needs user
 

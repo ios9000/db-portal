@@ -90,7 +90,10 @@ Python files (pyproject, uv.lock, src/, tests/) removed.
 **Verify:** `npm run check` exit 0; CI run success; hook rejection demonstrated.
 **Context brief:** ADR-010; current backend/ layout; .githooks/pre-commit; .github/workflows/check.yml.
 
-### WU-002 · Dev environment (docker-compose) — S · `active`
+### WU-002 · Dev environment (docker-compose) — S · `done` (2026-07-06, commit 44325db)
+**Evidence:** `npm run up` → postgres + mailpit both `(healthy)` via --wait;
+`db-reset` ran twice cleanly (idempotent); TCP psql with .env.example creds →
+`creds-ok`; mailpit UI HTTP 200. Ports bound to 127.0.0.1 only.
 **Goal:** one command brings up portal Postgres 16 + mailpit (SMTP catcher); reset is cheap.
 **Deliverables:** `infra/compose.yaml`, `.env.example`, runner targets `up`/`down`/`db-reset`.
 **AC:**
