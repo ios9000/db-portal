@@ -21,7 +21,10 @@ var (
 	ErrUnknownEnv = errors.New("engine: unknown environment")
 )
 
-// JobID identifies a job within the adapter that issued it.
+// JobID identifies a job within the adapter that issued it. IDs must never
+// alias across adapter instances (e.g. process restarts): a stale JobID has
+// to fail with ErrUnknownJob, not resolve to some newer job — orphaned runs
+// otherwise serve another run's logs (WU-013).
 type JobID string
 
 // JobState is the lifecycle of a single engine job.

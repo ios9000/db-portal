@@ -232,3 +232,23 @@ func TestUnknownJobErrors(t *testing.T) {
 	err = e.Cancel(ctx, "nope-1")
 	require.ErrorIs(t, err, engine.ErrUnknownJob)
 }
+
+// A restarted engine (same name, new instance) must never resolve the old
+// instance's job ids — orphaned runs would stream another run's logs
+// (WU-013 regression: found live, mock seq restarted at 1 every boot).
+func TestJobIDsDoNotAliasAcrossInstances(t *testing.T) {
+	ctx := context.Background()
+	before := engine.NewMockEngine(engine.MockConfig{Name: "mock-test", StepDelay: time.Millisecond})
+	after := engine.NewMockEngine(engine.MockConfig{Name: "mock-test", StepDelay: time.Millisecond})
+
+	staleID, err := before.StartJob(ctx, "dump", nil)
+	require.NoError(t, err)
+	freshID, err := after.StartJob(ctx, "dump", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, staleID, freshID)
+
+	_, err = after.Status(ctx, staleID)
+	require.ErrorIs(t, err, engine.ErrUnknownJob)
+	_, err = after.StreamLogs(ctx, staleID)
+	require.ErrorIs(t, err, engine.ErrUnknownJob)
+}

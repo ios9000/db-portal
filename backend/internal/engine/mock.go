@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math/rand/v2"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ type MockConfig struct {
 type MockEngine struct {
 	name  string
 	delay time.Duration
+	nonce string // per-instance; keeps JobIDs unique across restarts
 
 	seq  atomic.Int64
 	mu   sync.Mutex
@@ -54,6 +56,7 @@ func NewMockEngine(cfg MockConfig) *MockEngine {
 	return &MockEngine{
 		name:  cfg.Name,
 		delay: delay,
+		nonce: fmt.Sprintf("%08x", rand.Uint32()),
 		jobs:  make(map[JobID]*mockJob),
 	}
 }
@@ -62,7 +65,9 @@ func NewMockEngine(cfg MockConfig) *MockEngine {
 // goroutine. The runner lives beyond ctx: cancelling the request that
 // started a job must not kill the job — that is what Cancel is for.
 func (e *MockEngine) StartJob(_ context.Context, template string, params map[string]string) (JobID, error) {
-	id := JobID(fmt.Sprintf("%s-%d", e.name, e.seq.Add(1)))
+	// The nonce keeps ids from aliasing across restarts — a dead process's
+	// job_id must never resolve to a fresh job (see JobID contract).
+	id := JobID(fmt.Sprintf("%s-%s-%d", e.name, e.nonce, e.seq.Add(1)))
 
 	p := make(map[string]string, len(params))
 	for k, v := range params {
