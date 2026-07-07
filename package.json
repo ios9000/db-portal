@@ -9,6 +9,9 @@
     "fmt": "npm run fmt:be && npm run fmt:fe",
     "fmt:be": "cd backend && golangci-lint fmt ./...",
     "fmt:fe": "cd frontend && npx prettier --write src",
-    "dev:fe": "cd frontend && npm run dev"
+    "dev:fe": "cd frontend && npm run dev",
+    "up": "docker compose -f infra/compose.yaml up -d --wait",
+    "down": "docker compose -f infra/compose.yaml down",
+    "db-reset": "sh infra/db-reset.sh"
   }
 }

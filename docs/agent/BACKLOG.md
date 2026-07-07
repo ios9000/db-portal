@@ -90,7 +90,7 @@ Python files (pyproject, uv.lock, src/, tests/) removed.
 **Verify:** `npm run check` exit 0; CI run success; hook rejection demonstrated.
 **Context brief:** ADR-010; current backend/ layout; .githooks/pre-commit; .github/workflows/check.yml.
 
-### WU-002 · Dev environment (docker-compose) — S · `todo`
+### WU-002 · Dev environment (docker-compose) — S · `active`
 **Goal:** one command brings up portal Postgres 16 + mailpit (SMTP catcher); reset is cheap.
 **Deliverables:** `infra/compose.yaml`, `.env.example`, runner targets `up`/`down`/`db-reset`.
 **AC:**
