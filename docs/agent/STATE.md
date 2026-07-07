@@ -5,12 +5,12 @@
 
 ## Now
 
-- **Active WU:** WU-011 — Instance API + cards/table UI. **Not started.**
-- **Status:** WU-010 DONE 2026-07-07 (s04, commit 5212481): migration 0002
-  (cluster/instance/inventory_import/inventory_import_reject), `internal/inventory`
-  importer (SPEC-010 behaviors 1–8 tested), `portal import <file>` CLI. Verified
-  live: fixture ×2 idempotent (8 new → 8 unchanged), malformed.csv → 7 quarantined
-  with reasons queryable. Gate green both stacks.
+- **Active WU:** WU-012 — Catalog + run-now dump (hero). **Not started.**
+  O-1 note: mock artifact path is acceptable (metadata only) — not blocked.
+- **Status:** WU-011 DONE 2026-07-07 (s04, commit bc04f2d): inventory.Store +
+  GET /api/instances[?env=] + /{name}; MyDatabases cards/table UI (Screens 1–2
+  minus bulk actions). WU-010 DONE same session (5212481): migration 0002,
+  importer + quarantine, `portal import` CLI. Both CI-green.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -19,20 +19,22 @@
 
 ## Next action (be exact)
 
-Start WU-011 from its BACKLOG entry: list/detail endpoints with env filter +
-cards view (design brief Screen 1: health dot, badges, last-backup line) +
-`Cards ⇄ Table` toggle (Screen 2, minus bulk actions). Read design brief
-Screens 1–2 + BACKLOG entry FIRST. Backend: query the WU-010 tables (join
-instance→cluster); health/last-backup render "—" (no data source until
-WU-012+, per SPEC-010). Frontend: reuse EnvBadge (WU-004). Dev DB is already
-migrated + fixture-loaded (8 instances / 6 clusters) — `npm run up` if compose
-is down, re-import via `cd backend && go run ./cmd/portal import
-../infra/fixtures/instances.csv` (idempotent).
+Start WU-012 from its BACKLOG entry (consider a just-in-time SPEC-012 first,
+like SPEC-010 — the WU is the widest in Phase 1; split note in BACKLOG: if it
+runs heavy, land audit migration + append-only grant tests, checkpoint, then
+the flow). Scope: operation catalog (data-driven, `dump` only), launch drawer
+(Screen 3 pattern), POST run → audit record (`submitted`) → MockEngine job via
+Registry (first portal wiring of the engine seam!) → status polling → run list
+in Activity. Audit schema per ARCHITECTURE.md §5: append-only from the first
+migration — app role gets NO UPDATE/DELETE grants; artifact = metadata only
+(O-1 mock path). Read ARCHITECTURE §3 (hero workflow) + §5 (audit), design
+brief Screen 3, WU-005 adapter contract. Dev DB is migrated + fixture-loaded;
+`npm run up` if compose is down.
 
 ## Blocked / needs user
 
-- O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
-- Nothing else.
+- Nothing. (O-1 artifact storage: WU-012 proceeds with mock/metadata-only path
+  per BACKLOG; real storage = minio, WU-035.)
 
 ## Standing context (stable facts worth re-stating)
 
@@ -46,6 +48,13 @@ is down, re-import via `cd backend && go run ./cmd/portal import
   `imported N new, updated M, unchanged U, quarantined Q`, reject detail → stderr.
   Env validity delegated to engine.ClassForEnv (single authority — never bypass).
   NO last_backup/health columns (derived later; WU-011 renders "—").
+- Instance API (WU-011 landed): inventory.Store (reads; writes only via Import);
+  GET /api/instances[?env=] → {"instances":[...]} (ordered by name, never null,
+  snake_case fields, nullable → JSON null), /api/instances/{name} → 404 JSON
+  {"error":...}. server.InstanceReader iface = handler seam (stub in CI, Store
+  satisfies). NewRouter(log, Pinger, InstanceReader). Frontend: MyDatabases
+  cards/table, view+env in URL search params, search client-side, env filter
+  server-side; placeholders "—" for health/backup/vacuum/bloat.
 - Test helper NEW: `testutil.MigratedDB(t)` = scratch DB + embedded migrations up,
   dropped on cleanup; use for schema-touching DB tests. `testutil.DB(t)` = dev DB,
   skips without compose PG. `goose down` reverts ONE migration (migrate_test walks).
@@ -78,6 +87,6 @@ is down, re-import via `cd backend && go run ./cmd/portal import
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-07 — WU-011 done (bc04f2d); active → WU-012 (hero flow).
 - 2026-07-07 — WU-010 done (5212481); dev DB fixture-loaded; active → WU-011.
 - 2026-07-07 — Phase 1 groomed (SPEC-010 + fixture); active → WU-010 (fresh session).
-- 2026-07-07 — M0 CLOSED (demo-m0.sh PASS, 9568239); gh authed, CI verified (7508614).

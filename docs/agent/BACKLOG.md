@@ -219,7 +219,15 @@ yet — that needs real targets; validation is structural). Import is idempotent
 behaviors, import = `portal import` CLI); fixture EXISTS at `infra/fixtures/instances.csv`;
 ARCHITECTURE.md §2 (Inventory, Portal DB).
 
-### WU-011 · Instance API + cards/table UI — M · `todo`
+### WU-011 · Instance API + cards/table UI — M · `done` (2026-07-07, commit bc04f2d)
+**Evidence:** `npm run check` green (Go `-race` incl. new store tests on scratch DBs +
+stub-based handler tests that run DB-free in CI; vitest 24/24 with 6 new MyDatabases
+tests). Live binary on compose PG: `/api/instances` → 8 (ordered, JSON null for empty
+size/window), `?env=test` → billing-test/crm-test/hr-test, `?env=prod2` → 400
+`unknown env`, detail → full object, unknown name → 404. Release build re-proven:
+single 18M binary served `/` (title DB Portal), `/databases` SPA fallback 200 HTML,
+`/api/instances` → 8 — all same-origin. Health/last-backup/vacuum/bloat render "—"
+(no data source until WU-012+). New dev dep: @testing-library/user-event.
 List/detail endpoints with env filter; cards view per design brief Screen 1 (health dot,
 badges, last-backup line) + `Cards ⇄ Table` toggle (Screen 2, minus bulk actions).
 **Context brief:** design brief Screens 1–2; WU-010 schema; EnvBadge from WU-004.
