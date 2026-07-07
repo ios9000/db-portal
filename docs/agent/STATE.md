@@ -7,8 +7,10 @@
 
 - **Active WU:** WU-001 — Repo scaffold + quality gates (`docs/agent/BACKLOG.md`)
 - **Status:** not started. WU-000 closed 2026-07-06 with full VM audit evidence.
-- **Where:** PRIMARY = cloud VM `dbportal-vm` (wdsvc55@80.85.254.99), repo `~/db-portal`.
-  Workstation `P:\Projects\db-portal` is a docs-only secondary clone.
+- **Where:** VM #1 (80.85.254.99) was DECOMMISSIONED by the user right after setup; its
+  write deploy key is revoked. A replacement VM is being provisioned — bootstrap it with
+  `infra/bootstrap-vm.sh` (header documents the full flow). Until then the workstation
+  clone (`P:\Projects\db-portal`, docs-only) is the only live environment.
 - **Branch:** main (docs only, no code yet)
 
 ## Next action (be exact)
@@ -21,8 +23,10 @@ decisions block WU-001 or WU-002.
 
 ## Blocked / needs user
 
-- (nothing) — O-1 (dump artifact storage) remains open but only matters at WU-012;
-  mock path is acceptable there, minio lands WU-035.
+- **New VM connection details:** IP, SSH username, and which key (same `wdsvc_openssh`?).
+  On receipt: update workstation ssh alias `dbportal-vm`, run `infra/bootstrap-vm.sh`,
+  register the new deploy key, clone, update CLAUDE.md env bullet + this file.
+- O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
 
 ## Standing context (stable facts worth re-stating)
 
