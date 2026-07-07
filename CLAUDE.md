@@ -40,8 +40,14 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 
 ## Commands
 
-Toolchain not yet scaffolded — WU-000/WU-001 establish it and MUST update this section.
-Until then, nothing here is runnable.
+Task runner = root `package.json` npm scripts (ADR-007; works in Git Bash AND PowerShell).
+Scaffolded by WU-001; until then only the environment facts below are real.
+
+- Toolchain (audited 2026-07-06): node 22 / npm 10 · python 3.14.2 (`python -m pip`;
+  uv arrives in WU-001) · git 2.52 · gh 2.91 · NO just/make — don't invoke them.
+- Containers (ADR-008): docker lives INSIDE WSL distro `dbportal-dev` (root-default).
+  Invoke as `wsl -d dbportal-dev -u root -e docker …` — plain `docker` does not exist
+  on Windows PATH. Planned npm targets: `check` `fmt` `up` `down` `db-reset` `dev:be` `dev:fe`.
 
 ## Repo map
 

@@ -68,10 +68,16 @@ Python 3.12 if 3.14 wheel gaps bite — decided in WU-003). **Rejected:** `just`
 install, low added value here), Make (absent on Windows), PowerShell-only scripts
 (break Git Bash usage).
 
-### ADR-008 · Dev containers runtime — `todo` (blocked on user; see STATE.md)
-Docker Desktop was uninstalled 2026-05-13; WSL2 enabled but distro-less. Compose shape
-(WU-002: Postgres+mailpit; M3: Semaphore, minio) needs a runtime. Options + recommendation
-put to the user 2026-07-06.
+### ADR-008 · Dev containers: WSL2 + Docker Engine (docker-ce) — `accepted` (user, 2026-07-06)
+Docker Desktop was uninstalled 2026-05-13 and stays uninstalled. A dedicated WSL2 distro
+(`dbportal-dev`, Ubuntu 24.04, root-default — local sandbox, not multi-user) hosts
+docker-ce + compose v2. Provisioning is import-based (`wsl --import` of the Ubuntu .wsl
+image) because the tar-based `wsl --install` first-boot failed on this Win10 build
+(E_FAIL/E_UNEXPECTED at CreateInstance — known rough edge). Windows-side plumbing: npm
+scripts call `wsl -d dbportal-dev -u root -e docker …`; the `up` target starts dockerd
+first if needed. No VMs to order for development — WSL2 is the VM. Real Linux VMs become
+relevant only at M3+ (optional: 1 as a real SSH playbook target; 3 for a Patroni
+rehearsal) — decide then, not now.
 
 ## Open (inherited from architecture doc §10)
 
