@@ -49,7 +49,7 @@ CLAUDE.md "Commands" section updated with reality.
 **Verify:** each tool's `--version` output pasted into the journal `done` line.
 **Context brief:** this entry; CLAUDE.md.
 
-### WU-001 · Repo scaffold + quality gates — M · `todo`
+### WU-001 · Repo scaffold + quality gates — M · `active`
 **Goal:** monorepo skeleton with lint/typecheck/test gates wired, so every later WU
 inherits the global gate for free.
 **Deliverables:** `backend/` (Python project, empty package + 1 placeholder test),
