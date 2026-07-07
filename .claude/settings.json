@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run check)",
+      "Bash(npm run check:be)",
+      "Bash(npm run check:fe)",
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(golangci-lint run *)",
+      "Bash(golangci-lint fmt --diff *)",
+      "Bash(go run ./cmd/portal)",
+      "Bash(go run ./cmd/portal migrate status)",
+      "Bash(docker compose -f infra/compose.yaml ps)"
+    ]
+  }
+}
