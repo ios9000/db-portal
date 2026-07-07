@@ -187,6 +187,9 @@ root script `build:release` = frontend build → copy → `go build -trimpath` �
 **M0 exit:** all Phase 0 WUs done + golden thread: backend up, frontend shell up, a
 MockEngine job runnable from a Go test — committed demo script proving it.
 *(“pytest” predates ADR-010.)*
+**CLOSED 2026-07-07:** `infra/demo-m0.sh` PASS — check green, TestHappyPathDump -v
+visible, release binary alone served `/` (HTML shell) + `/healthz` (JSON, 200 with
+compose PG up / 503 degraded without). Evidence in JOURNAL s03.
 
 ---
 

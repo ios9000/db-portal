@@ -5,8 +5,9 @@
 
 ## Now
 
-- **Active WU:** M0 exit check — golden-thread demo script (Phase 0 gate, not a
-  numbered WU). All Phase 0 WUs (000–006) are DONE.
+- **Active WU:** none — **M0 CLOSED 2026-07-07** (`infra/demo-m0.sh` PASS: gate
+  green, TestHappyPathDump visible, binary served shell + healthz standalone).
+  Next up: Phase 1 grooming, then WU-010.
 - **Status:** WU-006 closed 2026-07-07 (0922576): `internal/webui` embeds the SPA
   (`all:dist`, .gitkeep anchor → compiles without a frontend build, runtime
   placeholder page in that state); SPA fallback mounted as router NotFound (client
@@ -21,13 +22,13 @@
 
 ## Next action (be exact)
 
-M0 exit (ROADMAP): "`check` green from clean clone; a MockEngine dump job runs from a
-test; committed proof script." Write `infra/demo-m0.sh`: (1) `npm run check`,
-(2) `go test ./internal/engine -run <happy-path test> -v` (the MockEngine dump job),
-(3) `npm run build:release`, run the binary, curl `/` + `/healthz`, kill it; script
-echoes PASS/FAIL per step. Commit it, journal M0 CLOSED with pasted output. THEN
-groom Phase 1 (WU-010 first: spec + fixture CSV per BACKLOG) — grooming is a fresh
-session's work; don't start WU-010 in a heavy-context session.
+Groom Phase 1 (fresh session): re-read BACKLOG WU-010…015 against ARCHITECTURE.md
+§Inventory + §6.1/§8.1 and the design brief (now at docs/specs/design-brief.md);
+write `docs/specs/inventory.md` just-in-time for WU-010 (template:
+docs/specs/SPEC-TEMPLATE.md); create the sample fixture CSV in `infra/fixtures/`;
+size-check each WU still fits a session. Then start WU-010 per its entry.
+Re-run `sh infra/demo-m0.sh` any time the chassis feels doubtful — it's the
+golden-thread smoke test now.
 
 ## Blocked / needs user
 
@@ -71,6 +72,6 @@ session's work; don't start WU-010 in a heavy-context session.
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-07 — M0 CLOSED (demo-m0.sh PASS); active → Phase 1 grooming (fresh session).
 - 2026-07-07 — WU-006 done (0922576); design brief chore (88a66a6); active → M0 exit check.
 - 2026-07-07 — WU-005 done (6124732, evidence in BACKLOG/JOURNAL); active → WU-006.
-- 2026-07-07 — WU-004 done (2304b9c); gh CLI installed on VM (297538a).
