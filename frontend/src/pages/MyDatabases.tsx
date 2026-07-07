@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { EnvBadge } from '../components/EnvBadge';
-import { ApiError, fetchInstances, type Instance, type InstanceEnv } from '../lib/api';
+import { LaunchDrawer } from '../components/LaunchDrawer';
+import {
+  ApiError,
+  fetchInstances,
+  fetchOperations,
+  type Instance,
+  type InstanceEnv,
+  type Operation,
+} from '../lib/api';
 
 type View = 'cards' | 'table';
 
@@ -27,6 +35,22 @@ export function MyDatabases() {
   const [search, setSearch] = useState('');
   const [instances, setInstances] = useState<Instance[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [operations, setOperations] = useState<Operation[]>([]);
+  const [launching, setLaunching] = useState<Instance | null>(null);
+
+  // Catalog for the launch buttons/drawer. On failure the buttons simply
+  // don't render — browsing the inventory must not depend on the catalog.
+  useEffect(() => {
+    let cancelled = false;
+    fetchOperations()
+      .then((ops) => {
+        if (!cancelled) setOperations(ops);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +82,8 @@ export function MyDatabases() {
     }
     setSearchParams(next, { replace: true });
   };
+
+  const dumpOp = operations.find((o) => o.id === 'dump');
 
   const q = search.trim().toLowerCase();
   const visible = (instances ?? []).filter(
@@ -131,7 +157,15 @@ export function MyDatabases() {
       )}
 
       {visible.length > 0 &&
-        (view === 'cards' ? <CardGrid instances={visible} /> : <FleetTable instances={visible} />)}
+        (view === 'cards' ? (
+          <CardGrid instances={visible} dump={dumpOp} onLaunch={setLaunching} />
+        ) : (
+          <FleetTable instances={visible} dump={dumpOp} onLaunch={setLaunching} />
+        ))}
+
+      {launching !== null && dumpOp !== undefined && (
+        <LaunchDrawer instance={launching} operation={dumpOp} onClose={() => setLaunching(null)} />
+      )}
     </>
   );
 }
@@ -145,7 +179,12 @@ function formatSize(sizeGB: number | null): string {
   return sizeGB === null ? '—' : `${sizeGB} GB`;
 }
 
-function CardGrid({ instances }: { instances: Instance[] }) {
+interface LaunchProps {
+  dump: Operation | undefined;
+  onLaunch: (instance: Instance) => void;
+}
+
+function CardGrid({ instances, dump, onLaunch }: { instances: Instance[] } & LaunchProps) {
   return (
     <div className="instance-grid">
       {instances.map((i) => (
@@ -160,13 +199,20 @@ function CardGrid({ instances }: { instances: Instance[] }) {
             {i.size_gb !== null && <> · {formatSize(i.size_gb)}</>}
           </p>
           <p className="instance-meta">Last backup: —</p>
+          {dump !== undefined && (
+            <div className="card-actions">
+              <button type="button" className="btn-secondary" onClick={() => onLaunch(i)}>
+                <span aria-hidden="true">{dump.icon}</span> {dump.label}
+              </button>
+            </div>
+          )}
         </article>
       ))}
     </div>
   );
 }
 
-function FleetTable({ instances }: { instances: Instance[] }) {
+function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & LaunchProps) {
   return (
     <table className="instance-table">
       <thead>
@@ -182,6 +228,11 @@ function FleetTable({ instances }: { instances: Instance[] }) {
           <th>Last backup</th>
           <th>Last vacuum</th>
           <th>Bloat %</th>
+          {dump !== undefined && (
+            <th>
+              <span className="visually-hidden">Actions</span>
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
@@ -200,6 +251,17 @@ function FleetTable({ instances }: { instances: Instance[] }) {
             <td>—</td>
             <td>—</td>
             <td>—</td>
+            {dump !== undefined && (
+              <td>
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => onLaunch(i)}
+                >
+                  {dump.label}
+                </button>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>

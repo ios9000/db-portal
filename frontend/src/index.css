@@ -227,6 +227,11 @@ h1 {
   background: var(--status-halted-bg);
 }
 
+.run-status.run-status-canceled {
+  color: var(--status-queued-fg);
+  background: var(--status-queued-bg);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -383,4 +388,176 @@ tr.prod-edge td:first-child {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ---- buttons (WU-012; brief: primary = solid dark, secondary = outlined) ---- */
+
+.btn-primary,
+.btn-secondary,
+.btn-text {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  padding: var(--space-05) var(--space-2);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  color: #fff;
+  background: var(--text-strong);
+  border: 1px solid var(--text-strong);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-secondary {
+  color: var(--text-strong);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--surface);
+}
+
+.btn-small {
+  font-size: 13px;
+  padding: 2px var(--space-1);
+}
+
+.btn-text {
+  color: var(--text-muted);
+  background: none;
+  border: none;
+}
+
+.card-actions {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* ---- launch drawer (design brief Screen 3) ---- */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(15 23 42 / 0.4);
+  z-index: 10;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(480px, 100vw);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.drawer-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin: 0;
+}
+
+.drawer-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.drawer-target-name {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chip-strip {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.chip {
+  font-size: 13px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px var(--space-1);
+}
+
+.drawer-description {
+  margin: 0;
+  color: var(--text);
+}
+
+.drawer-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-05);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.drawer-field .optional {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.drawer-field input {
+  font: inherit;
+  font-weight: 400;
+  padding: var(--space-05) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.drawer-error {
+  margin: 0;
+  color: var(--status-failed-fg);
+  font-size: 14px;
+}
+
+.drawer-started {
+  margin: 0;
+  color: var(--status-success-fg);
+  font-weight: 500;
+}
+
+.drawer-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
 }

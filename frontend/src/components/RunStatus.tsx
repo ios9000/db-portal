@@ -1,4 +1,4 @@
-export type RunStatusValue = 'queued' | 'running' | 'success' | 'failed' | 'halted';
+export type RunStatusValue = 'queued' | 'running' | 'success' | 'failed' | 'halted' | 'canceled';
 
 const LABELS: Record<RunStatusValue, string> = {
   queued: 'Queued',
@@ -6,6 +6,7 @@ const LABELS: Record<RunStatusValue, string> = {
   success: 'Success',
   failed: 'Failed',
   halted: 'Halted',
+  canceled: 'Canceled',
 };
 
 /**

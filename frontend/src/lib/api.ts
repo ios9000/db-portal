@@ -37,6 +37,23 @@ export async function getJSON<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : String(err));
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, await errorDetail(res));
+  }
+  return (await res.json()) as T;
+}
+
 export type InstanceEnv = 'dev' | 'test' | 'prod';
 
 /** One inventory row as served by GET /api/instances (WU-011). */
@@ -56,6 +73,53 @@ export async function fetchInstances(env?: InstanceEnv): Promise<Instance[]> {
   const path = env ? `/api/instances?env=${env}` : '/api/instances';
   const body = await getJSON<{ instances: Instance[] }>(path);
   return body.instances;
+}
+
+/** One catalog entry as served by GET /api/operations (WU-012). */
+export interface Operation {
+  id: string;
+  label: string;
+  icon: string;
+  description: string;
+  duration_hint: string;
+  online_hint: string;
+}
+
+export async function fetchOperations(): Promise<Operation[]> {
+  return (await getJSON<{ operations: Operation[] }>('/api/operations')).operations;
+}
+
+export type RunState = 'queued' | 'running' | 'success' | 'failed' | 'canceled';
+
+export interface RunArtifact {
+  name: string;
+  size_bytes: number;
+  checksum: string;
+}
+
+/** One run as served by /api/runs (WU-012). Timestamps are RFC 3339. */
+export interface Run {
+  id: number;
+  instance: string;
+  environment: InstanceEnv;
+  operation: string;
+  state: RunState;
+  reason: string | null;
+  error: string | null;
+  job_id: string | null;
+  submitted_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  artifact: RunArtifact | null;
+}
+
+export async function fetchRuns(): Promise<Run[]> {
+  return (await getJSON<{ runs: Run[] }>('/api/runs')).runs;
+}
+
+/** Launch an operation. The consequence-labeled button calls this. */
+export async function startRun(instance: string, operation: string, reason: string): Promise<Run> {
+  return postJSON<Run>('/api/runs', { instance, operation, reason });
 }
 
 export interface Healthz {

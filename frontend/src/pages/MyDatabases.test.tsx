@@ -38,10 +38,30 @@ const SAMPLE: Instance[] = [
   },
 ];
 
-/** Stub fetch to answer /api/instances (with server-side env filtering). */
+const DUMP_OP = {
+  id: 'dump',
+  label: 'Backup',
+  icon: '💾',
+  description: 'Full backup (pg_dump), verified after completion.',
+  duration_hint: '~25 min',
+  online_hint: 'Database stays online',
+};
+
+/** Stub fetch for the page's API surface: instances, catalog, run launch. */
 function stubInstances(instances: Instance[] = SAMPLE) {
-  const mock = vi.fn((input: RequestInfo | URL) => {
+  const mock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://test');
+    if (url.pathname === '/api/operations') {
+      return Promise.resolve(new Response(JSON.stringify({ operations: [DUMP_OP] })));
+    }
+    if (url.pathname === '/api/runs' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as { instance: string };
+      return Promise.resolve(
+        new Response(JSON.stringify({ id: 42, instance: body.instance, state: 'queued' }), {
+          status: 201,
+        }),
+      );
+    }
     if (url.pathname !== '/api/instances') {
       return Promise.resolve(new Response('not found', { status: 404 }));
     }
@@ -143,4 +163,52 @@ test('network failure shows the unreachable message', async () => {
   );
   renderPage();
   expect(await screen.findByRole('alert')).toHaveTextContent('API unreachable');
+});
+
+// WU-012 hero flow, UI side: Backup button → Screen 3 drawer → consequence-
+// labeled launch → started confirmation.
+test('Backup opens the launch drawer and starts a run', async () => {
+  const mock = stubInstances();
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText('billing-test');
+
+  const card = screen.getByText('billing-test').closest('article')!;
+  await user.click(within(card).getByRole('button', { name: /Backup/ }));
+
+  const drawer = await screen.findByRole('dialog', { name: 'Run Backup' });
+  expect(within(drawer).getByText('billing-test')).toBeInTheDocument();
+  expect(within(drawer).getByText('TEST')).toBeInTheDocument();
+  expect(within(drawer).getByText('~25 min')).toBeInTheDocument();
+  expect(within(drawer).getByText('Database stays online')).toBeInTheDocument();
+
+  await user.type(within(drawer).getByRole('textbox'), 'CHG-77');
+  await user.click(within(drawer).getByRole('button', { name: 'Run backup on billing-test' }));
+
+  expect(await within(drawer).findByRole('status')).toHaveTextContent('Run #42 started');
+  expect(within(drawer).getByRole('link', { name: 'View in Activity' })).toBeInTheDocument();
+
+  const post = mock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST');
+  expect(post).toBeDefined();
+  expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({
+    instance: 'billing-test',
+    operation: 'dump',
+    reason: 'CHG-77',
+  });
+});
+
+test('drawer cancel closes without posting', async () => {
+  const mock = stubInstances();
+  const user = userEvent.setup();
+  renderPage();
+  await screen.findByText('billing-test');
+
+  const card = screen.getByText('billing-test').closest('article')!;
+  await user.click(within(card).getByRole('button', { name: /Backup/ }));
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(mock.mock.calls.some((c) => (c[1] as RequestInit | undefined)?.method === 'POST')).toBe(
+    false,
+  );
 });
