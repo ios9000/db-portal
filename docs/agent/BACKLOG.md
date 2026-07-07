@@ -252,9 +252,21 @@ Audit schema per ARCHITECTURE.md §5 — append-only from the first migration
 **Context brief:** ARCHITECTURE.md §3 (hero workflow) + §5 (audit record); WU-005 adapter;
 design brief Screen 3.
 
-### WU-013 · Run detail + live logs — M · `todo`
-Run page with stage state + log pane streaming from `stream_logs` (SSE or WebSocket —
-decide via mini-ADR in the WU); follow mode; final status + artifact strip.
+### WU-013 · Run detail + live logs — M · `done` (2026-07-07, commits 29f81ee+f256b9b+7d4422f)
+**Evidence:** `npm run check` green both stacks (Go `-race`: 7 new stream/cancel service
+tests on scratch DBs + SSE/cancel stub handler tests DB-free; vitest 38/38 with 6 RunDetail
+tests incl. fake EventSource). SPEC-013 at `docs/specs/run-detail.md` (mini-ADRs: SSE over
+WebSocket; explicit `end` event kills the EventSource replay loop; logs NOT persisted —
+410 after restart; cancel ships here, no new audit action until WU-021). Live on the
+release binary: SSE replay+follow+end on a real run; abort → 202 (idempotent) → run
+`canceled` / "canceled by operator", audit = exactly submitted+finished(canceled), tamper
+UPDATE → trigger exception; terminal cancel → 409; stale run logs after restart → 410;
+SPA fallback /runs/3 → 200. Regression found live + fixed: MockEngine job ids aliased
+across restarts (seq reset) so an orphaned run streamed a NEW run's logs — ids now carry a
+per-instance nonce; JobID no-alias contract documented in engine.go + regression test.
+Run page with single-stage state (chains → WU-032), dark log pane, Follow pill, live
+elapsed, artifact strip, calm failed/canceled cards, Abort; linked from Activity ids +
+drawer "View run".
 **Context brief:** design brief Screen 5; WU-005 `stream_logs` contract.
 
 ### WU-014 · Audit UI + email notify — S · `todo`
