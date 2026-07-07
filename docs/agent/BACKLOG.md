@@ -104,16 +104,21 @@ Python files (pyproject, uv.lock, src/, tests/) removed.
 `psql` connect with `.env.example`-shaped creds against dev password.
 **Context brief:** WU-001 layout; ARCHITECTURE.md §Deployment.
 
-### WU-003 · Backend skeleton (Go chassis) — M · `todo`
+### WU-003 · Backend skeleton (Go chassis) — M · `done` (2026-07-07, commit aee80cc)
+**Evidence:** `npm run check` green on VM (lint 0 issues, fmt-diff clean, `go test -race`
+pass — DB-backed migrate round-trip ran for real against compose PG, 0.08s not skipped);
+live `curl /healthz` → 200 `{"db":"ok","status":"ok"}` with slog JSON request line;
+`portal migrate status/up/down/up` all clean via binary; SIGTERM → "shutting down",
+exit 0. Deps: chi 5.3.1, pgx 5.10.0, goose 3.27.2, env 11.4.1, testify 1.11.1.
 **Goal:** the Go server chassis every feature WU bolts onto.
 **Deliverables:** chi server with graceful shutdown; env config (caarlos0/env +
 godotenv in dev); `/healthz` (pgx pool ping → `{"status":"ok","db":"ok"}`); goose wired
 with migration 0001 (baseline) embedded via `embed.FS`; slog JSON logging + request-log
 middleware; httptest-based handler tests + a DB-backed test helper.
 **AC:**
-- [ ] `go run ./cmd/portal` serves `/healthz` ok against compose Postgres.
-- [ ] `goose up` / `goose down` both clean (via a `migrate` subcommand on the binary).
-- [ ] ≥3 tests: healthz ok, healthz with DB down (503), config precedence. `-race` clean.
+- [x] `go run ./cmd/portal` serves `/healthz` ok against compose Postgres.
+- [x] `goose up` / `goose down` both clean (via a `migrate` subcommand on the binary).
+- [x] ≥3 tests: healthz ok, healthz with DB down (503), config precedence. `-race` clean.
 **Verify:** `npm run check`; `curl localhost:8080/healthz`.
 **Context brief:** ADR-010; ARCHITECTURE.md §Components→Portal application; WU-002 env vars.
 

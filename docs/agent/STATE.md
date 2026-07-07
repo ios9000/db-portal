@@ -5,32 +5,41 @@
 
 ## Now
 
-- **Active WU:** WU-003 — Backend skeleton (Go chassis: chi, config, /healthz, goose, slog)
-- **Status:** not started. WU-002 closed 2026-07-06 (44325db): compose env live on VM —
-  postgres:16 + mailpit healthy, `up`/`down`/`db-reset` targets work, `.env` present.
+- **Active WU:** WU-004 — Frontend shell (router, nav, EnvBadge/RunStatus, healthz footer)
+- **Status:** not started. WU-003 closed 2026-07-07 (aee80cc): Go chassis live —
+  chi + graceful shutdown, config (env > .env > defaults), /healthz (200/503),
+  goose migrate subcommand w/ embedded 0001, slog JSON request logging, tests -race clean.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
   secondary. VM #1 (80.85.254.99): decommissioned, deploy key revoked.
-- **Branch:** main (docs only, no code yet)
+- **Branch:** main
 
 ## Next action (be exact)
 
-Start WU-003 per its BACKLOG entry, ON THE VM (M-sized — plan a mid-WU checkpoint):
-chi server + graceful shutdown, caarlos0/env config, pgx pool + /healthz with DB ping,
-goose migration 0001 embedded, slog JSON + request logging, httptest tests (healthz ok /
-db-down 503 / config precedence), `-race` clean. Compose env from WU-002 is up on the VM.
+Start WU-004 per its BACKLOG entry, ON THE VM: router + top nav (My Databases ·
+Activity · Schedules), typed API client, EnvBadge (PROD red / TEST amber / DEV gray,
+never color alone) + RunStatus components with vitest coverage, status footer probing
+`/healthz`. Design tokens per design brief §Design system (Inter, 8px grid) — brief is
+in the research corpus on the workstation; ask user to copy the §Design system extract
+if not already in docs/. Backend for dev: `cd backend && go run ./cmd/portal`
+(serves :8080; compose PG must be up: `npm run up`).
 
 ## Blocked / needs user
 
-- (nothing) — O-1 (dump artifact storage): only matters at WU-012; mock OK there,
-  minio WU-035.
+- (nothing) — WU-004 wants design-brief §Design system + Screen 1; if missing on VM,
+  request a copy from `P:/Projects/db-portal-research/05-claude-design-brief.md`.
+- O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
 
 ## Standing context (stable facts worth re-stating)
 
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
-- VM toolchain (audited): Docker 29.6.1, Compose v5.3.0, node 22.23.1, Python 3.12.3,
-  uv 0.11.27, git 2.43. Passwordless sudo; docker group active after next login.
+- Backend chassis (WU-003): config.Load(dotenv) merges env>file>defaults without
+  mutating process env; server.NewRouter(log, Pinger) is what tests exercise;
+  migrations live in backend/internal/db/migrations/ (goose, embed.FS);
+  `portal migrate up|down|status`; testutil.DB(t) skips when compose PG absent (CI-safe).
+- VM toolchain (audited): Docker 29.6.1, Compose v5.3.0, node 22.23.1, Go 1.26.4,
+  golangci-lint 2.12.2, git 2.43. CI = check.yml (no Postgres service — DB tests skip).
 - GitHub: private repo `ios9000/db-portal`; VM pushes via write-enabled deploy key
   (`~/.ssh/dbportal_deploy`, Host github.com stanza in VM ssh config).
 - Research corpus stays on the workstation (`P:/Projects/db-portal-research/`),
@@ -41,6 +50,6 @@ db-down 503 / config precedence), `-race` clean. Compose env from WU-002 is up o
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-06 — WU-000 done (VM audit evidence in BACKLOG/JOURNAL); active → WU-001.
-- 2026-07-06 — VM bootstrapped (docker/node/uv), deploy key added, repo cloned on VM.
-- 2026-07-06 — Pivot to cloud VM (ADR-009); repo pushed to GitHub.
+- 2026-07-07 — WU-003 done (aee80cc, evidence in BACKLOG/JOURNAL); active → WU-004.
+- 2026-07-06 — WU-002 done (44325db: compose postgres+mailpit, up/down/db-reset).
+- 2026-07-06 — WU-001R done (4122ac7: backend Python → Go per ADR-010).
