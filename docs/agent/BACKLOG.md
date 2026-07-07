@@ -164,21 +164,29 @@ keyed by env class (prod/nonprod separation from day one, per guardrail layer 3)
 **Verify:** `npm run check` (adapter tests visible in output).
 **Context brief:** ARCHITECTURE.md §4.1 + §Components→Execution engine; ADR-002; ADR-010.
 
-### WU-006 · Single-binary production build — S · `todo`
+### WU-006 · Single-binary production build — S · `done` (2026-07-07, commit 0922576)
+**Evidence:** `npm run check` green (webui tests visible, `-race`); `go build ./...`
+passed BEFORE dist copy (placeholder-only compile, AC2); `npm run build:release` →
+`backend/bin/portal` 17M, `file`/`ldd`: statically linked; binary run alone from an
+empty dir (no .env, no PG): `/` → 200 real index.html, `/healthz` → 503
+`{"db":"down","status":"degraded"}` (designed DB-less behavior), `/instances/42` →
+200 HTML (SPA fallback), `/api/nope` → 404 text/plain. Tree stays clean after
+build (embed dir gitignored except .gitkeep anchor).
 **Goal:** the ADR-010 payoff: one static binary serving API + embedded SPA.
 **Deliverables:** `go:embed` of `frontend/dist` (build step copies it into
 `backend/internal/webui/dist/`); SPA fallback handler (non-`/api` 404s → index.html);
 root script `build:release` = frontend build → copy → `go build -trimpath` →
 `backend/bin/portal`; dev mode unchanged (Vite proxy).
 **AC:**
-- [ ] `npm run build:release` emits ONE binary; `./backend/bin/portal` alone serves the
+- [x] `npm run build:release` emits ONE binary; `./backend/bin/portal` alone serves the
       UI shell and `/healthz` on a machine with nothing else installed.
-- [ ] Binary runs with a placeholder dist when frontend wasn't built (no compile break).
+- [x] Binary runs with a placeholder dist when frontend wasn't built (no compile break).
 **Verify:** run binary, curl `/` (HTML) and `/healthz` (JSON); `file` shows static-ish binary.
 **Context brief:** ADR-010; WU-003 server layout; WU-004 dist output.
 
 **M0 exit:** all Phase 0 WUs done + golden thread: backend up, frontend shell up, a
-MockEngine job runnable from a pytest — committed demo script proving it.
+MockEngine job runnable from a Go test — committed demo script proving it.
+*(“pytest” predates ADR-010.)*
 
 ---
 
