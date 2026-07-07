@@ -48,7 +48,18 @@ func TestHealthzDBDown(t *testing.T) {
 	require.Equal(t, map[string]string{"status": "degraded", "db": "down"}, body)
 }
 
-func TestUnknownRouteIs404(t *testing.T) {
-	resp, _ := get(t, fakePinger{}, "/nope")
+func TestUnknownAPIRouteIs404(t *testing.T) {
+	resp, _ := get(t, fakePinger{}, "/api/nope")
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// Non-API paths land on the embedded SPA (WU-006). A fresh checkout
+// embeds only the placeholder page, a release build the real dist —
+// either way the router must answer HTML with 200.
+func TestNonAPIRoutesServeSPA(t *testing.T) {
+	for _, path := range []string{"/", "/instances/42"} {
+		resp, _ := get(t, fakePinger{}, path)
+		require.Equal(t, http.StatusOK, resp.StatusCode, path)
+		require.Contains(t, resp.Header.Get("Content-Type"), "text/html", path)
+	}
 }

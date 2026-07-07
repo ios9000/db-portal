@@ -45,6 +45,8 @@ Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on t
 - `npm run check` — THE gate: backend (golangci-lint run, format-diff, `go test -race`)
   then frontend (oxlint, tsc -b, vitest). Must be green before any WU closes. Also runs in CI.
 - `npm run fmt` — auto-format both stacks (golangci-lint fmt · prettier).
+- `npm run build:release` — the ADR-010 artifact: fe build → embed copy →
+  static `backend/bin/portal` (serves SPA + API alone).
 - `npm run dev:fe` — Vite dev server. Backend: `cd backend && go run ./cmd/portal`
   (serves :8080; `migrate up|down|status` subcommand runs embedded goose migrations).
 - `up` / `down` / `db-reset` targets arrive with WU-002 (compose env).

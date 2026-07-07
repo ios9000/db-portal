@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/ios9000/db-portal/backend/internal/webui"
 )
 
 // Pinger reports database liveness; satisfied by *pgxpool.Pool.
@@ -24,6 +26,9 @@ func NewRouter(log *slog.Logger, db Pinger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger(log))
 	r.Get("/healthz", healthz(db))
+	// Everything unmatched goes to the embedded SPA (WU-006): real files
+	// as-is, client-side routes fall back to index.html, /api misses stay 404.
+	r.NotFound(webui.Handler().ServeHTTP)
 	return r
 }
 

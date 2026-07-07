@@ -1,6 +1,6 @@
 // Command portal is the DB Portal server binary.
 //
-//	portal                       serve the API (and, from WU-006, the SPA)
+//	portal                       serve the API + embedded SPA
 //	portal migrate up|down|status  run embedded goose migrations
 //	portal version               print the build version
 package main

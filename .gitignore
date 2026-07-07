@@ -5,4 +5,9 @@ node_modules/
 
 dist/
 
+# the go:embed dir is wiped+refilled by build:release; only its anchor is tracked
+!backend/internal/webui/dist/
+backend/internal/webui/dist/*
+!backend/internal/webui/dist/.gitkeep
+
 backend/bin/
