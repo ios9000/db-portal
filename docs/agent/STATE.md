@@ -5,12 +5,14 @@
 
 ## Now
 
-- **Active WU:** WU-012 — Catalog + run-now dump (hero). **Not started.**
-  O-1 note: mock artifact path is acceptable (metadata only) — not blocked.
-- **Status:** WU-011 DONE 2026-07-07 (s04, commit bc04f2d): inventory.Store +
-  GET /api/instances[?env=] + /{name}; MyDatabases cards/table UI (Screens 1–2
-  minus bulk actions). WU-010 DONE same session (5212481): migration 0002,
-  importer + quarantine, `portal import` CLI. Both CI-green.
+- **Active WU:** WU-013 — Run detail + live logs. **Not started.**
+  Needs a mini-ADR in-WU: SSE vs WebSocket for log streaming.
+- **Status:** WU-012 DONE 2026-07-07 (s04, commits 5139a28 + 26d09ed + 21d9e54):
+  SPEC-012, migration 0003 (run + append-only audit_event w/ trigger),
+  internal/catalog + internal/runs (engine seam wired via Registry, watcher,
+  orphan sweep), /api/operations + /api/runs endpoints, launch drawer +
+  Activity list. Hero flow verified live on the release binary. Same session:
+  WU-010 (5212481) + WU-011 (bc04f2d), both CI-green.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -19,17 +21,19 @@
 
 ## Next action (be exact)
 
-Start WU-012 from its BACKLOG entry (consider a just-in-time SPEC-012 first,
-like SPEC-010 — the WU is the widest in Phase 1; split note in BACKLOG: if it
-runs heavy, land audit migration + append-only grant tests, checkpoint, then
-the flow). Scope: operation catalog (data-driven, `dump` only), launch drawer
-(Screen 3 pattern), POST run → audit record (`submitted`) → MockEngine job via
-Registry (first portal wiring of the engine seam!) → status polling → run list
-in Activity. Audit schema per ARCHITECTURE.md §5: append-only from the first
-migration — app role gets NO UPDATE/DELETE grants; artifact = metadata only
-(O-1 mock path). Read ARCHITECTURE §3 (hero workflow) + §5 (audit), design
-brief Screen 3, WU-005 adapter contract. Dev DB is migrated + fixture-loaded;
-`npm run up` if compose is down.
+Start WU-013 from its BACKLOG entry in a FRESH session: run detail page
+(design brief Screen 5, adapted: single-step dump, no chain pipeline yet) —
+stage state + log pane streaming from the adapter's StreamLogs; follow mode;
+final status + artifact strip. FIRST decide SSE vs WebSocket via mini-ADR
+in the WU (lean SSE: one-way stream, plays nice with the single binary and
+plain fetch/EventSource; revisit if bidirectional needs appear). Backend:
+GET /api/runs/{id}/logs (stream endpoint bridging engine.StreamLogs — replay
+then follow is already the adapter contract). Frontend: Run detail route
+(link from Activity rows + drawer's started state), log pane, Follow toggle.
+Read: SPEC-012 (`docs/specs/runs.md`), WU-005 StreamLogs contract in
+`internal/engine/engine.go`, design brief Screen 5. Consider `portal` binary
+Cancel endpoint only if cheap — Abort button pairs with it (BACKLOG says
+WU-013 owns the detail page; cancel was deferred there by SPEC-012).
 
 ## Blocked / needs user
 
@@ -52,9 +56,24 @@ brief Screen 3, WU-005 adapter contract. Dev DB is migrated + fixture-loaded;
   GET /api/instances[?env=] → {"instances":[...]} (ordered by name, never null,
   snake_case fields, nullable → JSON null), /api/instances/{name} → 404 JSON
   {"error":...}. server.InstanceReader iface = handler seam (stub in CI, Store
-  satisfies). NewRouter(log, Pinger, InstanceReader). Frontend: MyDatabases
-  cards/table, view+env in URL search params, search client-side, env filter
-  server-side; placeholders "—" for health/backup/vacuum/bloat.
+  satisfies). Frontend: MyDatabases cards/table, view+env in URL search params,
+  search client-side, env filter server-side; "—" placeholders for
+  health/backup/vacuum/bloat.
+- Runs (WU-012 landed, SPEC-012 = docs/specs/runs.md): `run` = mutable
+  operational row; `audit_event` = append-only (trigger raises on
+  UPDATE/DELETE — works even for the dev table owner), one event per
+  transition (run.submitted / run.finished), env + playbook_tag stamped.
+  internal/runs.Service = ONLY place touching engine Registry: Start (run +
+  submitted audit in one tx → Registry.For fails closed → StartJob → watcher
+  goroutine polls Status → finalize), SweepOrphans on boot ("engine job lost
+  (portal restart)"), actor='local-dev' until WU-020/021. internal/catalog =
+  static op data (dump only), engine fields never serialized. API: GET
+  /api/operations, POST /api/runs (400 unknown op / 404 unknown instance /
+  502 engine refused — trail complete either way), GET /api/runs[?instance=]
+  + /{id}. Router deps = server.Deps{DB, Instances, Runs}. main wires
+  mock-prod + mock-nonprod MockEngines. Frontend: LaunchDrawer (consequence-
+  labeled button), Activity polls 3s live / 10s idle; RunStatus has canceled.
+  Cancel endpoint + live logs deliberately deferred to WU-013.
 - Test helper NEW: `testutil.MigratedDB(t)` = scratch DB + embedded migrations up,
   dropped on cleanup; use for schema-touching DB tests. `testutil.DB(t)` = dev DB,
   skips without compose PG. `goose down` reverts ONE migration (migrate_test walks).
@@ -87,6 +106,6 @@ brief Screen 3, WU-005 adapter contract. Dev DB is migrated + fixture-loaded;
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-07 — WU-012 done (hero flow live-verified); active → WU-013 (fresh session).
 - 2026-07-07 — WU-011 done (bc04f2d); active → WU-012 (hero flow).
 - 2026-07-07 — WU-010 done (5212481); dev DB fixture-loaded; active → WU-011.
-- 2026-07-07 — Phase 1 groomed (SPEC-010 + fixture); active → WU-010 (fresh session).

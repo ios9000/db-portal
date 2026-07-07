@@ -232,7 +232,18 @@ List/detail endpoints with env filter; cards view per design brief Screen 1 (hea
 badges, last-backup line) + `Cards ⇄ Table` toggle (Screen 2, minus bulk actions).
 **Context brief:** design brief Screens 1–2; WU-010 schema; EnvBadge from WU-004.
 
-### WU-012 · Catalog + run-now dump (hero) — M · `todo`
+### WU-012 · Catalog + run-now dump (hero) — M · `done` (2026-07-07, commits 5139a28+26d09ed+21d9e54)
+**Evidence:** `npm run check` green both stacks (Go `-race`: 7 runs-service tests on
+scratch DBs incl. failure injection, engine-refusal audit trail, orphan sweep, prod/nonprod
+routing; audit immutability tests; 8 stub handler tests run DB-free in CI; vitest 29/29
+with drawer + Activity coverage). SPEC-012 at `docs/specs/runs.md` (mini-ADRs: run
+mutable / audit_event append-only per transition; catalog in code; watcher goroutine;
+orphan sweep; actor='local-dev'). Live on the 18M release binary: POST dump on
+billing-test → queued w/ job `mock-nonprod-1` → success in ~1s with artifact metadata
+(name/1MiB/sha256); billing-prod run → job `mock-prod-1` (per-class adapters proven
+live); audit_event: submitted (final_status NULL) + finished (success) per run, env +
+playbook_tag stamped; psql UPDATE and DELETE on audit_event → trigger exception; unknown
+instance → 404, unknown operation → 400; drawer verified in the embedded bundle.
 Operation catalog (data-driven, `dump` only); launch drawer (Screen 3 pattern); POST run →
 audit record (`submitted`) → MockEngine job → status polling; run list in Activity.
 Audit schema per ARCHITECTURE.md §5 — append-only from the first migration
