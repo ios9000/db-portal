@@ -19,7 +19,7 @@ and technical ADRs (A — ours, supersedable). Never delete; supersede with a ne
 
 ## ADRs
 
-### ADR-001 · Stack: FastAPI + React/TypeScript — `proposed` (needs user confirm/veto)
+### ADR-001 · Stack: FastAPI + React/TypeScript — `accepted` (user confirmed 2026-07-06)
 Backend Python 3.12 + FastAPI + SQLAlchemy 2 + Alembic + pydantic-settings; portal store
 PostgreSQL 16. Frontend Vite + React + TS. **Why:** Python is the DBA-adjacent language
 (long-term maintainability, D7 owner is the DBA team); async-native fits log streaming;

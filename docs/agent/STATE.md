@@ -23,7 +23,11 @@
 
 ## Blocked / needs user
 
-- **ADR-001 (stack: FastAPI + React/TS)** still `proposed` — confirm/veto before WU-003/004.
+- **VM SSH access:** VM 80.85.254.99:22 reachable; key `wdsvc_openssh` (RSA-2048,
+  SHA256:zyIe0X8OiYMKSy5JwOl6zsvBlkxhtntEx9ivwUipxHc, staged at `~/.ssh/wdsvc_openssh`
+  on the workstation) is offered correctly but REJECTED for root/wdsvc/ubuntu/admin/debian.
+  Need from user: the correct SSH username, and/or install the public key into that
+  account's `authorized_keys` via the provider console.
 - O-1 (dump artifact storage): mock path OK until WU-012; minio planned WU-035.
 
 ## Standing context (stable facts worth re-stating)
