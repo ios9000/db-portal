@@ -19,7 +19,7 @@ and technical ADRs (A — ours, supersedable). Never delete; supersede with a ne
 
 ## ADRs
 
-### ADR-001 · Stack: FastAPI + React/TypeScript — `accepted` (user confirmed 2026-07-06)
+### ADR-001 · Stack: FastAPI + React/TypeScript — `superseded by ADR-010` (user veto 2026-07-06)
 Backend Python 3.12 + FastAPI + SQLAlchemy 2 + Alembic + pydantic-settings; portal store
 PostgreSQL 16. Frontend Vite + React + TS. **Why:** Python is the DBA-adjacent language
 (long-term maintainability, D7 owner is the DBA team); async-native fits log streaming;
@@ -86,6 +86,33 @@ minio as containers). Extra VMs (1 real playbook target; 3 Patroni rehearsal) re
 M3+ decision. **Consequences:** ADR-007 stands and simplifies (single shell); WU-000
 audit re-runs on the VM; local leftovers `P:\wsl\`, `C:\Users\Archer\.wslconfig` are
 disposable; `P:\Projects\db-portal` stays as a secondary clone.
+
+### ADR-010 · Backend: Go, shipped as a single binary — `accepted` (user directive 2026-07-06)
+User vetoed Python (ADR-001) requiring Go for **single-binary deployment**: one static
+artifact, no runtime on the host, `scp && run` operability — a real fit for a DBA-owned
+tool. Frontend stays React/TS/Vite (unchanged); in production its `dist/` is embedded
+into the Go binary via `go:embed` and served with an SPA fallback; in dev, Vite proxies
+`/api` to the Go server. Stack (researched 2026-07-06; latest stable Go, pinned via
+`go.mod` toolchain directive):
+
+| concern | choice | rejected & why |
+|---|---|---|
+| HTTP router | chi v5 (stdlib-compatible, middleware for auth/RBAC later) | gin (non-stdlib idioms), pure stdlib (kept as fallback — chi is removable) |
+| Postgres | pgx/v5 pool | database/sql+lib/pq (dated), GORM (runtime magic) |
+| Queries | sqlc (compile-time typed SQL) | GORM/ent (codegen weight, ORM drift vs DBA-first SQL culture) |
+| Migrations | goose v3, SQL files embedded in the binary | golang-migrate (fine, goose simpler to embed) |
+| Config | env vars via caarlos0/env; godotenv in dev | viper/koanf (overkill for 12-factor env) |
+| Logging | log/slog JSON (stdlib) | zap/zerolog (perf not needed; stdlib wins) |
+| Testing | stdlib testing + testify; `-race` in the gate | — |
+| Scheduler (WU-022) | robfig/cron/v3 | — |
+| Lint/format | golangci-lint v2 (standard linters + gofumpt/goimports formatters) | separate tools (aggregator is the ecosystem norm) |
+
+**Consequences:** ADR-007 unchanged (npm scripts stay; node exists for the frontend
+anyway) but `check:be` = `golangci-lint run` + format-diff + `go test -race ./...`;
+uv/Python leave the toolchain; CI gains setup-go + golangci-lint; pre-commit hook's
+backend branch checks Go formatting; new WU-006 (single-binary embed build) added;
+WU-003/WU-005 re-architected for Go idioms (interfaces + goroutines/channels for the
+MockEngine log streaming). The Python scaffold from WU-001 is removed by WU-001R.
 
 ## Open (inherited from architecture doc §10)
 

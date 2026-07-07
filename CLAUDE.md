@@ -42,19 +42,21 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 
 Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on the VM.
 
-- `npm run check` — THE gate: backend (ruff check+format, mypy strict, pytest) then
-  frontend (oxlint, tsc -b, vitest). Must be green before any WU closes. Also runs in CI.
-- `npm run fmt` — auto-format both stacks (ruff format+fix · prettier).
-- `npm run dev:fe` — Vite dev server. Backend dev server arrives with WU-003.
+- `npm run check` — THE gate: backend (golangci-lint run, format-diff, `go test -race`)
+  then frontend (oxlint, tsc -b, vitest). Must be green before any WU closes. Also runs in CI.
+- `npm run fmt` — auto-format both stacks (golangci-lint fmt · prettier).
+- `npm run dev:fe` — Vite dev server. Backend: `go run ./cmd/portal` (real server WU-003).
 - `up` / `down` / `db-reset` targets arrive with WU-002 (compose env).
 - Once per fresh clone: root `npm install` (wires `.githooks/` via prepare),
-  `cd backend && uv sync`, `cd frontend && npm ci`.
-- Frontend linter is **oxlint** (2026 Vite template default) — there is NO eslint here.
+  `cd frontend && npm ci`. Go deps resolve on first build (`go build ./...`).
+- Backend is **Go** (ADR-010; Python vetoed) — single-binary deployment, SPA embedded in
+  prod (WU-006). Frontend linter is **oxlint** (2026 Vite template) — NO eslint here.
 
 - Primary environment (ADR-009): cloud VM `dbportal-vm` (root@80.209.240.36, host
   "206610", 8 vCPU / 31 GB / 387 GB), repo at `/root/db-portal`. Bootstrapped via
   `infra/bootstrap-vm.sh`, audited 2026-07-06: Docker 29.6.1 + Compose v5.3.0 ·
-  node v22.23.1 / npm 10.9.8 · Python 3.12.3 · uv 0.11.27 · git 2.43 · Claude Code 2.1.202.
+  node v22.23.1 / npm 10.9.8 · **Go 1.26.4** · golangci-lint 2.12.2 · git 2.43 ·
+  Claude Code 2.1.202. (Python/uv left the stack with ADR-010.)
   (VM #1 at 80.85.254.99 is decommissioned; its deploy key is revoked.)
 - The Windows workstation clone (`P:\Projects\db-portal`) is secondary: docs work only,
   NO docker there (WSL track dead — ADR-008). It reaches the VM via `ssh dbportal-vm`

@@ -7,7 +7,7 @@ WU detail lives in `docs/agent/BACKLOG.md`; this file is the altitude view.
 ## M0 — Walking skeleton (WU-000…005)
 
 Toolchain audited; monorepo with lint/typecheck/test gates; compose dev env (Postgres,
-mailpit); FastAPI chassis with migrations + `/healthz`; frontend shell with the visual
+mailpit); Go server chassis with migrations + `/healthz`; frontend shell with the visual
 grammar (env badges, run-state chips); ExecutionAdapter seam + MockEngine.
 
 **Exit:** `check` green from clean clone; a MockEngine dump job runs from a test;

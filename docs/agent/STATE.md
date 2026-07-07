@@ -5,9 +5,11 @@
 
 ## Now
 
-- **Active WU:** WU-002 — Dev environment: docker-compose Postgres 16 + mailpit
-- **Status:** not started. WU-001 closed 2026-07-06 (commit bbae15c; CI green on clean
-  runner; hook rejection proven). Full gate: `npm run check`.
+- **Active WU:** WU-001R — Backend rework Python → Go (ADR-010; user vetoed Python for
+  single-binary deployment). WU-002 queues after it.
+- **Status:** Go 1.26.4 + golangci-lint 2.12.2 installed on VM; docs re-architected;
+  scaffold swap in progress. WU-001 (Python scaffold) was done at bbae15c — its gate
+  rigor carries over, its Python content gets removed.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -16,10 +18,11 @@
 
 ## Next action (be exact)
 
-Start WU-002 per its BACKLOG entry, ON THE VM: `infra/compose.yaml` (postgres:16 with
-healthcheck + mailpit), `.env.example`, root npm targets `up`/`down`/`db-reset`.
-Verify per the WU entry, then flip → done, STATE → WU-003. No open decisions block
-WU-002 or WU-003.
+Finish WU-001R per its BACKLOG entry, ON THE VM: remove Python backend files; write Go
+scaffold (go.mod toolchain-pinned, cmd/portal, internal/version + test, .golangci.yml v2);
+rewire root `check:be`/`fmt:be`, pre-commit hook Go branch, CI (setup-go + golangci-lint,
+drop uv); prove hook rejection with a bad .go; `npm run check` green; push; CI green;
+flip WU-001R → done; STATE → WU-002.
 
 ## Blocked / needs user
 

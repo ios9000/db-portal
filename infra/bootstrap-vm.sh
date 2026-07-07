@@ -31,8 +31,17 @@ if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1)" != "v22" ]; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
 fi
 
-echo "== uv =="
-command -v "$HOME/.local/bin/uv" >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+echo "== go (ADR-010) =="
+if ! command -v /usr/local/go/bin/go >/dev/null; then
+  GOVER=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
+  curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/${GOVER}.linux-amd64.tar.gz"
+  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
+  printf 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin\n' | sudo tee /etc/profile.d/go.sh >/dev/null
+fi
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+
+echo "== golangci-lint =="
+command -v golangci-lint >/dev/null || curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sudo sh -s -- -b /usr/local/bin
 
 echo "== git identity + github over 443 =="
 git config --global user.name  >/dev/null 2>&1 || git config --global user.name "Archer"
@@ -47,7 +56,7 @@ echo "== deploy key =="
 
 echo "== VERSIONS =="
 git --version; docker --version; docker compose version
-node -v; npm -v; python3 --version; "$HOME/.local/bin/uv" --version
+node -v; npm -v; go version; golangci-lint version
 
 echo "== smoke =="
 sudo docker run --rm hello-world | grep -m1 "Hello from Docker"

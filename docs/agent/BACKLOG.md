@@ -69,6 +69,23 @@ task-runner targets `check` (lint+typecheck+test, both stacks) and `fmt`; CI run
 **Verify:** `<runner> check` exit 0; `git commit` on a bad file rejected.
 **Context brief:** WU-000 results; ADR-001, ADR-005, ADR-007 in DECISIONS.md.
 
+### WU-001R · Backend rework: Python → Go (ADR-010) — M · `active`
+**Goal:** replace the Python backend scaffold with a Go one, same gate rigor, zero
+Python remnants.
+**Deliverables:** `backend/go.mod` (module `github.com/ios9000/db-portal/backend`,
+toolchain-pinned); `cmd/portal/main.go` (prints version — real server is WU-003);
+`internal/version/` + test; `.golangci.yml` (v2 config: standard linters, gofumpt+goimports
+formatters); root scripts `check:be`/`fmt:be` rewired; pre-commit hook Go branch; CI
+swaps uv→Go toolchain + golangci-lint; `infra/bootstrap-vm.sh` installs Go + golangci-lint;
+Python files (pyproject, uv.lock, src/, tests/) removed.
+**AC:**
+- [ ] `npm run check` green locally AND in CI (clean runner).
+- [ ] Pre-commit blocks an unformatted `.go` file (prove, revert).
+- [ ] `go build ./...` clean; no `*.py`/uv artifacts remain anywhere.
+- [ ] CLAUDE.md Commands + env bullets reflect Go toolchain.
+**Verify:** `npm run check` exit 0; CI run success; hook rejection demonstrated.
+**Context brief:** ADR-010; current backend/ layout; .githooks/pre-commit; .github/workflows/check.yml.
+
 ### WU-002 · Dev environment (docker-compose) — S · `todo`
 **Goal:** one command brings up portal Postgres 16 + mailpit (SMTP catcher); reset is cheap.
 **Deliverables:** `infra/compose.yaml`, `.env.example`, runner targets `up`/`down`/`db-reset`.
@@ -80,18 +97,18 @@ task-runner targets `check` (lint+typecheck+test, both stacks) and `fmt`; CI run
 `psql` connect with `.env.example`-shaped creds against dev password.
 **Context brief:** WU-001 layout; ARCHITECTURE.md §Deployment.
 
-### WU-003 · Backend skeleton — M · `todo`
-**Goal:** FastAPI app factory with settings, structured logging, migrations, test harness —
-the chassis every feature WU bolts onto.
-**Deliverables:** app factory + pydantic-settings (env-driven); `/healthz` (checks DB
-round-trip); alembic wired with migration 0001 (empty baseline); pytest + async test
-client + a DB-backed test fixture (transaction-rollback pattern); JSON structured logging.
+### WU-003 · Backend skeleton (Go chassis) — M · `todo`
+**Goal:** the Go server chassis every feature WU bolts onto.
+**Deliverables:** chi server with graceful shutdown; env config (caarlos0/env +
+godotenv in dev); `/healthz` (pgx pool ping → `{"status":"ok","db":"ok"}`); goose wired
+with migration 0001 (baseline) embedded via `embed.FS`; slog JSON logging + request-log
+middleware; httptest-based handler tests + a DB-backed test helper.
 **AC:**
-- [ ] `uvicorn` serves `/healthz` → `{"status":"ok","db":"ok"}` against compose Postgres.
-- [ ] `alembic upgrade head` / `downgrade base` both clean.
-- [ ] ≥3 tests: healthz ok, healthz with DB down (503), settings precedence. Suite < 30s.
-**Verify:** `<runner> check`; `curl localhost:8000/healthz`.
-**Context brief:** ADR-001; ARCHITECTURE.md §Components→Portal application; WU-002 env vars.
+- [ ] `go run ./cmd/portal` serves `/healthz` ok against compose Postgres.
+- [ ] `goose up` / `goose down` both clean (via a `migrate` subcommand on the binary).
+- [ ] ≥3 tests: healthz ok, healthz with DB down (503), config precedence. `-race` clean.
+**Verify:** `npm run check`; `curl localhost:8080/healthz`.
+**Context brief:** ADR-010; ARCHITECTURE.md §Components→Portal application; WU-002 env vars.
 
 ### WU-004 · Frontend shell — M · `todo`
 **Goal:** navigable app shell speaking to the backend; the visual grammar (env badges,
@@ -111,16 +128,30 @@ probing `/healthz`.
 ### WU-005 · ExecutionAdapter + MockEngine — M · `todo`
 **Goal:** the engine seam (THE architectural bet, ADR-002) proven with a fake engine good
 enough to build the whole UI against.
-**Deliverables:** `ExecutionAdapter` protocol — `start_job(template, params) -> job_id`,
-`get_status(job_id)`, `stream_logs(job_id) -> async iter`, `cancel(job_id)`; `MockEngine`
-simulating a dump job (realistic timed log lines, artifact metadata on success) with
-failure injection (`params={"mock_fail_at": "step"}`); engine registry keyed by env class
-(prod/nonprod separation exists from day one, per guardrail layer 3).
+**Deliverables:** `ExecutionAdapter` Go interface — `StartJob(ctx, template, params)
+(JobID, error)`, `Status(ctx, JobID)`, `StreamLogs(ctx, JobID) (<-chan LogLine, error)`,
+`Cancel(ctx, JobID)`; `MockEngine` (goroutine-driven, realistic timed log lines, artifact
+metadata on success) with failure injection (`params["mock_fail_at"]`); engine registry
+keyed by env class (prod/nonprod separation from day one, per guardrail layer 3).
 **AC:**
-- [ ] Unit tests: happy path, injected failure, cancel mid-run, two concurrent jobs isolated.
-- [ ] No portal code imports MockEngine directly — only via the adapter interface + registry.
-**Verify:** `<runner> check` (adapter tests visible in output).
-**Context brief:** ARCHITECTURE.md §4.1 + §Components→Execution engine; ADR-002.
+- [ ] Tests: happy path, injected failure, cancel mid-run, two concurrent jobs isolated —
+      all `-race` clean (channels + goroutines are exactly where races hide).
+- [ ] No portal code references MockEngine concretely — only the interface + registry.
+**Verify:** `npm run check` (adapter tests visible in output).
+**Context brief:** ARCHITECTURE.md §4.1 + §Components→Execution engine; ADR-002; ADR-010.
+
+### WU-006 · Single-binary production build — S · `todo`
+**Goal:** the ADR-010 payoff: one static binary serving API + embedded SPA.
+**Deliverables:** `go:embed` of `frontend/dist` (build step copies it into
+`backend/internal/webui/dist/`); SPA fallback handler (non-`/api` 404s → index.html);
+root script `build:release` = frontend build → copy → `go build -trimpath` →
+`backend/bin/portal`; dev mode unchanged (Vite proxy).
+**AC:**
+- [ ] `npm run build:release` emits ONE binary; `./backend/bin/portal` alone serves the
+      UI shell and `/healthz` on a machine with nothing else installed.
+- [ ] Binary runs with a placeholder dist when frontend wasn't built (no compile break).
+**Verify:** run binary, curl `/` (HTML) and `/healthz` (JSON); `file` shows static-ish binary.
+**Context brief:** ADR-010; WU-003 server layout; WU-004 dist output.
 
 **M0 exit:** all Phase 0 WUs done + golden thread: backend up, frontend shell up, a
 MockEngine job runnable from a pytest — committed demo script proving it.
