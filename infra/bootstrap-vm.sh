@@ -17,7 +17,7 @@ set -euo pipefail
 
 echo "== base packages =="
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates gcc
 
 echo "== docker =="
 if ! command -v docker >/dev/null; then

@@ -69,7 +69,11 @@ task-runner targets `check` (lint+typecheck+test, both stacks) and `fmt`; CI run
 **Verify:** `<runner> check` exit 0; `git commit` on a bad file rejected.
 **Context brief:** WU-000 results; ADR-001, ADR-005, ADR-007 in DECISIONS.md.
 
-### WU-001R · Backend rework: Python → Go (ADR-010) — M · `active`
+### WU-001R · Backend rework: Python → Go (ADR-010) — M · `done` (2026-07-06, commit 4122ac7)
+**Evidence:** `npm run check` CHECK-EXIT:0 on VM (golangci-lint 0 issues, fmt-diff clean,
+`go test -race` pass — needed `gcc` for cgo, added to bootstrap); CI **success** on clean
+runner; hook blocked a bad .go (`unused` linter caught it); `find` shows 0 `*.py`, 0
+`uv.lock`; backend/ = cmd + go.mod + internal only. Go 1.26.4, golangci-lint 2.12.2.
 **Goal:** replace the Python backend scaffold with a Go one, same gate rigor, zero
 Python remnants.
 **Deliverables:** `backend/go.mod` (module `github.com/ios9000/db-portal/backend`,

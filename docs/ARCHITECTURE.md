@@ -34,6 +34,9 @@ DBA (browser)          Active Directory
 
 **Portal app** — SPA + REST API; the only user-facing surface. Engine UIs are
 network-restricted. Server pushes run logs (SSE/WebSocket, WU-013 decides).
+Backend is a **single Go binary** (ADR-010): production embeds the built SPA via
+`go:embed` (WU-006) so one static artifact serves UI + API; dev runs Vite separately
+with an `/api` proxy.
 
 **ExecutionAdapter** (ADR-002) — `start_job(template, params) → job_id`,
 `get_status(job_id)`, `stream_logs(job_id)`, `cancel(job_id)`. Registry resolves engine
