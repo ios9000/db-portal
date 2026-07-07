@@ -30,8 +30,9 @@ MockEngine concretely (interface + registry only).
 - **Design brief extract** (nice-to-have, not blocking): copy §Design system + Screen 1
   from `P:/Projects/db-portal-research/05-claude-design-brief.md` to the VM (docs/specs/)
   so WU-004's placeholder hex tokens can be reconciled (icebox item).
-- CI status can't be verified FROM THE VM (`gh` not installed — icebox item); check
-  Actions on GitHub directly. Local `npm run check` (the same gate) is green.
+- `gh` 2.96.0 installed on VM + added to bootstrap-vm.sh (2026-07-07), but NOT yet
+  authenticated — user must run `gh auth login` (device flow) once; until then CI
+  status still can't be read from the VM. Local `npm run check` (the same gate) is green.
 - O-1 (dump artifact storage): only matters at WU-012; mock OK there, minio WU-035.
 
 ## Standing context (stable facts worth re-stating)

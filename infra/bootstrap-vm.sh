@@ -43,6 +43,16 @@ export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
 echo "== golangci-lint =="
 command -v golangci-lint >/dev/null || curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sudo sh -s -- -b /usr/local/bin
 
+echo "== gh cli (CI status checks from the VM; auth is manual: gh auth login) =="
+if ! command -v gh >/dev/null; then
+  sudo mkdir -p -m 755 /etc/apt/keyrings
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+  sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh
+fi
+
 echo "== git identity + github over 443 =="
 git config --global user.name  >/dev/null 2>&1 || git config --global user.name "Archer"
 git config --global user.email >/dev/null 2>&1 || git config --global user.email "ios900070025@proton.me"
@@ -56,7 +66,7 @@ echo "== deploy key =="
 
 echo "== VERSIONS =="
 git --version; docker --version; docker compose version
-node -v; npm -v; go version; golangci-lint version
+node -v; npm -v; go version; golangci-lint version; gh --version | head -1
 
 echo "== smoke =="
 sudo docker run --rm hello-world | grep -m1 "Hello from Docker"

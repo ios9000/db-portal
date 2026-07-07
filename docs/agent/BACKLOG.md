@@ -259,7 +259,6 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 
 - Bump GH Actions action versions (checkout/setup-node/setup-uv emit node20-deprecation warnings)
 - Reconcile WU-004 token hex values vs design brief §Design system once the extract is copied to the VM (`P:/Projects/db-portal-research/05-claude-design-brief.md`)
-- Install `gh` CLI on the VM (bootstrap-vm.sh) — CI runs can't be checked from the VM today
 
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
