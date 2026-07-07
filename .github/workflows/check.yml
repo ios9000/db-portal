@@ -11,8 +11,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
       - run: npm install --ignore-scripts
       - run: cd frontend && npm ci
-      - run: cd backend && uv sync
       - run: npm run check

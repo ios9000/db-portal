@@ -1,13 +1,13 @@
 #!/usr/bin/env sh
 # Fast gate on staged areas only; the full gate is `npm run check`.
 set -e
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$PATH:/usr/local/go/bin:$HOME/go/bin"
 staged=$(git diff --cached --name-only --diff-filter=ACM)
-if echo "$staged" | grep -q '^backend/.*\.py$'; then
-  echo "pre-commit: backend (ruff check + format)"
-  (cd backend && uv run ruff check . && uv run ruff format --check .)
+if echo "$staged" | grep -q '^backend/.*\.go$'; then
+  echo "pre-commit: backend (golangci-lint run + fmt check)"
+  (cd backend && golangci-lint run ./... && golangci-lint fmt --diff ./...)
 fi
 if echo "$staged" | grep -q '^frontend/src/'; then
-  echo "pre-commit: frontend (prettier + eslint)"
+  echo "pre-commit: frontend (prettier + lint)"
   (cd frontend && npx prettier --check src && npm run --silent lint)
 fi

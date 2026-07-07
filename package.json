@@ -4,10 +4,10 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "check": "npm run check:be && npm run check:fe",
-    "check:be": "cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q",
+    "check:be": "cd backend && golangci-lint run ./... && golangci-lint fmt --diff ./... && go test -race ./...",
     "check:fe": "cd frontend && npm run lint && npm run typecheck && npm run test:run",
     "fmt": "npm run fmt:be && npm run fmt:fe",
-    "fmt:be": "cd backend && uv run ruff format . && uv run ruff check --fix .",
+    "fmt:be": "cd backend && golangci-lint fmt ./...",
     "fmt:fe": "cd frontend && npx prettier --write src",
     "dev:fe": "cd frontend && npm run dev"
   }
