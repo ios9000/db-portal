@@ -201,7 +201,16 @@ compose PG up / 503 degraded without). Evidence in JOURNAL s03.
 > Sizes rechecked: all fit a session; WU-012 is the widest — if it runs heavy, land
 > the audit migration + append-only grant tests first, checkpoint, then the flow.
 
-### WU-010 · Inventory schema + CSV import — M · `todo`
+### WU-010 · Inventory schema + CSV import — M · `done` (2026-07-07, commit 5212481)
+**Evidence:** `npm run check` green (inventory tests `-race`: SPEC-010 behaviors 1–8 as
+table-driven parse tests + 6 DB tests on migrated scratch DBs via new `testutil.MigratedDB`).
+Real CLI on compose PG: fixture import #1 → `imported 8 new, updated 0, unchanged 0,
+quarantined 0`, #2 → `imported 0 new, updated 0, unchanged 8, quarantined 0` (8 instances /
+6 clusters both times); `malformed.csv` → `imported 2 new ... quarantined 7`, all 7 rejects
+queryable in `inventory_import_reject` with reasons (unknown env, blank + regex-violating
+names, non-numeric size_gb, wrong column count, duplicate-in-file, cluster platform
+conflict); bad header and missing file → exit 1, nothing written. Update path (test):
+changed pg_version → `updated 1, unchanged 7`, updated_at bumped, no duplicate row.
 Instance/cluster tables (env enum, platform, patroni ref, owner, maintenance window field —
 O-3); CSV import with per-row validation + quarantine for failures (no connectivity probe
 yet — that needs real targets; validation is structural). Import is idempotent (natural key).
