@@ -40,8 +40,16 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 
 ## Commands
 
-Task runner = root `package.json` npm scripts (ADR-007). Scaffolded by WU-001.
-Planned targets: `check` `fmt` `up` `down` `db-reset` `dev:be` `dev:fe`.
+Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on the VM.
+
+- `npm run check` — THE gate: backend (ruff check+format, mypy strict, pytest) then
+  frontend (oxlint, tsc -b, vitest). Must be green before any WU closes. Also runs in CI.
+- `npm run fmt` — auto-format both stacks (ruff format+fix · prettier).
+- `npm run dev:fe` — Vite dev server. Backend dev server arrives with WU-003.
+- `up` / `down` / `db-reset` targets arrive with WU-002 (compose env).
+- Once per fresh clone: root `npm install` (wires `.githooks/` via prepare),
+  `cd backend && uv sync`, `cd frontend && npm ci`.
+- Frontend linter is **oxlint** (2026 Vite template default) — there is NO eslint here.
 
 - Primary environment (ADR-009): cloud VM `dbportal-vm` (root@80.209.240.36, host
   "206610", 8 vCPU / 31 GB / 387 GB), repo at `/root/db-portal`. Bootstrapped via

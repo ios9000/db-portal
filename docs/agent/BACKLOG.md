@@ -49,18 +49,23 @@ CLAUDE.md "Commands" section updated with reality.
 **Verify:** each tool's `--version` output pasted into the journal `done` line.
 **Context brief:** this entry; CLAUDE.md.
 
-### WU-001 · Repo scaffold + quality gates — M · `active`
+### WU-001 · Repo scaffold + quality gates — M · `done` (2026-07-06, commit bbae15c)
+**Evidence:** `npm run check` exit 0 on VM; GitHub Actions run **success** on clean
+runner (the strongest clean-clone proof); pre-commit blocked a mis-formatted .py
+("1 file would be reformatted"), then reverted. Reality delta vs plan: 2026 Vite
+template ships **oxlint**, not eslint — hook and docs adapted; prettier still used
+for formatting. Backend: uv + ruff + mypy(strict) + pytest, hatchling src layout.
 **Goal:** monorepo skeleton with lint/typecheck/test gates wired, so every later WU
 inherits the global gate for free.
 **Deliverables:** `backend/` (Python project, empty package + 1 placeholder test),
 `frontend/` (Vite React-TS app, default build), `playbooks/`, `infra/`; root `.gitignore`,
-`.editorconfig`; pre-commit config (backend: ruff+format, frontend: eslint+prettier);
-task-runner targets `check` (lint+typecheck+test, both stacks) and `fmt`; CI stub
-(GitHub Actions yaml running `check`) — inert until a remote exists.
+`.editorconfig`; pre-commit hooks (backend: ruff+format, frontend: oxlint+prettier);
+task-runner targets `check` (lint+typecheck+test, both stacks) and `fmt`; CI running
+`check` on GitHub Actions.
 **AC:**
-- [ ] `check` target green from a clean clone on this machine.
-- [ ] Pre-commit blocks a deliberately mis-formatted file (prove it, then revert).
-- [ ] CLAUDE.md Commands section documents `check`, `fmt`, and how to run each stack's dev server (stubbed OK).
+- [x] `check` target green from a clean clone on this machine.
+- [x] Pre-commit blocks a deliberately mis-formatted file (prove it, then revert).
+- [x] CLAUDE.md Commands section documents `check`, `fmt`, and how to run each stack's dev server (stubbed OK).
 **Verify:** `<runner> check` exit 0; `git commit` on a bad file rejected.
 **Context brief:** WU-000 results; ADR-001, ADR-005, ADR-007 in DECISIONS.md.
 
@@ -201,6 +206,8 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 ---
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
+
+- Bump GH Actions action versions (checkout/setup-node/setup-uv emit node20-deprecation warnings)
 
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO

@@ -5,8 +5,9 @@
 
 ## Now
 
-- **Active WU:** WU-001 — Repo scaffold + quality gates (`docs/agent/BACKLOG.md`)
-- **Status:** not started. WU-000 closed 2026-07-06 with full VM audit evidence.
+- **Active WU:** WU-002 — Dev environment: docker-compose Postgres 16 + mailpit
+- **Status:** not started. WU-001 closed 2026-07-06 (commit bbae15c; CI green on clean
+  runner; hook rejection proven). Full gate: `npm run check`.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -15,11 +16,10 @@
 
 ## Next action (be exact)
 
-Start WU-001 per its BACKLOG entry, ON THE VM: monorepo skeleton (`backend/` uv-managed
-Python 3.12 + FastAPI placeholder test; `frontend/` Vite React-TS; `playbooks/`; `infra/`),
-root `package.json` npm-script targets `check`/`fmt`, pre-commit hooks, CI stub.
-ADR-001 (FastAPI+React/TS) and ADR-007 (npm scripts) are both accepted — no open
-decisions block WU-001 or WU-002.
+Start WU-002 per its BACKLOG entry, ON THE VM: `infra/compose.yaml` (postgres:16 with
+healthcheck + mailpit), `.env.example`, root npm targets `up`/`down`/`db-reset`.
+Verify per the WU entry, then flip → done, STATE → WU-003. No open decisions block
+WU-002 or WU-003.
 
 ## Blocked / needs user
 
