@@ -1,62 +1,69 @@
+/*
+ * Design tokens — the single place visual grammar is defined (WU-004).
+ * Source: design brief §Design system (Inter, 8px grid, env + status colors).
+ * Exact hex values pending the brief extract on this machine; these are
+ * accessible placeholders honoring the documented rules:
+ *   - PROD red / TEST amber / DEV gray, always paired with a text label
+ *     (redundant encoding — never color alone).
+ *   - All spacing on the 8px grid.
+ */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* type */
+  --font-sans: 'Inter Variable', Inter, system-ui, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* 8px grid */
+  --space-05: 4px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-6: 48px;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
+  /* surfaces & text */
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --border: #e2e8f0;
+  --text: #334155;
+  --text-muted: #64748b;
+  --text-strong: #0f172a;
+  --accent: #1d4ed8;
+
+  /* environment colors (EnvBadge + env banners) */
+  --env-prod-fg: #b42318;
+  --env-prod-bg: #fef3f2;
+  --env-prod-border: #fecdca;
+  --env-test-fg: #b54708;
+  --env-test-bg: #fffaeb;
+  --env-test-border: #fedf89;
+  --env-dev-fg: #364152;
+  --env-dev-bg: #f2f4f7;
+  --env-dev-border: #d0d5dd;
+
+  /* run status colors (RunStatus chips, health dots) */
+  --status-queued-fg: #475467;
+  --status-queued-bg: #f2f4f7;
+  --status-running-fg: #175cd3;
+  --status-running-bg: #eff8ff;
+  --status-success-fg: #067647;
+  --status-success-bg: #ecfdf3;
+  --status-failed-fg: #b42318;
+  --status-failed-bg: #fef3f2;
+  --status-halted-fg: #b54708;
+  --status-halted-bg: #fffaeb;
+
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
   box-sizing: border-box;
 }
 
@@ -64,46 +71,183 @@ body {
   margin: 0;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
   font-size: 24px;
-  line-height: 118%;
+  font-weight: 600;
   letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+  color: var(--text-strong);
+  margin: 0 0 var(--space-2);
+}
+
+/* ---- app shell ---- */
+
+.app {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-3);
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.brand {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.topbar nav {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.topbar nav a {
+  padding: var(--space-05) var(--space-2);
+  border-radius: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.topbar nav a:hover {
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.topbar nav a.active {
+  color: var(--text-strong);
+  background: var(--surface);
+}
+
+.content {
+  flex: 1;
+  padding: var(--space-4) var(--space-3);
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.placeholder {
+  color: var(--text-muted);
+}
+
+/* ---- status footer ---- */
+
+.status-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.status-footer .spacer {
+  flex: 1;
+}
+
+/* ---- shared chips ---- */
+
+.env-badge,
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px var(--space-1);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.env-badge {
+  border: 1px solid;
+  letter-spacing: 0.36px;
+}
+
+.env-badge.env-prod {
+  color: var(--env-prod-fg);
+  background: var(--env-prod-bg);
+  border-color: var(--env-prod-border);
+}
+
+.env-badge.env-test {
+  color: var(--env-test-fg);
+  background: var(--env-test-bg);
+  border-color: var(--env-test-border);
+}
+
+.env-badge.env-dev {
+  color: var(--env-dev-fg);
+  background: var(--env-dev-bg);
+  border-color: var(--env-dev-border);
+}
+
+.run-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.run-status.run-status-queued {
+  color: var(--status-queued-fg);
+  background: var(--status-queued-bg);
+}
+
+.run-status.run-status-running {
+  color: var(--status-running-fg);
+  background: var(--status-running-bg);
+}
+
+.run-status.run-status-running .dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.run-status.run-status-success {
+  color: var(--status-success-fg);
+  background: var(--status-success-bg);
+}
+
+.run-status.run-status-failed {
+  color: var(--status-failed-fg);
+  background: var(--status-failed-bg);
+}
+
+.run-status.run-status-halted {
+  color: var(--status-halted-fg);
+  background: var(--status-halted-bg);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
   }
 }
-p {
-  margin: 0;
+
+/* health dot in the footer reuses status colors */
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+.health-dot.ok {
+  background: var(--status-success-fg);
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+.health-dot.degraded {
+  background: var(--status-halted-fg);
+}
+
+.health-dot.unreachable {
+  background: var(--status-failed-fg);
 }
