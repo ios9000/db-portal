@@ -62,8 +62,8 @@ test('renders the run list with status chips, env badges and durations', async (
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3); // header + 2 runs
 
-  // Newest (running) run first, as served.
-  expect(within(rows[1]).getByText('RUN-2')).toBeInTheDocument();
+  // Newest (running) run first, as served; the run id links to its detail page.
+  expect(within(rows[1]).getByRole('link', { name: 'RUN-2' })).toHaveAttribute('href', '/runs/2');
   expect(within(rows[1]).getByText('Running')).toBeInTheDocument();
   expect(within(rows[1]).getByText('PROD')).toBeInTheDocument();
   expect(within(rows[1]).getByText('—')).toBeInTheDocument(); // no duration while live

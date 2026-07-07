@@ -105,8 +105,8 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
               <button type="button" className="btn-text" onClick={onClose}>
                 Close
               </button>
-              <Link className="btn-primary" to="/activity" onClick={onClose}>
-                View in Activity
+              <Link className="btn-primary" to={`/runs/${started.id}`} onClick={onClose}>
+                View run
               </Link>
             </footer>
           </>

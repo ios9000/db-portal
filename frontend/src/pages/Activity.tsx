@@ -1,32 +1,15 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import { EnvBadge } from '../components/EnvBadge';
 import { RunStatus } from '../components/RunStatus';
 import { ApiError, fetchRuns, type Run } from '../lib/api';
+import { formatDuration, formatTimestamp } from '../lib/format';
 
 const POLL_ACTIVE_MS = 3_000;
 const POLL_IDLE_MS = 10_000;
 
 function isTerminal(r: Run): boolean {
   return r.state === 'success' || r.state === 'failed' || r.state === 'canceled';
-}
-
-function formatSubmitted(iso: string): string {
-  return new Date(iso).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-/** Duration is defined only for finished runs (SPEC-012 — live elapsed is WU-013). */
-function formatDuration(r: Run): string {
-  if (r.started_at === null || r.finished_at === null) return '—';
-  const secs = Math.round(
-    (new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000,
-  );
-  if (secs < 60) return `${secs}s`;
-  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
 /**
@@ -100,14 +83,16 @@ export function Activity() {
                 <td>
                   <RunStatus status={r.state} />
                 </td>
-                <td className="instance-name">RUN-{r.id}</td>
+                <td className="instance-name">
+                  <Link to={`/runs/${r.id}`}>RUN-{r.id}</Link>
+                </td>
                 <td>{r.operation}</td>
                 <td>{r.instance}</td>
                 <td>
                   <EnvBadge env={r.environment} />
                 </td>
-                <td>{formatSubmitted(r.submitted_at)}</td>
-                <td>{formatDuration(r)}</td>
+                <td>{formatTimestamp(r.submitted_at)}</td>
+                <td>{formatDuration(r.started_at, r.finished_at)}</td>
               </tr>
             ))}
           </tbody>

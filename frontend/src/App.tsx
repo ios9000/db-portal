@@ -2,6 +2,7 @@ import { Navigate, NavLink, Route, Routes } from 'react-router';
 import { StatusFooter } from './components/StatusFooter';
 import { Activity } from './pages/Activity';
 import { MyDatabases } from './pages/MyDatabases';
+import { RunDetail } from './pages/RunDetail';
 import { Schedules } from './pages/Schedules';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
           <Route index element={<Navigate to="/databases" replace />} />
           <Route path="/databases" element={<MyDatabases />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route
             path="*"

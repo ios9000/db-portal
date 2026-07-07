@@ -117,6 +117,62 @@ export async function fetchRuns(): Promise<Run[]> {
   return (await getJSON<{ runs: Run[] }>('/api/runs')).runs;
 }
 
+export async function fetchRun(id: number): Promise<Run> {
+  return getJSON<Run>(`/api/runs/${id}`);
+}
+
+/**
+ * Ask the engine to stop a run (WU-013). A resolved promise means the
+ * cancel was accepted (202) — the run reaches `canceled` asynchronously,
+ * observed via polling. 409 = not cancelable (already finished).
+ */
+export async function cancelRun(id: number): Promise<void> {
+  await postJSON<{ status: string }>(`/api/runs/${id}/cancel`, {});
+}
+
+/** One `log` event from GET /api/runs/{id}/logs (SSE, WU-013). */
+export interface RunLogLine {
+  ts: string;
+  line: string;
+}
+
+export interface RunLogStreamHandlers {
+  /** Fires on every (re)connect. The server replays the full history each
+   * time, so reset any line buffer here. */
+  onOpen: () => void;
+  onLine: (line: RunLogLine) => void;
+  /** The run finished and the stream is complete; the source is closed. */
+  onEnd: () => void;
+  /** Terminal refusal (unknown run, logs gone after a portal restart):
+   * the source is closed and will not retry. */
+  onUnavailable: () => void;
+}
+
+/**
+ * Open the live log stream for a run (SPEC-013: replay, then follow, then
+ * one `end` event). Returns a close function — always call it on cleanup.
+ * Network drops are retried by EventSource itself (see onOpen).
+ */
+export function openRunLogStream(id: number, h: RunLogStreamHandlers): () => void {
+  const es = new EventSource(`/api/runs/${id}/logs`);
+  es.onopen = () => h.onOpen();
+  es.addEventListener('log', (e: MessageEvent<string>) => {
+    h.onLine(JSON.parse(e.data) as RunLogLine);
+  });
+  es.addEventListener('end', () => {
+    es.close();
+    h.onEnd();
+  });
+  es.onerror = () => {
+    // A CLOSED source means the server refused the stream (404/410) —
+    // EventSource only auto-retries from the CONNECTING state.
+    if (es.readyState === EventSource.CLOSED) {
+      h.onUnavailable();
+    }
+  };
+  return () => es.close();
+}
+
 /** Launch an operation. The consequence-labeled button calls this. */
 export async function startRun(instance: string, operation: string, reason: string): Promise<Run> {
   return postJSON<Run>('/api/runs', { instance, operation, reason });

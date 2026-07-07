@@ -186,7 +186,10 @@ test('Backup opens the launch drawer and starts a run', async () => {
   await user.click(within(drawer).getByRole('button', { name: 'Run backup on billing-test' }));
 
   expect(await within(drawer).findByRole('status')).toHaveTextContent('Run #42 started');
-  expect(within(drawer).getByRole('link', { name: 'View in Activity' })).toBeInTheDocument();
+  expect(within(drawer).getByRole('link', { name: 'View run' })).toHaveAttribute(
+    'href',
+    '/runs/42',
+  );
 
   const post = mock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST');
   expect(post).toBeDefined();
