@@ -40,14 +40,15 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 
 ## Commands
 
-Task runner = root `package.json` npm scripts (ADR-007; works in Git Bash AND PowerShell).
-Scaffolded by WU-001; until then only the environment facts below are real.
+Task runner = root `package.json` npm scripts (ADR-007). Scaffolded by WU-001.
+Planned targets: `check` `fmt` `up` `down` `db-reset` `dev:be` `dev:fe`.
 
-- Toolchain (audited 2026-07-06): node 22 / npm 10 · python 3.14.2 (`python -m pip`;
-  uv arrives in WU-001) · git 2.52 · gh 2.91 · NO just/make — don't invoke them.
-- Containers (ADR-008): docker lives INSIDE WSL distro `dbportal-dev` (root-default).
-  Invoke as `wsl -d dbportal-dev -u root -e docker …` — plain `docker` does not exist
-  on Windows PATH. Planned npm targets: `check` `fmt` `up` `down` `db-reset` `dev:be` `dev:fe`.
+- Primary environment (ADR-009): a dedicated cloud Ubuntu 24.04 VM — native docker,
+  node 22, uv. First VM session: follow STATE.md "Next action" (bootstrap + WU-000 re-audit),
+  then replace this bullet with the audited versions.
+- The Windows workstation clone (`P:\Projects\db-portal`) is secondary: docs work only,
+  NO docker there (WSL track dead — ADR-008). Research corpus lives there:
+  `P:/Projects/db-portal-research/`.
 
 ## Repo map
 

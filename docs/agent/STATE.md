@@ -5,48 +5,38 @@
 
 ## Now
 
-- **Active WU:** WU-000 — Toolchain audit & task-runner decision (`docs/agent/BACKLOG.md`)
-- **Status:** audit done; ADR-007 accepted; ADR-008 accepted (WSL2 + docker-ce).
-  Provisioning hit a **disk-space incident** — C: at 99% (861MB free), which is the
-  likely cause of the WSL2 `Wsl/Service/CreateInstance/E_FAIL` (VM can't allocate
-  swap/VHDX). WSL1 boot of the distro works → image and registration are good.
+- **Active WU:** WU-000 — Toolchain audit (RE-RUN on the new machine; see Next action)
+- **Status:** development is MIGRATING to a dedicated cloud VM (ADR-009). The GitHub
+  repo is the source of truth; the Windows workstation (`P:\Projects\db-portal`) is a
+  secondary clone. If you are reading this ON the VM: you are the primary environment.
 - **Branch:** main (docs only, no code yet)
 
-## Next action (be exact)
+## Next action (be exact) — first session on the VM
 
-Execute the disk remediation the user approves (see Blocked), then: re-import distro
-`dbportal-dev` to `P:\wsl\dbportal-dev --version 2` (re-download image from
-cdimage.ubuntu.com/ubuntu-wsl/noble/daily-live/current/noble-wsl-amd64.wsl — local copy
-was deleted to free space), write `~/.wslconfig` with swap+swapfile pointed at P: and a
-memory cap, boot test, install docker-ce (get.docker.com), `docker run hello-world`,
-`docker compose version`. Then close WU-000: BACKLOG → done, CLAUDE.md already updated,
-journal with evidence, STATE → WU-001, commit.
+1. Bootstrap (once): docker via `curl -fsSL https://get.docker.com | sh`, node 22 LTS,
+   `uv` (astral.sh installer), git identity, `docker run hello-world`.
+2. Re-run WU-000 on this machine: record tool versions in the BACKLOG WU-000 entry
+   (append a "VM audit" row set), confirm ADR-007 (npm scripts — now single-shell),
+   update CLAUDE.md "Commands" (drop the WSL invocation note — plain `docker` works).
+3. Flip WU-000 → `done` with version evidence in JOURNAL. STATE → WU-001. Commit, push.
+4. Proceed to WU-001 (repo scaffold) per BACKLOG.
 
-## Blocked / needs user (disk remediation choices)
+## Blocked / needs user
 
-- Delete orphaned Docker Desktop data `C:\Users\Archer\AppData\Local\Docker` (1.6 GB,
-  product uninstalled 2026-05-13, uninstaller left it behind)? → frees C: to ~2.9 GB.
-- Relocate dev sandbox (WSL distro, docker data, WSL swap) to P: (local NTFS "PG",
-  17 GB free)? Current 642 MB distro at `C:\wsl\dbportal-dev` would be unregistered.
 - **ADR-001 (stack: FastAPI + React/TS)** still `proposed` — confirm/veto before WU-003/004.
-
-## Provisioning facts (for the resuming session)
-
-- WSL 2.7.10 store version; kernel 6.18.33.2-2; `wsl --install -d Ubuntu` first-boot is
-  broken on this box (E_FAIL both fresh-install and clean import while C: was full) —
-  use the `wsl --import` path.
-- Distro `dbportal-dev` currently registered as **WSL1** at `C:\wsl\dbportal-dev`
-  (converted during diagnosis; WSL1 cannot run docker — do not build on it).
-- Deleted: `~/wsl-images/noble-wsl-amd64.wsl` (my download, re-fetchable).
+- O-1 (dump artifact storage): mock path OK until WU-012; minio planned WU-035.
 
 ## Standing context (stable facts worth re-stating)
 
-- Toolchain: node 22/npm 10, python 3.14.2 (pip via `python -m pip`), git 2.52, gh 2.91;
-  no docker/just/make/uv. Python 3.14 wheel risk → uv + possible 3.12 pin (WU-003).
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
-- Research corpus: `P:/Projects/db-portal-research/` — reference, not authority.
+- Research corpus stays on the workstation (`P:/Projects/db-portal-research/`) — it is
+  reference-only (ADR-006). Key extracts already live in docs/ (ARCHITECTURE, VISION);
+  if a WU needs a research file, ask the user to paste/copy it to the VM.
+- Windows-era forensics (WSL E_FAIL, NAT death, disk incident): JOURNAL 2026-07-06
+  entries + ADR-008. Do not resurrect the WSL track.
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-06 — WU-000 audit complete; ADR-007 accepted; blocked on ADR-008 (user).
-- 2026-07-06 — repo + agent-docs package created; no code yet.
+- 2026-07-06 — Pivot to cloud VM (ADR-009); repo pushed to GitHub; WU-000 to re-run on VM.
+- 2026-07-06 — WSL2 boots on P: after disk remediation, but NAT dead; repair needs admin.
+- 2026-07-06 — WU-000 audit complete; ADR-007 accepted; disk incident discovered.

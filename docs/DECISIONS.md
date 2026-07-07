@@ -68,16 +68,24 @@ Python 3.12 if 3.14 wheel gaps bite — decided in WU-003). **Rejected:** `just`
 install, low added value here), Make (absent on Windows), PowerShell-only scripts
 (break Git Bash usage).
 
-### ADR-008 · Dev containers: WSL2 + Docker Engine (docker-ce) — `accepted` (user, 2026-07-06)
-Docker Desktop was uninstalled 2026-05-13 and stays uninstalled. A dedicated WSL2 distro
-(`dbportal-dev`, Ubuntu 24.04, root-default — local sandbox, not multi-user) hosts
-docker-ce + compose v2. Provisioning is import-based (`wsl --import` of the Ubuntu .wsl
-image) because the tar-based `wsl --install` first-boot failed on this Win10 build
-(E_FAIL/E_UNEXPECTED at CreateInstance — known rough edge). Windows-side plumbing: npm
-scripts call `wsl -d dbportal-dev -u root -e docker …`; the `up` target starts dockerd
-first if needed. No VMs to order for development — WSL2 is the VM. Real Linux VMs become
-relevant only at M3+ (optional: 1 as a real SSH playbook target; 3 for a Patroni
-rehearsal) — decide then, not now.
+### ADR-008 · Dev containers: WSL2 + Docker Engine — `superseded by ADR-009`
+Was: dedicated WSL2 distro `dbportal-dev` with docker-ce. Provisioning succeeded only
+partially: disk exhaustion caused WSL2 E_FAIL (fixed by relocating to P:), after which
+the WSL NAT layer proved dead (gateway unreachable; stale HNS/WinNAT suspected; repair
+needs admin elevation this account lacks). Kept for the forensics: `wsl --install`
+first-boot is broken on this Win10 build — the `wsl --import` path works.
+
+### ADR-009 · Dev environment: dedicated cloud Linux VM — `accepted` (user, 2026-07-06)
+Supersedes ADR-008. Development — agent sessions included — moves to a single dedicated
+cloud VM: Ubuntu 24.04 LTS, 4 vCPU, 16 GB RAM (8 min), 100 GB SSD, SSH-only ingress.
+Claude Code runs ON the VM; repo is cloned from GitHub. **Why:** the workstation blocked
+on three independent walls — disk (60 GB @ 95%), privileges (no admin; WinNAT repair
+needs elevation), RAM (8 GB shared with host). Native Linux deletes the WSL/NAT/UAC
+problem class. One VM hosts everything through M3 (portal, Postgres, mailpit, Semaphore,
+minio as containers). Extra VMs (1 real playbook target; 3 Patroni rehearsal) remain an
+M3+ decision. **Consequences:** ADR-007 stands and simplifies (single shell); WU-000
+audit re-runs on the VM; local leftovers `P:\wsl\`, `C:\Users\Archer\.wslconfig` are
+disposable; `P:\Projects\db-portal` stays as a secondary clone.
 
 ## Open (inherited from architecture doc §10)
 
