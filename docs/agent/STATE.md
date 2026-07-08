@@ -5,18 +5,19 @@
 
 ## Now
 
-- **Active WU:** WU-015 — Prod guardrails. **Not started.**
-- **Status:** WU-014 DONE 2026-07-07 (s05, commits 7a6c97f + c9f7661):
-  SPEC-014, failure/cancel email via internal/notify (SMTP → mailpit; hook =
-  finalize() in runs.Service, the single seam — watcher, refusal, cancel and
-  orphan sweep all mailed live), content strictly who/what/where/status +
-  run link (no reason/error/params — leak channel, tested negatively),
-  best-effort post-commit send (never blocks finalization). GET /api/runs
-  gained state/env/operation filters (ANDed, unknown → empty) and
-  requested_by (from the submitted audit event). Activity = Screen 6 minus
-  approvals: filter chips in URL params, Now-running section, Requester
-  column, client-side CSV export. All verified live on the release binary;
-  check green both stacks.
+- **Active WU:** M1 close — demo script + golden-flow e2e + Phase 2 grooming. **Not started.**
+- **Status:** WU-015 DONE 2026-07-07 (s06, commit fc460d9): all four ARCHITECTURE
+  §4 guardrail layers live. SPEC-015 = docs/specs/guardrails.md. EnvBanner
+  (text+color, never color alone) on RunDetail + LaunchDrawer — single-env
+  contexts only, fleet screens keep per-row badges. Prod launch = typed exact
+  instance-name confirm (case-sensitive, paste/drop disabled, placeholder shows
+  the name — friction, not memory); non-prod one click unchanged. NOTE: the
+  ritual is client-side friction only — the API stays deliberately unguarded
+  until authz (WU-021). Registry.Register now PANICS if one adapter instance is
+  wired for two env classes (fail closed at boot). Tests pin env stamping: prod
+  audit rows both 'prod', audit_event.environment NULL → 23502. Verified live
+  on the release binary (run 10 → mock-prod job, audit stamped). Closes
+  WU-012's interim 1-click-prod risk. ALL Phase 1 WUs done; check green.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -25,16 +26,16 @@
 
 ## Next action (be exact)
 
-Start WU-015 from its BACKLOG entry in a FRESH session: prod guardrails —
-env-colored full-width banner on instance/run contexts; typed instance-name
-confirmation for prod actions (paste disabled), non-prod stays one click;
-assert env stamped in every audit row (schema already does it — add the
-test); assert guardrail layer 3 at the registry level (prod job MUST resolve
-a different engine config object than nonprod, even as mocks). Closing
-WU-015 closes the interim risk noted in WU-012 (prod dump currently
-1-click). After WU-015: M1 exit = the demo (docs/demo-m1.md, golden-flow
-e2e enters the global gate). Read: BACKLOG WU-015 entry; ARCHITECTURE.md §4
-(guardrails); design brief Screen 4 (adapt: no approval flow in MVP).
+Close M1 in a FRESH session. (1) Script `docs/demo-m1.md` per the BACKLOG
+WU-015 M1-exit paragraph: import CSV → see fleet → 1-click dump on a TEST
+instance → live logs → success with artifact → failure case with audit row +
+email → typed-name ritual on PROD; must run start-to-finish < 5 min. (2)
+Automate that script as the golden-flow e2e test and add it to the global
+gate (`npm run check` or a sibling target it calls — decide there, mini-ADR).
+(3) At M1 close, groom Phase 2 (WU-020 authn, WU-021 authz, WU-022 scheduler,
+WU-023 windows): specs just-in-time, size check, icebox sweep. Read: BACKLOG
+Phase 2 list; the M1-exit paragraph under WU-015; infra/demo-m0.sh as the
+prior demo-script shape.
 
 ## Blocked / needs user
 
@@ -43,6 +44,13 @@ e2e enters the global gate). Read: BACKLOG WU-015 entry; ARCHITECTURE.md §4
 ## Standing context (stable facts worth re-stating)
 
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
+- Guardrails (WU-015 landed, SPEC-015 = docs/specs/guardrails.md): EnvBanner
+  component (components/EnvBanner.tsx) on RunDetail + LaunchDrawer; prod
+  ritual in LaunchDrawer (`confirmed` gate on the primary button); Registry
+  panics on cross-class adapter sharing; env stamping pinned by tests
+  (23502 schema test + prod-rows assertions in runs service tests).
+  Required-reason-on-prod deferred with approvals (icebox); window warning
+  → WU-023; ritual actor/authz → WU-020/021.
 - Inventory (WU-010 landed): tables cluster (name UNIQUE, platform CHECK
   k8s_patroni|vm), instance (name = natural key UNIQUE, env CHECK dev|test|prod,
   size_gb numeric NULL, maintenance_window raw text — WU-022 owns semantics),
@@ -105,9 +113,10 @@ e2e enters the global gate). Read: BACKLOG WU-015 entry; ARCHITECTURE.md §4
   starts with no DB (lazy pool; /healthz → 503 degraded) — designed, not a bug.
   `sh infra/demo-m0.sh` = golden-thread smoke test.
 - Engine seam (WU-005): `internal/engine` — engine.Adapter iface; Registry.For(class)
-  + ClassForEnv(env) both fail closed; MockEngine via NewMockEngine; StreamLogs
-  replays then follows; Cancel async + idempotent; params["mock_fail_at"]="N"
-  injects failure. Only tests reference MockEngine concretely — portal wiring goes
+  + ClassForEnv(env) both fail closed; Register panics on cross-class adapter
+  sharing (WU-015); MockEngine via NewMockEngine; StreamLogs replays then
+  follows; Cancel async + idempotent; params["mock_fail_at"]="N" injects
+  failure. Only tests reference MockEngine concretely — portal wiring goes
   via Registry.
 - Backend chassis (WU-003): config.Load(dotenv) merges env>file>defaults;
   server.NewRouter(log, Deps) is what tests exercise (includes SPA fallback);
@@ -128,9 +137,11 @@ e2e enters the global gate). Read: BACKLOG WU-015 entry; ARCHITECTURE.md §4
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-07 — WU-015 done (guardrail layers 1–4 live-verified; Phase 1
+  complete); active → M1 close: demo-m1.md + golden-flow e2e + Phase 2
+  grooming (fresh session).
 - 2026-07-07 — WU-014 done (failure/cancel mail + Screen 6 Activity,
   live-verified incl. unattended orphan-sweep mail); active → WU-015 (fresh
   session).
 - 2026-07-07 — WU-013 done (SSE logs + cancel + RunDetail, live-verified; mock
   job-id aliasing bug fixed); active → WU-014 (fresh session).
-- 2026-07-07 — WU-012 done (hero flow live-verified); active → WU-013.

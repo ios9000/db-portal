@@ -288,7 +288,7 @@ Export CSV. Config: PORTAL_SMTP_FROM / PORTAL_NOTIFY_TO (empty=off) / PORTAL_BAS
 Deferred: user filter → WU-021; date range + pagination + server export → icebox.
 **Context brief:** design brief Screen 6; SPEC-012 §audit; internal/runs/service.go.
 
-### WU-015 · Prod guardrails — S · `todo`
+### WU-015 · Prod guardrails — S · `done` (2026-07-07, commit fc460d9)
 Env-colored full-width banner on instance/run contexts; typed instance-name confirmation
 for prod actions (paste disabled); non-prod = one click; env stamped in every audit row
 (already in schema — assert it in tests). Guardrail layer 3 (separate engine credentials)
