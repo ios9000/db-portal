@@ -28,6 +28,20 @@ func TestRegistryResolvesPerClass(t *testing.T) {
 	require.NotSame(t, gotProd, gotNonProd)
 }
 
+// SPEC-015 behavior 8 (guardrail layer 3, structural): one adapter instance
+// — one engine config/credential set — can never serve both env classes,
+// mocks included. Wiring that tries must die before the portal serves.
+func TestRegisterRejectsSharedAdapter(t *testing.T) {
+	shared := engine.NewMockEngine(engine.MockConfig{Name: "mock-shared", StepDelay: time.Millisecond})
+	r := engine.NewRegistry()
+	r.Register(engine.ClassProd, shared)
+
+	require.Panics(t, func() { r.Register(engine.ClassNonProd, shared) },
+		"same adapter instance for a second env class must panic")
+	// Same class again is idempotent wiring, not sharing.
+	require.NotPanics(t, func() { r.Register(engine.ClassProd, shared) })
+}
+
 func TestRegistryFailsClosedWhenUnregistered(t *testing.T) {
 	r := engine.NewRegistry()
 	_, err := r.For(engine.ClassProd)

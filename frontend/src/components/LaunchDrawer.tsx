@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { ApiError, startRun, type Instance, type Operation, type Run } from '../lib/api';
 import { EnvBadge } from './EnvBadge';
+import { EnvBanner } from './EnvBanner';
 
 interface Props {
   instance: Instance;
@@ -10,17 +11,23 @@ interface Props {
 }
 
 /**
- * Launch drawer (design brief Screen 3, adapted to the MVP catalog): target
- * restated with its env badge, catalog info chips, plain-language
- * description, optional reason, and a primary button labeled with the
- * consequence — never "OK" or "Submit". The typed-name prod ritual arrives
- * with WU-015; scheduling with WU-022.
+ * Launch drawer (design brief Screens 3–4, adapted to the MVP catalog):
+ * env banner, target restated with its env badge, catalog info chips,
+ * plain-language description, optional reason, and a primary button labeled
+ * with the consequence — never "OK" or "Submit". Prod adds the typed-name
+ * ritual (SPEC-015, guardrail layer 2): the button unlocks only when the
+ * operator has typed the exact instance name, paste disabled. Non-prod
+ * stays one click. Scheduling arrives with WU-022.
  */
 export function LaunchDrawer({ instance, operation, onClose }: Props) {
   const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [started, setStarted] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isProd = instance.env === 'prod';
+  const confirmed = !isProd || confirmName === instance.name;
 
   const launch = async () => {
     setSubmitting(true);
@@ -46,6 +53,8 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
         aria-label={`Run ${operation.label}`}
         onClick={(e) => e.stopPropagation()}
       >
+        <EnvBanner env={instance.env} />
+
         <header className="drawer-header">
           <span aria-hidden="true">{operation.icon}</span>
           <h2>Run {operation.label}</h2>
@@ -74,6 +83,23 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
               />
             </label>
 
+            {isProd && (
+              <label className="drawer-field">
+                To confirm, type the instance name{' '}
+                <span className="optional">(paste disabled)</span>
+                <input
+                  type="text"
+                  value={confirmName}
+                  onChange={(e) => setConfirmName(e.target.value)}
+                  onPaste={(e) => e.preventDefault()}
+                  onDrop={(e) => e.preventDefault()}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={instance.name}
+                />
+              </label>
+            )}
+
             {error !== null && (
               <p className="drawer-error" role="alert">
                 {error}
@@ -88,7 +114,7 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
                 type="button"
                 className="btn-primary"
                 onClick={() => void launch()}
-                disabled={submitting}
+                disabled={submitting || !confirmed}
               >
                 {submitting
                   ? 'Starting…'

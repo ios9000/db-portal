@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { EnvBadge } from '../components/EnvBadge';
+import { EnvBanner } from '../components/EnvBanner';
 import { RunStatus } from '../components/RunStatus';
 import {
   ApiError,
@@ -150,6 +151,8 @@ export function RunDetail() {
       <Link className="breadcrumb" to="/activity">
         ← Activity
       </Link>
+
+      <EnvBanner env={run.environment} />
 
       <header className="run-header">
         <h1>

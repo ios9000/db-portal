@@ -129,6 +129,8 @@ test('live run: header, stage panel, streamed log lines, follow on', async () =>
     await screen.findByRole('heading', { name: /RUN-7 · Backup · billing-test/ }),
   ).toBeInTheDocument();
   expect(screen.getByText('TEST')).toBeInTheDocument();
+  // Guardrail layer 1 (SPEC-015 behavior 1): the run context names its env.
+  expect(screen.getByText(/TEST environment/)).toHaveClass('env-banner', 'env-test');
   expect(await screen.findByText('Running')).toBeInTheDocument();
   expect(screen.getByText(/Database stays online/)).toBeInTheDocument();
 

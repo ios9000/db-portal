@@ -191,6 +191,36 @@ h1 {
   border-color: var(--env-dev-border);
 }
 
+/* Full-width env context banner (guardrail layer 1, SPEC-015). */
+.env-banner {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.env-banner.env-prod {
+  color: #ffffff;
+  background: var(--env-prod-fg);
+  border-color: var(--env-prod-fg);
+}
+
+.env-banner.env-test {
+  color: var(--env-test-fg);
+  background: var(--env-test-bg);
+  border-color: var(--env-test-border);
+}
+
+.env-banner.env-dev {
+  color: var(--env-dev-fg);
+  background: var(--env-dev-bg);
+  border-color: var(--env-dev-border);
+}
+
 .run-status .dot {
   width: 8px;
   height: 8px;

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -128,14 +129,43 @@ func TestStartHappyPath(t *testing.T) {
 	require.Equal(t, events[0].digest, events[1].digest)
 }
 
-// SPEC-012 behavior 3: a prod instance resolves the prod-class adapter.
+// SPEC-012 behavior 3 + SPEC-015 behavior 7: a prod instance resolves the
+// prod-class adapter, and BOTH its audit events carry environment='prod'
+// (guardrail layer 4 — detection needs the stamp on every row).
 func TestStartProdRoutesToProdAdapter(t *testing.T) {
-	svc, _ := newService(t)
+	svc, pool := newService(t)
 
 	run, err := svc.Start(context.Background(), "billing-prod", "dump", "", nil)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(*run.JobID, "mock-prod"), "got %s", *run.JobID)
 	waitTerminal(t, svc, run.ID)
+
+	events := auditEvents(t, pool, run.ID)
+	require.Len(t, events, 2)
+	for _, e := range events {
+		require.Equal(t, "prod", e.environment, "guardrail: env stamped on every audit row")
+	}
+}
+
+// SPEC-015 behavior 6: the environment stamp is un-omittable — the schema
+// itself refuses an audit row with NULL environment (not-null violation),
+// so guardrail layer 4 cannot silently regress in application code.
+func TestAuditEnvironmentNotNullable(t *testing.T) {
+	svc, pool := newService(t)
+
+	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+	waitTerminal(t, svc, run.ID)
+
+	// Clone a real event's keys so ONLY the NULL environment can fail.
+	_, err = pool.Exec(context.Background(), `
+		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest)
+		SELECT actor, action, run_id, instance_id, NULL, playbook_tag, params_digest
+		FROM audit_event WHERE run_id = $1 AND action = 'run.submitted'`, run.ID)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	require.Equal(t, "23502", pgErr.Code) // not_null_violation
+	require.Equal(t, "environment", pgErr.ColumnName)
 }
 
 // SPEC-012 behavior 2: injected engine failure lands as a failed run with
