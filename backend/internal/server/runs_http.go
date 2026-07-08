@@ -22,7 +22,7 @@ import (
 type RunService interface {
 	Start(ctx context.Context, instanceName, operationID, reason string, engineParams map[string]string) (runs.Run, error)
 	Get(ctx context.Context, id int64) (runs.Run, error)
-	List(ctx context.Context, instanceName string) ([]runs.Run, error)
+	List(ctx context.Context, filter runs.ListFilter) ([]runs.Run, error)
 	StreamLogs(ctx context.Context, id int64) (<-chan engine.LogLine, error)
 	Cancel(ctx context.Context, id int64) error
 }
@@ -72,10 +72,17 @@ func startRun(log *slog.Logger, rs RunService) http.HandlerFunc {
 	}
 }
 
-// listRuns answers GET /api/runs[?instance=name].
+// listRuns answers GET /api/runs[?instance=&state=&env=&operation=].
+// Filters compose (ANDed); unknown values match nothing (SPEC-014).
 func listRuns(log *slog.Logger, rs RunService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		list, err := rs.List(r.Context(), r.URL.Query().Get("instance"))
+		q := r.URL.Query()
+		list, err := rs.List(r.Context(), runs.ListFilter{
+			Instance:    q.Get("instance"),
+			State:       q.Get("state"),
+			Environment: q.Get("env"),
+			Operation:   q.Get("operation"),
+		})
 		if err != nil {
 			log.Error("list runs", "err", err.Error())
 			writeJSONError(w, http.StatusInternalServerError, "runs unavailable")

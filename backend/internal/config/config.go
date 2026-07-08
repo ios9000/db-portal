@@ -26,6 +26,13 @@ type Config struct {
 	DBUser     string `env:"PORTAL_DB_USER"   envDefault:"portal"`
 	DBPassword string `env:"PORTAL_DB_PASSWORD"`
 	DBName     string `env:"PORTAL_DB_NAME"   envDefault:"portal"`
+
+	// Notification mail (SPEC-014). NotifyTo empty = notifications off.
+	SMTPHost string `env:"PORTAL_SMTP_HOST" envDefault:"127.0.0.1"`
+	SMTPPort int    `env:"PORTAL_SMTP_PORT" envDefault:"1025"`
+	SMTPFrom string `env:"PORTAL_SMTP_FROM" envDefault:"portal@db-portal.local"`
+	NotifyTo string `env:"PORTAL_NOTIFY_TO"`
+	BaseURL  string `env:"PORTAL_BASE_URL"  envDefault:"http://localhost:8080"`
 }
 
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv
@@ -77,6 +84,23 @@ func LocateDotenv() string {
 		}
 		dir = parent
 	}
+}
+
+// SMTPAddr returns the notification SMTP endpoint as host:port.
+func (c Config) SMTPAddr() string {
+	return net.JoinHostPort(c.SMTPHost, strconv.Itoa(c.SMTPPort))
+}
+
+// NotifyRecipients parses PORTAL_NOTIFY_TO (comma-separated). An empty
+// result means notifications are disabled (SPEC-014).
+func (c Config) NotifyRecipients() []string {
+	out := []string{}
+	for _, s := range strings.Split(c.NotifyTo, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // DSN returns the portal database connection string.

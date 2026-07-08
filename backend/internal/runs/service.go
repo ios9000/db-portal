@@ -47,6 +47,13 @@ var (
 // (WU-020/021, SPEC-012 mini-ADR 6).
 const actor = "local-dev"
 
+// Notifier receives a copy of every run that ends not-success (SPEC-014).
+// Implementations MUST NOT include params, reason or log content in what
+// they send (D7 / ARCHITECTURE §2: who/what/where/status + link only).
+type Notifier interface {
+	RunEnded(ctx context.Context, run Run) error
+}
+
 // Service launches and tracks runs. Safe for concurrent use.
 type Service struct {
 	pool     *pgxpool.Pool
@@ -56,6 +63,11 @@ type Service struct {
 	// PollInterval is the watcher's engine-status poll cadence. Set before
 	// first use (tests use ~1ms; default suits the dev mock).
 	PollInterval time.Duration
+
+	// Notifier, when non-nil, is told about failed/canceled runs after
+	// they finalize. Best-effort: errors are logged, never propagated.
+	// Set before first use.
+	Notifier Notifier
 
 	wg sync.WaitGroup
 }
@@ -225,7 +237,31 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("runs: commit finalize: %w", err)
 	}
+	s.notifyEnded(runID, state)
 	return nil
+}
+
+// notifyEnded mails the DBA list about a not-success ending (SPEC-014
+// mini-ADRs 1+2): fired only after finalize committed, in a tracked
+// goroutine so a slow or dead SMTP host never blocks finalization.
+func (s *Service) notifyEnded(runID int64, state string) {
+	if s.Notifier == nil ||
+		(state != string(engine.StateFailed) && state != string(engine.StateCanceled)) {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ctx := context.Background() // outlives the finalizing caller
+		run, err := s.Get(ctx, runID)
+		if err != nil {
+			s.log.Error("notify: load run", "run", runID, "err", err.Error())
+			return
+		}
+		if err := s.Notifier.RunEnded(ctx, run); err != nil {
+			s.log.Error("run notification failed", "run", runID, "err", err.Error())
+		}
+	}()
 }
 
 // SweepOrphans finalizes runs that were still live when the previous

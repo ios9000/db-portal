@@ -21,14 +21,15 @@ import (
 // stubRuns fakes internal/runs for handler tests (the real Service is
 // covered by DB-backed tests in internal/runs).
 type stubRuns struct {
-	run       runs.Run
-	list      []runs.Run
-	err       error
-	started   *startRunCall
-	logs      []engine.LogLine
-	logsErr   error
-	cancelErr error
-	canceled  *int64
+	run        runs.Run
+	list       []runs.Run
+	err        error
+	started    *startRunCall
+	listFilter *runs.ListFilter
+	logs       []engine.LogLine
+	logsErr    error
+	cancelErr  error
+	canceled   *int64
 }
 
 type startRunCall struct {
@@ -50,7 +51,10 @@ func (s stubRuns) Get(context.Context, int64) (runs.Run, error) {
 	return s.run, nil
 }
 
-func (s stubRuns) List(context.Context, string) ([]runs.Run, error) {
+func (s stubRuns) List(_ context.Context, f runs.ListFilter) ([]runs.Run, error) {
+	if s.listFilter != nil {
+		*s.listFilter = f
+	}
 	return s.list, s.err
 }
 
@@ -171,6 +175,22 @@ func TestListRuns(t *testing.T) {
 	// Artifact serializes as explicit null until one exists.
 	require.Contains(t, body.Runs[0], "artifact")
 	require.Nil(t, body.Runs[0]["artifact"])
+}
+
+// SPEC-014 behavior 6 (handler half): query params land in ListFilter;
+// the SQL semantics live in the internal/runs tests.
+func TestListRunsForwardsFilters(t *testing.T) {
+	var got runs.ListFilter
+	ts := runsServer(t, stubRuns{listFilter: &got})
+
+	var body struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	resp := apiGet(t, ts, "/api/runs?instance=billing-test&state=failed&env=test&operation=dump", &body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, runs.ListFilter{
+		Instance: "billing-test", State: "failed", Environment: "test", Operation: "dump",
+	}, got)
 }
 
 func TestListRunsEmptyIsJSONArray(t *testing.T) {

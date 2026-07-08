@@ -2,10 +2,12 @@ package runs_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,6 +176,7 @@ func TestStartUnknownInstanceAndOperation(t *testing.T) {
 
 // SPEC-012 behavior 6: engine refusal (no adapter registered for the class)
 // still leaves a complete audit trail — submitted AND finished/failed.
+// SPEC-014 behavior 3: refusal notifies (it finalizes through the same seam).
 func TestStartEngineRefusalIsAudited(t *testing.T) {
 	pool := testutil.MigratedDB(t)
 	f, err := os.Open("../../../infra/fixtures/instances.csv")
@@ -184,6 +187,8 @@ func TestStartEngineRefusalIsAudited(t *testing.T) {
 
 	reg := engine.NewRegistry() // nothing registered: every class fails closed
 	svc := runs.NewService(pool, reg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rec := &recordingNotifier{}
+	svc.Notifier = rec
 
 	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
 	require.ErrorIs(t, err, runs.ErrEngine)
@@ -194,6 +199,9 @@ func TestStartEngineRefusalIsAudited(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, "run.submitted", events[0].action)
 	require.Equal(t, "failed", *events[1].finalStatus)
+
+	svc.Wait()
+	require.Len(t, rec.all(), 1, "engine refusal must notify")
 }
 
 // SPEC-012 behavior 7: non-terminal runs from a dead process are finalized
@@ -215,6 +223,8 @@ func TestSweepOrphans(t *testing.T) {
 		VALUES ('local-dev', 'run.submitted', $1, $2, 'test', 'dump', 'digest')`, runID, instanceID)
 	require.NoError(t, err)
 
+	rec := &recordingNotifier{}
+	svc.Notifier = rec
 	n, err := svc.SweepOrphans(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -224,6 +234,72 @@ func TestSweepOrphans(t *testing.T) {
 	require.Equal(t, "failed", run.State)
 	require.Contains(t, *run.Error, "engine job lost")
 	require.Equal(t, "failed", *auditEvents(t, pool, runID)[1].finalStatus)
+
+	svc.Wait()
+	require.Len(t, rec.all(), 1, "orphan sweep must notify (SPEC-014 behavior 3)")
+}
+
+// recordingNotifier is a runs.Notifier that captures every call; err, when
+// set, is returned to exercise the log-only error contract.
+type recordingNotifier struct {
+	mu  sync.Mutex
+	err error
+	got []runs.Run
+}
+
+func (n *recordingNotifier) RunEnded(_ context.Context, r runs.Run) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.got = append(n.got, r)
+	return n.err
+}
+
+func (n *recordingNotifier) all() []runs.Run {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]runs.Run(nil), n.got...)
+}
+
+// SPEC-014 behaviors 1, 2, 4: failed and canceled runs notify exactly once
+// (even when the notifier itself errors — log-only); success stays silent.
+func TestNotifierOnTerminalStates(t *testing.T) {
+	svc, pool := newServiceWithDelay(t, 50*time.Millisecond)
+	rec := &recordingNotifier{err: errors.New("smtp down")}
+	svc.Notifier = rec
+	ctx := context.Background()
+
+	okRun, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+	require.Equal(t, "success", waitTerminal(t, svc, okRun.ID).State)
+
+	failRun, err := svc.Start(ctx, "billing-test", "dump", "",
+		map[string]string{"mock_fail_at": "1"})
+	require.NoError(t, err)
+	require.Equal(t, "failed", waitTerminal(t, svc, failRun.ID).State)
+
+	abortRun, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+	require.NoError(t, svc.Cancel(ctx, abortRun.ID))
+	require.Equal(t, "canceled", waitTerminal(t, svc, abortRun.ID).State)
+
+	svc.Wait() // drain watcher + notifier goroutines before asserting
+
+	got := rec.all()
+	require.Len(t, got, 2, "success must not notify")
+	states := map[int64]string{}
+	for _, r := range got {
+		states[r.ID] = r.State
+		require.Equal(t, "local-dev", r.RequestedBy,
+			"notification carries the who (SPEC-014 mini-ADR 3)")
+		require.Equal(t, "billing-test", r.Instance)
+	}
+	require.Equal(t, "failed", states[failRun.ID])
+	require.Equal(t, "canceled", states[abortRun.ID])
+
+	// The notifier erroring every time changed nothing durable: runs are
+	// finalized and the audit trail is complete.
+	require.Len(t, auditEvents(t, pool, failRun.ID), 2)
+	require.Len(t, auditEvents(t, pool, abortRun.ID), 2)
 }
 
 // SPEC-012 behavior 8: newest-first list, instance filter, unknown filter
@@ -239,20 +315,57 @@ func TestList(t *testing.T) {
 	require.NoError(t, err)
 	waitTerminal(t, svc, second.ID)
 
-	all, err := svc.List(ctx, "")
+	all, err := svc.List(ctx, runs.ListFilter{})
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	require.Equal(t, second.ID, all[0].ID, "newest first")
+	for _, r := range all {
+		require.Equal(t, "local-dev", r.RequestedBy,
+			"SPEC-014: requester surfaces from the submitted audit event")
+	}
 
-	filtered, err := svc.List(ctx, "crm-test")
+	filtered, err := svc.List(ctx, runs.ListFilter{Instance: "crm-test"})
 	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	require.Equal(t, "crm-test", filtered[0].Instance)
 
-	none, err := svc.List(ctx, "ghost-instance")
+	none, err := svc.List(ctx, runs.ListFilter{Instance: "ghost-instance"})
 	require.NoError(t, err)
 	require.Empty(t, none)
 
 	_, err = svc.Get(ctx, 99999)
 	require.ErrorIs(t, err, runs.ErrNotFound)
+}
+
+// SPEC-014 behavior 6: state/env/operation filters compose (ANDed) and
+// unknown values match nothing.
+func TestListFilters(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	ok, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+	waitTerminal(t, svc, ok.ID)
+	bad, err := svc.Start(ctx, "billing-prod", "dump", "",
+		map[string]string{"mock_fail_at": "1"})
+	require.NoError(t, err)
+	waitTerminal(t, svc, bad.ID)
+
+	failed, err := svc.List(ctx, runs.ListFilter{State: "failed"})
+	require.NoError(t, err)
+	require.Len(t, failed, 1)
+	require.Equal(t, bad.ID, failed[0].ID)
+
+	prodDumps, err := svc.List(ctx, runs.ListFilter{Environment: "prod", Operation: "dump"})
+	require.NoError(t, err)
+	require.Len(t, prodDumps, 1)
+	require.Equal(t, bad.ID, prodDumps[0].ID)
+
+	disjoint, err := svc.List(ctx, runs.ListFilter{Instance: "billing-test", State: "failed"})
+	require.NoError(t, err)
+	require.Empty(t, disjoint, "filters must AND")
+
+	unknown, err := svc.List(ctx, runs.ListFilter{State: "warp-drive"})
+	require.NoError(t, err)
+	require.Empty(t, unknown, "unknown value filters to empty, not an error")
 }

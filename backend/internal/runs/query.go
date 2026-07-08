@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,7 @@ type Run struct {
 	Reason      *string    `json:"reason"`
 	Error       *string    `json:"error"`
 	JobID       *string    `json:"job_id"`
+	RequestedBy string     `json:"requested_by"`
 	SubmittedAt time.Time  `json:"submitted_at"`
 	StartedAt   *time.Time `json:"started_at"`
 	FinishedAt  *time.Time `json:"finished_at"`
@@ -32,10 +34,15 @@ type Artifact struct {
 	Checksum  string `json:"checksum"`
 }
 
+// requested_by surfaces the audit trail's actor on the read model
+// (SPEC-014 mini-ADR 6) instead of duplicating it onto the run row.
 const runColumns = `
 	SELECT r.id, i.name, r.environment, r.operation, r.state, r.reason, r.error,
 		r.job_id, r.submitted_at, r.started_at, r.finished_at,
-		r.artifact_name, r.artifact_size_bytes, r.artifact_checksum
+		r.artifact_name, r.artifact_size_bytes, r.artifact_checksum,
+		COALESCE((SELECT a.actor FROM audit_event a
+			WHERE a.run_id = r.id AND a.action = 'run.submitted'
+			ORDER BY a.id LIMIT 1), '') AS requested_by
 	FROM run r
 	JOIN instance i ON i.id = r.instance_id`
 
@@ -45,7 +52,7 @@ func scanRun(row pgx.Row) (Run, error) {
 	var artSize *int64
 	err := row.Scan(&r.ID, &r.Instance, &r.Environment, &r.Operation, &r.State,
 		&r.Reason, &r.Error, &r.JobID, &r.SubmittedAt, &r.StartedAt, &r.FinishedAt,
-		&artName, &artSize, &artSum)
+		&artName, &artSize, &artSum, &r.RequestedBy)
 	if err != nil {
 		return Run{}, err
 	}
@@ -67,14 +74,32 @@ func (s *Service) Get(ctx context.Context, id int64) (Run, error) {
 	return r, nil
 }
 
-// List returns the newest 50 runs, optionally filtered to one instance
-// name. An unknown name is a filter that matches nothing, not an error.
-func (s *Service) List(ctx context.Context, instanceName string) ([]Run, error) {
-	query, args := runColumns+` ORDER BY r.id DESC LIMIT 50`, []any{}
-	if instanceName != "" {
-		query = runColumns + ` WHERE i.name = $1 ORDER BY r.id DESC LIMIT 50`
-		args = []any{instanceName}
+// ListFilter narrows List. Zero values mean "any"; unknown values are
+// filters that match nothing, never errors (SPEC-014 mini-ADR 5).
+type ListFilter struct {
+	Instance    string
+	State       string
+	Environment string
+	Operation   string
+}
+
+// List returns the newest 50 runs matching the filter (fields ANDed).
+func (s *Service) List(ctx context.Context, f ListFilter) ([]Run, error) {
+	where, args := []string{}, []any{}
+	for col, val := range map[string]string{
+		"i.name": f.Instance, "r.state": f.State,
+		"r.environment": f.Environment, "r.operation": f.Operation,
+	} {
+		if val != "" {
+			args = append(args, val)
+			where = append(where, fmt.Sprintf("%s = $%d", col, len(args)))
+		}
 	}
+	query := runColumns
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY r.id DESC LIMIT 50"
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("runs: list: %w", err)

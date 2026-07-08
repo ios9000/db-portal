@@ -20,6 +20,7 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/db"
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
+	"github.com/ios9000/db-portal/backend/internal/notify"
 	"github.com/ios9000/db-portal/backend/internal/runs"
 	"github.com/ios9000/db-portal/backend/internal/server"
 	"github.com/ios9000/db-portal/backend/internal/version"
@@ -79,6 +80,17 @@ func run(log *slog.Logger, args []string) error {
 	registry.Register(engine.ClassNonProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}))
 
 	runSvc := runs.NewService(pool, registry, log)
+	// Failure/cancel mail to the DBA list (SPEC-014) — wired before the
+	// orphan sweep so unattended endings notify too. No recipients =
+	// notifications off, stated once so nobody hunts for missing mail.
+	if to := cfg.NotifyRecipients(); len(to) > 0 {
+		runSvc.Notifier = &notify.Mailer{
+			Addr: cfg.SMTPAddr(), From: cfg.SMTPFrom, To: to, BaseURL: cfg.BaseURL,
+		}
+		log.Info("run notifications enabled", "smtp", cfg.SMTPAddr(), "to", to)
+	} else {
+		log.Info("run notifications disabled (PORTAL_NOTIFY_TO is empty)")
+	}
 	// Finalize runs orphaned by a previous process (SPEC-012). A down DB
 	// must not stop the server (degraded mode) — warn and continue.
 	if n, err := runSvc.SweepOrphans(ctx); err != nil {
