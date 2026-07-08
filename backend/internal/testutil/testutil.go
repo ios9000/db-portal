@@ -1,4 +1,5 @@
-// Package testutil provides helpers for DB-backed tests. Tests that need
+// Package testutil provides helpers for integration-flavored tests:
+// dev/scratch databases and a capture-only SMTP server. Tests that need
 // the dev database skip (not fail) when it is unreachable, so the suite
 // stays green in environments without the compose stack (e.g. CI).
 package testutil

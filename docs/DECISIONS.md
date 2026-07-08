@@ -114,6 +114,20 @@ backend branch checks Go formatting; new WU-006 (single-binary embed build) adde
 WU-003/WU-005 re-architected for Go idioms (interfaces + goroutines/channels for the
 MockEngine log streaming). The Python scaffold from WU-001 is removed by WU-001R.
 
+### ADR-011 · Golden-flow e2e lives inside `go test`, not a new gate target — `accepted` (M1 close, 2026-07-08)
+The M1 golden-flow test (STRATEGY §7: dump run-now → status → audit, green every session)
+is a Go test at the HTTP seam — `backend/e2e/golden_flow_test.go` — driving the production
+wiring (router + runs.Service + per-class MockEngines + real SMTP mailer against an
+in-test server) on a migrated scratch DB via `testutil.MigratedDB`. It therefore runs
+inside `go test -race ./...`, i.e. inside the existing `npm run check` — the gate stays
+ONE command, no sibling target. Like every DB test it **skips when the compose Postgres
+is absent**, so today it guards the VM gate but silently skips in CI (no PG service —
+icebox item filed to add one). **Rejected:** browser automation (Playwright) — a whole
+toolchain for the two UI-only beats (typed-name prod ritual, EnvBanner) already pinned
+by vitest component tests; shell-script e2e à la `demo-m0.sh` — not `-race`'d, string
+assertions against psql output, and a second thing to keep green; separate `npm run e2e`
+target — gates that aren't THE gate rot. `docs/demo-m1.md` stays the human twin.
+
 ## Open (inherited from architecture doc §10)
 
 - **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real)
