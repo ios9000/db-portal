@@ -27,6 +27,7 @@ function makeRun(overrides: Partial<Run>): Run {
     reason: null,
     error: null,
     job_id: 'mock-nonprod-1',
+    requested_by: 'local-dev',
     submitted_at: '2026-07-07T12:31:00Z',
     started_at: '2026-07-07T12:31:01Z',
     finished_at: null,

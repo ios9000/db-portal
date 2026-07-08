@@ -562,6 +562,75 @@ tr.prod-edge td:first-child {
   border-top: 1px solid var(--border);
 }
 
+/* ---- Activity (design brief Screen 6, WU-014): now-running section ---- */
+
+.now-running {
+  margin-bottom: var(--space-3);
+}
+
+.now-running h2 {
+  margin: 0 0 var(--space-1);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.42px;
+}
+
+.live-run {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+}
+
+.live-run + .live-run {
+  margin-top: var(--space-1);
+}
+
+.live-run-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.live-run-elapsed {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* run progress is engine-side and unknowable in %, so: indeterminate */
+.progress-indeterminate {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--status-running-bg);
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-indeterminate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--status-running-fg);
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 /* ---- run detail (design brief Screen 5, WU-013) ---- */
 
 .breadcrumb {

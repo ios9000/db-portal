@@ -107,14 +107,32 @@ export interface Run {
   reason: string | null;
   error: string | null;
   job_id: string | null;
+  /** Actor from the audit trail ('local-dev' until WU-020/021). */
+  requested_by: string;
   submitted_at: string;
   started_at: string | null;
   finished_at: string | null;
   artifact: RunArtifact | null;
 }
 
-export async function fetchRuns(): Promise<Run[]> {
-  return (await getJSON<{ runs: Run[] }>('/api/runs')).runs;
+/**
+ * Server-side run filters (SPEC-014): fields AND together, an unknown
+ * value matches nothing (never an error). Values ride URL search params,
+ * so they stay plain strings.
+ */
+export interface RunFilter {
+  state?: string;
+  env?: string;
+  operation?: string;
+}
+
+export async function fetchRuns(filter: RunFilter = {}): Promise<Run[]> {
+  const params = new URLSearchParams();
+  if (filter.state) params.set('state', filter.state);
+  if (filter.env) params.set('env', filter.env);
+  if (filter.operation) params.set('operation', filter.operation);
+  const qs = params.toString();
+  return (await getJSON<{ runs: Run[] }>(qs ? `/api/runs?${qs}` : '/api/runs')).runs;
 }
 
 export async function fetchRun(id: number): Promise<Run> {
