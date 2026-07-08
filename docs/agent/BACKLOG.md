@@ -297,22 +297,81 @@ config object than nonprod, even while both are mocks.
 **Context brief:** ARCHITECTURE.md §4 (guardrails); design brief Screen 4 (adapt: no
 approval flow in MVP).
 
-**M1 exit = the demo:** import CSV → see fleet → run dump on a TEST instance (1 click) →
-watch live logs → succeed with artifact → audit row + email on a failure case → typed-name
-ritual on a PROD instance. Scripted in `docs/demo-m1.md`, runs start-to-finish < 5 min.
-Golden-flow e2e test (this script, automated) enters the global gate here.
+**M1 exit = the demo — CLOSED 2026-07-08 (s07, commit c0d1a5e).** `docs/demo-m1.md`
+live-verified on the release binary: import ×2 (8 new → 8 unchanged) → fleet 8 (`?env=test`
+→ 3) → dump billing-test success + artifact + SSE (7 log events, one `end`) → abort
+crm-test → mailpit `RUN-2 canceled — dump on crm-test (test)` → billing-prod on
+`mock-prod-…` → 6 audit rows env-stamped, UPDATE → "audit_event is append-only".
+Command-level flow ~4 s; human pace fits < 5 min. Automated twin
+`backend/e2e/golden_flow_test.go` in `go test -race ./...` = inside `npm run check`
+(ADR-011; skips without compose PG like every DB test — CI gap iceboxed). Typed-name
+ritual + EnvBanner stay vitest-pinned (UI-only beats). Multi-agent review gate =
+user-opt-in workflow (STRATEGY §6), pending.
 
 ---
 
-## Phase 2 — Auth, scheduling, windows (M2) — groom at M1 close
+## Phase 2 — Auth, scheduling, windows (M2)
 
-- WU-020 · AuthN: LDAP bind against AD (dev: bypass flag + fake directory), sessions,
-  break-glass local account (usage alarmed in audit) — M
-- WU-021 · AuthZ: portal-DB role store, DBA role, route guards; audit actor = AD identity — S
-- WU-022 · Portal-owned scheduler (ADR-003): schedule CRUD + jittered execution through the
-  SAME guardrail/audit path as run-now; `schedule:<owner>` actor — M
-- WU-023 · Maintenance windows warn-only: window field → warn banner + `window_warned`
-  audit flag — S
+> Groomed 2026-07-08 (s07, M1 close). Specs stay just-in-time: write `docs/specs/authn.md`
+> etc. at WU start, not before. Order is fixed: 020 → 021 (guards need sessions) → 022 →
+> 023 (windows warn on BOTH launch paths, so the scheduler must exist first).
+
+### WU-020 · AuthN: LDAP bind against AD — M · `pending`
+Login page + server sessions; AD LDAP bind (portal NEVER stores AD passwords —
+ARCHITECTURE §2 Identity); dev mode = bypass flag + fake in-process directory (CI-safe,
+same seam pattern as MockEngine); ONE break-glass local account whose every use writes
+an alarmed audit event (new `auth.break_glass` action). AuthZ/roles are NOT here — any
+authenticated user passes until WU-021. Size check: fits a session, but if it runs heavy
+land (a) session store + LDAP/fake-directory bind + middleware first, checkpoint, then
+(b) login UI + break-glass. go-ldap is the expected dep (mini-ADR it in the spec).
+**Verify:** unauthenticated `/api/*` → 401 (healthz exempt); fake-directory login sets a
+session and the SPA works end-to-end; break-glass login → audit row with alarmed action;
+bypass flag off = no bypass; `npm run check` green (golden flow must pass authenticated
+or via the dev bypass — decide the e2e wiring in the spec).
+**Context brief:** ARCHITECTURE §2 (Identity) + §4; D2/D3; internal/server/middleware.go
+(the middleware seam); server.Deps wiring in cmd/portal/main.go; backend/e2e (gate impact).
+
+### WU-021 · AuthZ: DBA role, route guards, real actor — M · `pending`
+Portal-DB role store (role table + user↦role, seeded DBA); route guards on every
+mutating endpoint (DBA-only per D2 — read endpoints stay role-gated-lite, decide in
+spec); audit actor = AD identity everywhere (replaces the `local-dev` constant in
+internal/runs). Carries the deferred ledger accumulated across Phase 1 — this is why it
+grew S → M: `run.canceled` audit action (SPEC-013 deferral), Activity requester/user
+filter (SPEC-014), prod-ritual server-side enforcement + actor on the ritual
+(SPEC-015 — the API stops being deliberately unguarded here).
+**Verify:** non-DBA user → 403 on POST /api/runs (audit records the denial — decide
+shape in spec); cancel writes `run.canceled` with the canceling actor; runs list
+`?requested_by=` filter; prod run submitted by an authenticated DBA carries their AD
+identity in both audit rows; `npm run check` green.
+**Context brief:** D2/D3; SPEC-012 §audit + SPEC-015 deferrals; internal/runs/service.go
+(actor constant); server router; WU-020's session context.
+
+### WU-022 · Portal-owned scheduler (ADR-003) — M · `pending`
+Schedule CRUD (table + API + the stub /schedules screen) for scheduled dumps (D4);
+executor = robfig/cron/v3 (ADR-010 table) in-process, jittered start, firing through
+runs.Service.Start — the SAME guardrail/audit path as run-now, actor =
+`schedule:<owner>`. Misfire policy (portal down at fire time), overlap policy (previous
+run still live), and enable/disable are spec decisions — mini-ADR each. Size check: if
+heavy, land schedule table + executor + audit attribution first, checkpoint, UI second.
+**Verify:** a schedule on a test instance fires within jitter bounds with full audit
+attribution (`schedule:<owner>` in both rows — ROADMAP M2 exit); disabled schedule never
+fires; portal restart neither double-fires nor silently drops a due schedule (per the
+spec'd misfire policy); `npm run check` green.
+**Context brief:** ADR-003; D4; internal/runs/service.go (Start seam); frontend
+/schedules stub route (App.tsx); WU-021 actor conventions.
+
+### WU-023 · Maintenance windows warn-only — S · `pending`
+Give `instance.maintenance_window` (raw text since WU-010, O-3) just enough semantics
+to warn: parse the fixture's `Day HH:MM-HH:MM` shape; launching OUTSIDE the window
+(drawer AND scheduler path) shows a warn banner — never blocks (D6) — and stamps a
+`window_warned` flag on the audit trail (schema addition, spec decides column vs
+action). Unparseable/empty window = no warning, logged once. Timezone: assume portal
+server TZ, mini-ADR it.
+**Verify:** launch outside window → banner + `window_warned` true in audit; inside →
+no flag; scheduled fire outside window carries the flag too; garbage window text never
+blocks a launch; `npm run check` green.
+**Context brief:** D6; O-3 (DECISIONS §Open); WU-010 schema (instance.maintenance_window);
+LaunchDrawer (frontend) + runs.Service.Start (stamp point); WU-022 executor path.
 
 ## Phase 3 — Restore, chains, real engine (M3) — groom at M2 close
 
@@ -337,6 +396,7 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
+- CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today)
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
 - Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
