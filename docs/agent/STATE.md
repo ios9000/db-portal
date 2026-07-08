@@ -5,16 +5,18 @@
 
 ## Now
 
-- **Active WU:** WU-014 — Audit UI + email notify. **Not started.**
-- **Status:** WU-013 DONE 2026-07-07 (s05, commits 29f81ee + f256b9b + 7d4422f):
-  SPEC-013, GET /api/runs/{id}/logs (SSE bridge over engine.StreamLogs:
-  replay → follow → one `end` event, 410 when logs are gone), POST
-  /api/runs/{id}/cancel (202 async, watcher finalizes `canceled`), RunDetail
-  page (/runs/:id — stage panel, dark log pane, Follow pill, live elapsed,
-  artifact strip, failed/canceled cards, Abort), links from Activity ids +
-  drawer "View run". Bug fixed en route: MockEngine job ids now nonce'd so
-  stale job_ids never alias to new jobs. All verified live on the release
-  binary; check green both stacks.
+- **Active WU:** WU-015 — Prod guardrails. **Not started.**
+- **Status:** WU-014 DONE 2026-07-07 (s05, commits 7a6c97f + c9f7661):
+  SPEC-014, failure/cancel email via internal/notify (SMTP → mailpit; hook =
+  finalize() in runs.Service, the single seam — watcher, refusal, cancel and
+  orphan sweep all mailed live), content strictly who/what/where/status +
+  run link (no reason/error/params — leak channel, tested negatively),
+  best-effort post-commit send (never blocks finalization). GET /api/runs
+  gained state/env/operation filters (ANDed, unknown → empty) and
+  requested_by (from the submitted audit event). Activity = Screen 6 minus
+  approvals: filter chips in URL params, Now-running section, Requester
+  column, client-side CSV export. All verified live on the release binary;
+  check green both stacks.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -23,19 +25,16 @@
 
 ## Next action (be exact)
 
-Start WU-014 from its BACKLOG entry in a FRESH session: Activity/history view
-(design brief Screen 6, minus approval rows — filters/export land here) +
-failure email via mailpit with a run link. Email content: who/what/where/
-status ONLY — no params, no log excerpts (leak risk). Compose already runs
-mailpit (dbportal-dev-mailpit-1, SMTP + HTTP UI). Hook the send into the
-finalize path in internal/runs (service is the single finalization point —
-watcher, engine-refusal and orphan sweep all pass through finalize(), so one
-seam covers all failure shapes). Needs SMTP config in config.Load (.env
-shape documented in .env.example, no secrets committed). Verify per BACKLOG:
-kill a mock run (mock_fail_at injection or abort) → mailpit shows the mail
-with the run link; audit row immutable (UPDATE attempt fails). Read: BACKLOG
-WU-014 entry; design brief Screen 6; SPEC-012 §audit; internal/runs/service.go
-finalize().
+Start WU-015 from its BACKLOG entry in a FRESH session: prod guardrails —
+env-colored full-width banner on instance/run contexts; typed instance-name
+confirmation for prod actions (paste disabled), non-prod stays one click;
+assert env stamped in every audit row (schema already does it — add the
+test); assert guardrail layer 3 at the registry level (prod job MUST resolve
+a different engine config object than nonprod, even as mocks). Closing
+WU-015 closes the interim risk noted in WU-012 (prod dump currently
+1-click). After WU-015: M1 exit = the demo (docs/demo-m1.md, golden-flow
+e2e enters the global gate). Read: BACKLOG WU-015 entry; ARCHITECTURE.md §4
+(guardrails); design brief Screen 4 (adapt: no approval flow in MVP).
 
 ## Blocked / needs user
 
@@ -70,27 +69,36 @@ finalize().
   (portal restart)"), actor='local-dev' until WU-020/021. internal/catalog =
   static op data (dump only), engine fields never serialized. API: GET
   /api/operations, POST /api/runs (400 unknown op / 404 unknown instance /
-  502 engine refused — trail complete either way), GET /api/runs[?instance=]
-  + /{id}. Router deps = server.Deps{DB, Instances, Runs}. main wires
-  mock-prod + mock-nonprod MockEngines. Frontend: LaunchDrawer (consequence-
-  labeled button), Activity polls 3s live / 10s idle; RunStatus has canceled.
+  502 engine refused — trail complete either way). Router deps =
+  server.Deps{DB, Instances, Runs}. main wires mock-prod + mock-nonprod.
 - Run detail + logs (WU-013 landed, SPEC-013 = docs/specs/run-detail.md):
-  GET /api/runs/{id}/logs = SSE (`log` events {ts,line} — replay then follow
-  per the WU-005 adapter contract — then ONE `end` event {state}, 15s
-  keepalive comments; 404 unknown, 410 logs-gone: no job / engine lost it;
-  logs are NOT persisted, by decision). POST /api/runs/{id}/cancel → 202
-  async (409 not-cancelable / 502 engine refused); watcher finalizes
-  `canceled`; NO cancel audit action until WU-021. runs.Service.StreamLogs +
-  Cancel = still the only Registry callers. Known spec'd lag: end-event state
-  can trail the watcher one poll; the UI closes the stream and re-polls.
-  MockEngine job ids are nonce'd (`mock-nonprod-<hex>-N`) — stale ids MUST
-  fail (JobID contract in engine.go). Frontend: /runs/:id (RunDetail), SSE
-  via lib/api.ts openRunLogStream (buffer resets on reconnect replay), Follow
-  pill, Abort locks until poll shows terminal; lib/format.ts shared by
-  Activity + RunDetail.
+  GET /api/runs/{id}/logs = SSE (`log` events replay→follow, ONE `end`
+  event, 15s keepalive; 404 unknown, 410 logs-gone; logs NOT persisted by
+  decision). POST /api/runs/{id}/cancel → 202 async (409/502); watcher
+  finalizes `canceled`; NO cancel audit action until WU-021. MockEngine job
+  ids nonce'd (`mock-nonprod-<hex>-N`) — stale ids MUST fail (JobID contract
+  in engine.go). Frontend: /runs/:id (RunDetail), SSE via openRunLogStream
+  (buffer resets on reconnect replay), Follow pill, Abort locks until poll
+  shows terminal; lib/format.ts shared.
+- Notify + Activity (WU-014 landed, SPEC-014 = docs/specs/activity-notify.md):
+  runs.Service.Notifier iface field (nil = off) fired from finalize() for
+  failed|canceled AFTER commit, tracked goroutine, log-only errors —
+  internal/notify.Mailer = SMTP impl (plain, no auth = mailpit-shaped).
+  Mail content contract: who/what/where/status + PORTAL_BASE_URL/runs/{id}
+  ONLY — never reason/error/params (tests assert absence). Config:
+  PORTAL_SMTP_HOST/PORT/FROM, PORTAL_NOTIFY_TO (comma list, EMPTY = off —
+  main logs which), PORTAL_BASE_URL. GET /api/runs filters:
+  ?instance=&state=&env=&operation= (runs.ListFilter, ANDed, unknown value
+  → empty list never error); run JSON has requested_by (actor of the
+  run.submitted audit event, via scalar subquery — not a run column).
+  Frontend: Activity = chips (state/env/op in URL params) + Now-running
+  section (indeterminate bar, 1s elapsed tick) + history table w/ Requester
+  + Export CSV (lib/csv.ts, table columns only, no error/reason). Deferred:
+  user filter → WU-021; date range/pagination/server export → icebox.
 - Test helper: `testutil.MigratedDB(t)` = scratch DB + embedded migrations up,
   dropped on cleanup; use for schema-touching DB tests. `testutil.DB(t)` = dev DB,
   skips without compose PG. `goose down` reverts ONE migration (migrate_test walks).
+  internal/notify tests run an in-test SMTP server (no compose dependency).
 - Single-binary (WU-006): `internal/webui.Handler()` = embedded SPA; build:release
   copies `frontend/dist` → `backend/internal/webui/dist/` (gitignored except
   .gitkeep). Dev unchanged: Vite :5173 proxies /api + /healthz → Go :8080. Binary
@@ -120,7 +128,9 @@ finalize().
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-07 — WU-014 done (failure/cancel mail + Screen 6 Activity,
+  live-verified incl. unattended orphan-sweep mail); active → WU-015 (fresh
+  session).
 - 2026-07-07 — WU-013 done (SSE logs + cancel + RunDetail, live-verified; mock
   job-id aliasing bug fixed); active → WU-014 (fresh session).
 - 2026-07-07 — WU-012 done (hero flow live-verified); active → WU-013.
-- 2026-07-07 — WU-011 done (bc04f2d); active → WU-012 (hero flow).

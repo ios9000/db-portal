@@ -269,10 +269,24 @@ elapsed, artifact strip, calm failed/canceled cards, Abort; linked from Activity
 drawer "View run".
 **Context brief:** design brief Screen 5; WU-005 `stream_logs` contract.
 
-### WU-014 · Audit UI + email notify — S · `todo`
-Activity/history view (Screen 6, minus approval rows); failure email via mailpit with
-run link. Email content: who/what/where/status — no params, no log excerpts (leak risk).
-**Verify:** kill a mock run → mailpit shows the mail; audit row immutable (UPDATE attempt fails).
+### WU-014 · Audit UI + email notify — S · `done` (2026-07-07, commits 7a6c97f+c9f7661)
+**Evidence:** `npm run check` green both stacks (Go `-race`: notify pkg vs in-test SMTP
+server incl. leak-channel negative assertions; notifier fires on failed+canceled+refusal+
+orphan-sweep, silent on success, log-only on SMTP error; ListFilter AND-composition tests;
+vitest 44/44 with rewritten Activity tests + csv unit tests). SPEC-014 at
+`docs/specs/activity-notify.md` (mini-ADRs: notify from finalize() = the single seam, on
+any not-success terminal; best-effort post-commit send never blocks finalization; content
+= who/what/where/status + link ONLY — no reason/error/params; filters server-side;
+requester surfaced from the submitted audit event; export = client-side CSV of the view).
+Live on the release binary: abort → mailpit `RUN-7 canceled — dump on billing-test (test)`
+with run link, zero leak strings; SIGKILL mid-run + restart → orphan sweep mailed
+`RUN-9 failed — dump on crm-test (test)` unattended; psql UPDATE and DELETE on
+audit_event → "audit_event is append-only"; `?state=failed` → only the swept run,
+`&env=prod` → [] (ANDed). Activity = Screen 6 minus approvals: filter chips in URL
+params, Now-running section (indeterminate bar + live elapsed), Requester column,
+Export CSV. Config: PORTAL_SMTP_FROM / PORTAL_NOTIFY_TO (empty=off) / PORTAL_BASE_URL.
+Deferred: user filter → WU-021; date range + pagination + server export → icebox.
+**Context brief:** design brief Screen 6; SPEC-012 §audit; internal/runs/service.go.
 
 ### WU-015 · Prod guardrails — S · `todo`
 Env-colored full-width banner on instance/run contexts; typed instance-name confirmation
@@ -326,6 +340,7 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
 - Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
+- Activity: date-range filter + pagination past 50 + server-side audit export (SPEC-014 deferred; client CSV caps at the view)
 - Inventory: UI/API upload + import-history screen (MVP import is `portal import` CLI — SPEC-010)
 - Inventory: Excel/.xlsx ingestion (MVP is CSV-only — SPEC-010)
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
