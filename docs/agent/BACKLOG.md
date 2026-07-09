@@ -315,7 +315,7 @@ DONE 2026-07-09 (s08) — see the M1-gate fix WUs below + docs/agent/reviews/m1-
 > scenarios + fix sketches: `docs/agent/reviews/m1-gate.md`. Order 016 → 017 → 018 →
 > 019; 019's CSV-injection item MUST precede WU-020 (real usernames).
 
-### WU-016 · M1-gate fix: run lifecycle integrity — M · `pending`
+### WU-016 · M1-gate fix: run lifecycle integrity — M · `done` (2026-07-09, commit 8531c68)
 Backend run state machine holes (findings 1, 2, 3, 9 in the gate record):
 (a) Start(): job_id-UPDATE failure after a successful StartJob strands the live engine
 job (run stuck `queued`, no watcher, no `run.finished` audit event) — make the
