@@ -122,6 +122,11 @@ func writeSSE(w http.ResponseWriter, fl http.Flusher, event string, data any) {
 	fl.Flush()
 }
 
+// endStateWait bounds how long the SSE end event waits for the watcher to
+// mirror the run's terminal state onto the row (the watcher's default poll
+// is 500ms, so 2s covers several polls). Var so tests can shrink it.
+var endStateWait = 2 * time.Second
+
 // streamRunLogs answers GET /api/runs/{id}/logs with an SSE stream
 // (SPEC-013): `log` events replaying then following the engine job's
 // output, then exactly one `end` event so EventSource clients know to
@@ -166,11 +171,24 @@ func streamRunLogs(log *slog.Logger, rs RunService) http.HandlerFunc {
 			select {
 			case l, open := <-ch:
 				if !open {
-					// The end state can lag the engine by one watcher poll;
-					// clients close the stream and re-fetch the run anyway.
+					// The engine closes the channel before the watcher's
+					// next poll mirrors the row, so wait (bounded) for the
+					// terminal state: SPEC-013 promises `end` carries the
+					// run's FINAL state. Past the deadline, send the last
+					// observed state — clients re-fetch the run anyway.
 					state := ""
-					if run, err := rs.Get(r.Context(), id); err == nil {
-						state = run.State
+					deadline := time.Now().Add(endStateWait)
+					for {
+						if run, err := rs.Get(r.Context(), id); err == nil {
+							state = run.State
+							if engine.JobState(state).Terminal() {
+								break
+							}
+						}
+						if time.Now().After(deadline) || r.Context().Err() != nil {
+							break
+						}
+						time.Sleep(25 * time.Millisecond)
 					}
 					writeSSE(w, fl, "end", map[string]string{"state": state})
 					return

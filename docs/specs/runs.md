@@ -35,8 +35,22 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
 5. **Orphan sweep.** MockEngine state dies with the process; on startup any
    non-terminal run is finalized `failed` with error `engine job lost
    (portal restart)` + audit event, so nothing sticks at "running" forever.
+   Per-run best effort (WU-016): a finalize failure is logged and skipped —
+   one broken run must not leave the other orphans live.
 6. **Actor placeholder.** No authn until WU-020: `actor = 'local-dev'`
    everywhere. WU-021 replaces it with the AD identity end to end.
+7. **Stranded-job repair (WU-016, m1-gate item 1).** If recording job_id
+   fails after StartJob succeeded, Start cancels the job (best effort) and
+   finalizes the run `failed` ("portal failed to record the engine job: …")
+   on a fresh context — chosen over retry-then-adopt for determinism; the
+   record failure is likely persistent and an untracked live job is worse
+   than a killed one. The audit trail records the attempt either way.
+8. **Single finalizer (WU-016, m1-gate item 2).** finalize's run UPDATE and
+   the watcher's status mirror both carry `AND state NOT IN
+   ('success','failed','canceled')`. Zero rows affected ⇒ another finalizer
+   won: finalize skips the audit event + notification (first outcome
+   stands), the watcher stops watching. Exactly one `run.finished` per run,
+   enforced at the SQL layer rather than by goroutine coordination.
 
 ## Data (migration 0003, goose embed)
 

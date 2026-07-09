@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -317,4 +318,61 @@ func TestCancelRunErrors(t *testing.T) {
 			require.NotEmpty(t, body["error"])
 		})
 	}
+}
+
+// lagThenTerminal mimics the real row lag behind the engine (m1-gate item
+// 3): the watcher only mirrors the terminal state a few polls after the
+// log channel closes.
+type lagThenTerminal struct {
+	stubRuns
+	gets atomic.Int32
+}
+
+func (s *lagThenTerminal) Get(context.Context, int64) (runs.Run, error) {
+	r := s.run
+	if s.gets.Add(1) <= 2 {
+		r.State = "running"
+	} else {
+		r.State = "success"
+	}
+	return r, nil
+}
+
+// SPEC-013: the end event must carry the run's TERMINAL state even though
+// the run row lags the engine by a watcher poll — the handler waits.
+func TestStreamRunLogsEndWaitsForTerminalState(t *testing.T) {
+	ts := runsServer(t, &lagThenTerminal{stubRuns: stubRuns{
+		run:  sampleRun(),
+		logs: []engine.LogLine{{TS: time.Now(), Line: "PLAY [dump] start"}},
+	}})
+
+	resp, err := http.Get(ts.URL + "/api/runs/7/logs")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "event: end\ndata: {\"state\":\"success\"}",
+		"end must wait out the watcher lag and report the terminal state")
+	require.Equal(t, 1, strings.Count(string(raw), "event: end"))
+}
+
+// The wait is bounded: if the row never reaches terminal (watcher wedged),
+// the stream still ends — with the last observed state — instead of
+// hanging the client forever.
+func TestStreamRunLogsEndDeadline(t *testing.T) {
+	t.Cleanup(server.SetEndStateWait(60 * time.Millisecond))
+	run := sampleRun()
+	run.State = "running" // never becomes terminal
+	ts := runsServer(t, stubRuns{
+		run:  run,
+		logs: []engine.LogLine{{TS: time.Now(), Line: "PLAY [dump] start"}},
+	})
+
+	resp, err := http.Get(ts.URL + "/api/runs/7/logs")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "event: end\ndata: {\"state\":\"running\"}")
+	require.Equal(t, 1, strings.Count(string(raw), "event: end"))
 }

@@ -69,6 +69,11 @@ type Service struct {
 	// Set before first use.
 	Notifier Notifier
 
+	// failRecordJobID (tests only, via export_test.go) forces the
+	// post-StartJob job-id record to fail so the stranded-job repair
+	// path is exercisable deterministically.
+	failRecordJobID error
+
 	wg sync.WaitGroup
 }
 
@@ -145,8 +150,20 @@ func (s *Service) Start(ctx context.Context, instanceName, operationID, reason s
 	if err == nil {
 		var jobID engine.JobID
 		if jobID, err = adapter.StartJob(ctx, op.Template, params); err == nil {
-			if _, uerr := s.pool.Exec(ctx, `UPDATE run SET job_id = $2, updated_at = now() WHERE id = $1`,
-				runID, string(jobID)); uerr != nil {
+			if uerr := s.recordJobID(ctx, runID, jobID); uerr != nil {
+				// The engine job is live but the portal can't track it:
+				// cancel it (best effort) and finalize failed so the run
+				// never sits 'queued' forever behind a running job
+				// (SPEC-012 mini-ADR 7). Fresh context — ctx may be the
+				// very reason the UPDATE failed.
+				rctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if cerr := adapter.Cancel(rctx, jobID); cerr != nil {
+					s.log.Error("stranded job cancel failed",
+						"run", runID, "job", string(jobID), "err", cerr.Error())
+				}
+				s.finalizeLogged(rctx, runID, string(engine.StateFailed),
+					"portal failed to record the engine job: "+uerr.Error(), nil, nil, nil)
 				return Run{}, fmt.Errorf("runs: record job id: %w", uerr)
 			}
 			s.wg.Add(1)
@@ -164,6 +181,18 @@ func (s *Service) Start(ctx context.Context, instanceName, operationID, reason s
 		return Run{}, gerr
 	}
 	return run, fmt.Errorf("%w: %s", ErrEngine, err.Error())
+}
+
+// recordJobID stores the engine job id on the run row — the link the
+// watcher, log streaming and cancel all depend on. Failure here means a
+// live job the portal can't see; Start repairs by canceling + finalizing.
+func (s *Service) recordJobID(ctx context.Context, runID int64, jobID engine.JobID) error {
+	if s.failRecordJobID != nil {
+		return s.failRecordJobID
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE run SET job_id = $2, updated_at = now() WHERE id = $1`,
+		runID, string(jobID))
+	return err
 }
 
 // watch polls the engine until the job is terminal, mirroring state into
@@ -184,10 +213,20 @@ func (s *Service) watch(runID int64, adapter engine.Adapter, jobID engine.JobID)
 				timePtr(st.Started), timePtr(st.Finished), st.Artifact)
 			return
 		}
-		if _, err := s.pool.Exec(ctx, `
-			UPDATE run SET state = $2, started_at = $3, updated_at = now() WHERE id = $1`,
-			runID, string(st.State), timePtr(st.Started)); err != nil {
+		// Same terminal guard as finalize: an unguarded mirror would
+		// resurrect a run that a competing finalizer (cancel race, sweep)
+		// already closed (SPEC-012 mini-ADR 8).
+		tag, err := s.pool.Exec(ctx, `
+			UPDATE run SET state = $2, started_at = $3, updated_at = now()
+			WHERE id = $1 AND state NOT IN ('success', 'failed', 'canceled')`,
+			runID, string(st.State), timePtr(st.Started))
+		switch {
+		case err != nil:
 			s.log.Error("run status mirror failed", "run", runID, "err", err.Error())
+		case tag.RowsAffected() == 0:
+			// The run was finalized under us; its outcome stands. Nothing
+			// left to watch.
+			return
 		}
 		time.Sleep(s.PollInterval)
 	}
@@ -217,14 +256,21 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 		now := time.Now().UTC()
 		finished = &now
 	}
-	if _, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE run SET state = $2, error = NULLIF($3, ''),
 			started_at = COALESCE($4, started_at), finished_at = $5,
 			artifact_name = $6, artifact_size_bytes = $7, artifact_checksum = $8,
 			updated_at = now()
-		WHERE id = $1`,
-		runID, state, errMsg, started, finished, name, size, checksum); err != nil {
+		WHERE id = $1 AND state NOT IN ('success', 'failed', 'canceled')`,
+		runID, state, errMsg, started, finished, name, size, checksum)
+	if err != nil {
 		return fmt.Errorf("runs: finalize run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Already terminal: another finalizer (watcher vs cancel vs sweep)
+		// won the race. The first outcome stands — no duplicate audit
+		// event, no notification (SPEC-012 mini-ADR 8).
+		return nil
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -286,13 +332,18 @@ func (s *Service) SweepOrphans(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("runs: sweep: %w", err)
 	}
 
+	// Per-run best effort: one broken run must not leave every other
+	// orphan stuck live for the process lifetime (m1-gate item 9).
+	swept := 0
 	for _, id := range ids {
 		if err := s.finalize(ctx, id, string(engine.StateFailed),
 			"engine job lost (portal restart)", nil, nil, nil); err != nil {
-			return 0, err
+			s.log.Error("orphan sweep: finalize failed", "run", id, "err", err.Error())
+			continue
 		}
+		swept++
 	}
-	return len(ids), nil
+	return swept, nil
 }
 
 // paramsDigest is the sha256 hex of the canonical (sorted-key JSON) params —

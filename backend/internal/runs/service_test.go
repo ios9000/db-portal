@@ -399,3 +399,73 @@ func TestListFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unknown, "unknown value filters to empty, not an error")
 }
+
+// m1-gate item 1: when recording the job id fails after StartJob succeeded,
+// the live engine job must not be stranded — Start cancels it (best effort)
+// and finalizes the run failed with a complete audit trail (mini-ADR 7).
+func TestStartRecordJobIDFailureRepairsRun(t *testing.T) {
+	svc, pool := newService(t)
+	svc.SetFailRecordJobID(errors.New("db hiccup"))
+
+	_, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	require.ErrorContains(t, err, "record job id")
+
+	var id int64
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT id FROM run ORDER BY id DESC LIMIT 1`).Scan(&id))
+	run, gerr := svc.Get(context.Background(), id)
+	require.NoError(t, gerr)
+	require.Equal(t, "failed", run.State, "run must not stay 'queued' behind a live job")
+	require.NotNil(t, run.Error)
+	require.Contains(t, *run.Error, "failed to record the engine job")
+
+	events := auditEvents(t, pool, id)
+	require.Len(t, events, 2, "submitted + finished — trail complete either way")
+	require.Equal(t, "run.submitted", events[0].action)
+	require.Equal(t, "run.finished", events[1].action)
+	require.NotNil(t, events[1].finalStatus)
+	require.Equal(t, "failed", *events[1].finalStatus)
+}
+
+// m1-gate item 2: a second finalizer must neither overwrite the terminal
+// outcome nor write a duplicate run.finished event (mini-ADR 8).
+func TestFinalizeIdempotent(t *testing.T) {
+	svc, pool := newService(t)
+	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+	final := waitTerminal(t, svc, run.ID)
+	require.Equal(t, "success", final.State)
+
+	// The losing side of a watcher-vs-cancel-vs-sweep race arrives late.
+	require.NoError(t, svc.Finalize(context.Background(), run.ID, "failed", "late loser"))
+
+	again, err := svc.Get(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Equal(t, "success", again.State, "first terminal outcome stands")
+	require.Nil(t, again.Error)
+	require.Len(t, auditEvents(t, pool, run.ID), 2, "exactly one run.finished")
+}
+
+// Two finalizers racing on a live run: exactly one wins, exactly one
+// run.finished event lands, and the watcher's own late finalize no-ops.
+func TestFinalizeConcurrentSingleWinner(t *testing.T) {
+	svc, pool := newServiceWithDelay(t, 100*time.Millisecond) // job stays live
+	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for _, st := range []string{"failed", "canceled"} {
+		wg.Add(1)
+		go func(st string) {
+			defer wg.Done()
+			require.NoError(t, svc.Finalize(context.Background(), run.ID, st, st))
+		}(st)
+	}
+	wg.Wait()
+	svc.Wait() // drain the watcher: its finalize must also lose quietly
+
+	got, err := svc.Get(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Contains(t, []string{"failed", "canceled"}, got.State)
+	require.Len(t, auditEvents(t, pool, run.ID), 2, "exactly one run.finished despite three finalizers")
+}

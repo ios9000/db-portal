@@ -57,7 +57,11 @@ approval flows (post-MVP).
   `data: {"ts":"<RFC3339Nano>","line":"<text>"}` (full replay first, then
   live follow — that ordering is the WU-005 adapter contract, not the
   handler's job); then exactly one `event: end` with
-  `data: {"state":"<final run state>"}`, then the stream closes.
+  `data: {"state":"<final run state>"}`, then the stream closes. The run
+  row lags the engine by up to one watcher poll, so the handler waits
+  (bounded, 2 s) for the row to reach a terminal state before emitting
+  `end`; past the deadline it sends the last observed state (WU-016,
+  m1-gate item 3).
   A `: keepalive` comment every 15s defeats idle-connection proxies.
   Errors (JSON body, no stream): 404 unknown run id; 410 logs unavailable
   (no engine job was ever started, or the engine no longer knows the job —
