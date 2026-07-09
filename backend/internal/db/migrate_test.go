@@ -48,9 +48,14 @@ func TestMigrateUpDown(t *testing.T) {
 	require.Equal(t, "0001", baseline)
 	require.True(t, tableExists(t, pool, "instance"), "0002 up must create the inventory tables")
 	require.True(t, tableExists(t, pool, "audit_event"), "0003 up must create the runs/audit tables")
+	require.True(t, columnExists(t, pool, "audit_event", "job_id"), "0004 up must add audit_event.job_id")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, columnExists(t, pool, "audit_event", "job_id"), "0004 down must remove audit_event.job_id")
+	require.True(t, tableExists(t, pool, "audit_event"))
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "audit_event"), "0003 down must remove the runs/audit tables")
 	require.True(t, tableExists(t, pool, "instance"))
@@ -68,6 +73,16 @@ func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
 	var exists bool
 	err := pool.QueryRow(context.Background(),
 		"SELECT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = $1)", name).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func columnExists(t *testing.T, pool *pgxpool.Pool, table, column string) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		 WHERE table_name = $1 AND column_name = $2)`, table, column).Scan(&exists)
 	require.NoError(t, err)
 	return exists
 }

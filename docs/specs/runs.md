@@ -20,8 +20,12 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
    stores; §5's single-record shape has both `ts_submitted` and `ts_finished`,
    which cannot be append-only in one row. Resolution: `run` = operational row,
    app-mutable (state machine mirror of engine.JobState); `audit_event` =
-   append-only rows carrying every §5 field, one event per transition
-   (`run.submitted`, `run.finished`). §5's record = the join of a run's events.
+   append-only rows, one event per transition (`run.submitted`,
+   `run.finished`). §5's record = the join of a run's events, and every §5
+   field appears on that pair — but not on every row: `final_status` and
+   `job_id` land on `run.finished` only (job_id since 0004/WU-017 — it
+   doesn't exist at submit; the audit copy is the forensic anchor,
+   run.job_id stays app-mutable).
 2. **Append-only enforcement.** Dev app role owns the tables, so REVOKE alone
    is theater; a BEFORE UPDATE/DELETE trigger raising an exception enforces it
    for every role. Both are applied (revoke documents intent, trigger enforces).
@@ -52,7 +56,7 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
    stands), the watcher stops watching. Exactly one `run.finished` per run,
    enforced at the SQL layer rather than by goroutine coordination.
 
-## Data (migration 0003, goose embed)
+## Data (migrations 0003 + 0004, goose embed)
 
 - `run`: `id PK`, `instance_id FK -> instance NOT NULL`, `operation text NOT
   NULL`, `environment text NOT NULL` (stamped at submit — guardrail layer 4),
@@ -69,9 +73,12 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
   `environment text NOT NULL`, `playbook_tag text NOT NULL`, `params_digest
   text NOT NULL` (sha256 hex of canonical params JSON), `final_status text
   NULL` (NULL on submitted; run state on finished), `window_warned boolean NOT
-  NULL DEFAULT false` (column exists per §5; semantics = WU-023).
-  Trigger `audit_event_immutable`: BEFORE UPDATE OR DELETE → RAISE EXCEPTION.
-  Plus `REVOKE UPDATE, DELETE ON audit_event FROM portal`.
+  NULL DEFAULT false` (column exists per §5; semantics = WU-023), `job_id
+  text NULL` (0004/WU-017: NULL on submitted, stamped from run.job_id on
+  finished).
+  Trigger `audit_event_immutable`: BEFORE UPDATE OR DELETE → RAISE EXCEPTION;
+  0004 adds a statement-level BEFORE TRUNCATE trigger on the same function.
+  Plus `REVOKE UPDATE, DELETE, TRUNCATE ON audit_event FROM portal`.
 
 ## Interfaces
 

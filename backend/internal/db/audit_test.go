@@ -46,6 +46,11 @@ func TestAuditEventIsAppendOnly(t *testing.T) {
 	_, err = pool.Exec(ctx, `DELETE FROM audit_event WHERE id = $1`, id)
 	require.ErrorContains(t, err, "append-only")
 
+	// TRUNCATE bypasses row-level triggers; 0004's statement trigger covers
+	// it (m1-gate item 4).
+	_, err = pool.Exec(ctx, `TRUNCATE audit_event`)
+	require.ErrorContains(t, err, "append-only")
+
 	// Row is intact.
 	var actor string
 	require.NoError(t, pool.QueryRow(ctx,

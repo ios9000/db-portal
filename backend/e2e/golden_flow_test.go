@@ -197,21 +197,28 @@ func readLogStream(t *testing.T, ts *httptest.Server, id int64) string {
 func requireAudit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID int64, env, finalStatus string) {
 	t.Helper()
 	rows, err := pool.Query(ctx, `
-		SELECT action, environment, COALESCE(final_status, '')
+		SELECT action, environment, COALESCE(final_status, ''), COALESCE(job_id, '')
 		FROM audit_event WHERE run_id = $1 ORDER BY id`, runID)
 	require.NoError(t, err)
 	defer rows.Close()
 
 	type event struct{ action, env, final string }
 	var events []event
+	var jobIDs []string
 	for rows.Next() {
 		var e event
-		require.NoError(t, rows.Scan(&e.action, &e.env, &e.final))
+		var jobID string
+		require.NoError(t, rows.Scan(&e.action, &e.env, &e.final, &jobID))
 		events = append(events, e)
+		jobIDs = append(jobIDs, jobID)
 	}
 	require.NoError(t, rows.Err())
 	require.Equal(t, []event{
 		{"run.submitted", env, ""},
 		{"run.finished", env, finalStatus},
 	}, events)
+	// job_id (0004): NULL at submit — the engine id doesn't exist yet — and
+	// stamped on finished, anchoring the run<->engine-job linkage immutably.
+	require.Empty(t, jobIDs[0])
+	require.NotEmpty(t, jobIDs[1], "run.finished must carry the engine job_id")
 }

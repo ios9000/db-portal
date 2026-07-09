@@ -274,9 +274,10 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest, final_status)
-		SELECT $1, 'run.finished', run_id, instance_id, environment, playbook_tag, params_digest, $3
-		FROM audit_event WHERE run_id = $2 AND action = 'run.submitted'`,
+		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest, final_status, job_id)
+		SELECT $1, 'run.finished', ae.run_id, ae.instance_id, ae.environment, ae.playbook_tag, ae.params_digest, $3, r.job_id
+		FROM audit_event ae JOIN run r ON r.id = ae.run_id
+		WHERE ae.run_id = $2 AND ae.action = 'run.submitted'`,
 		actor, runID, state); err != nil {
 		return fmt.Errorf("runs: audit finish: %w", err)
 	}
