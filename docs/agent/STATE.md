@@ -5,16 +5,16 @@
 
 ## Now
 
-- **Active WU:** WU-020 (AuthN) — **not started**; blocked only on the optional
-  M-gate review below. M1/Phase 1 CLOSED 2026-07-08 (s07).
-- **Status:** M1 close done (commit c0d1a5e + grooming commit): `docs/demo-m1.md`
-  live-verified on the release binary (< 5 min; import ×2 → fleet → dump success +
-  artifact + SSE → abort → mailpit mail → prod on mock-prod-… → audit append-only
-  proof). Golden-flow e2e = `backend/e2e/golden_flow_test.go` (ADR-011) — runs inside
-  `go test -race ./...`, i.e. inside `npm run check`; NO sibling target; skips without
-  compose PG (icebox: PG service in CI). Phase 2 groomed: WU-020/021/022/023 have ACs +
-  context briefs in BACKLOG; WU-021 grew S → M (carries the Phase 1 deferred ledger).
-  Check green both stacks (vitest 52/52).
+- **Active WU:** WU-016 (M1-gate fix: run lifecycle integrity) — **not started**.
+  M-gate review DONE 2026-07-09 (s08); M1/Phase 1 CLOSED 2026-07-08 (s07).
+- **Status:** M-gate review complete. Method: Workflow `wf_3ba143f2-9c0` (5 reviewers ×
+  2 adversarial verifiers per finding) was twice interrupted by SSH resets; instead of
+  re-running (user: keep cost down), its journal was harvested (5/5 reviews = 24 raw
+  findings, 36/48 verdicts) and the remaining 10 findings were verified INLINE in the
+  main session. Outcome: 2 high / 6 medium / 9 low confirmed, 3 refuted. Filed:
+  WU-016/017/018/019 (BACKLOG, before WU-020), WU-021 ledger add (body cap), 2 icebox
+  lines (CI installer pin, LocateDotenv walk), SPEC-012 flow-line doc fix. Full record:
+  `docs/agent/reviews/m1-gate.md`. Code untouched — findings only, no fixes applied yet.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -23,20 +23,19 @@
 
 ## Next action (be exact)
 
-1. **M-gate review (STRATEGY §6/§7, needs user):** multi-agent review pass over the
-   Phase 1 code — Workflow-scale, user opts in per gate. Ask; if the user says
-   "use a workflow for the M-gate review" (or equivalent), run it: independent
-   correctness / security / spec-conformance reviewers + adversarial verification,
-   findings become fix-WUs or icebox lines. If declined/deferred, note it here and move on.
-2. **WU-020 (AuthN) in a FRESH session:** write `docs/specs/authn.md` FIRST
-   (just-in-time; mini-ADRs: session store shape, go-ldap dep, fake-directory seam,
-   break-glass alarm action, how the golden-flow e2e authenticates post-authn), then
-   implement per the BACKLOG entry. Read: BACKLOG WU-020; ARCHITECTURE §2 (Identity);
-   internal/server/middleware.go; cmd/portal/main.go wiring.
+1. **WU-016 in a fresh session:** run lifecycle integrity fixes (Start stranded-job
+   path, finalize idempotency, SweepOrphans best-effort, SSE end terminal state).
+   Read: BACKLOG WU-016; docs/agent/reviews/m1-gate.md items 1-3+9;
+   internal/runs/service.go; internal/server/runs_http.go:165-186.
+2. Then WU-017 → 018 → 019 (order fixed; 019's CSV-injection beat MUST precede WU-020).
+3. **WU-020 (AuthN) after the gate fixes, FRESH session:** write `docs/specs/authn.md`
+   FIRST (mini-ADRs: session store shape, go-ldap dep, fake-directory seam, break-glass
+   alarm action, golden-flow e2e authentication), then implement per BACKLOG.
 
 ## Blocked / needs user
 
-- M-gate review workflow opt-in (see Next action 1). Everything else is clear.
+- Nothing. (Paused workflow run wf_3ba143f2-9c0 can be ignored/discarded — its results
+  are harvested into docs/agent/reviews/m1-gate.md.)
 
 ## Standing context (stable facts worth re-stating)
 
@@ -92,6 +91,9 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-09 — M-gate review DONE (s08): 17 confirmed findings (2 high) → WU-016..019
+  + icebox + WU-021 ledger; 3 refuted; record in docs/agent/reviews/m1-gate.md.
+  Active → WU-016 (fresh session).
 - 2026-07-08 — M1 CLOSED (s07): demo-m1.md live-verified, golden-flow e2e in the gate
   (ADR-011), Phase 2 groomed. Active → M-gate review (user opt-in) then WU-020
   (fresh session, spec first).

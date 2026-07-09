@@ -306,7 +306,70 @@ Command-level flow ~4 s; human pace fits < 5 min. Automated twin
 `backend/e2e/golden_flow_test.go` in `go test -race ./...` = inside `npm run check`
 (ADR-011; skips without compose PG like every DB test — CI gap iceboxed). Typed-name
 ritual + EnvBanner stay vitest-pinned (UI-only beats). Multi-agent review gate =
-user-opt-in workflow (STRATEGY §6), pending.
+DONE 2026-07-09 (s08) — see the M1-gate fix WUs below + docs/agent/reviews/m1-gate.md.
+
+### M1-gate review fixes (2026-07-09, s08) — land BEFORE WU-020
+
+> Gate outcome: 2 high / 6 medium / 9 low confirmed (each upheld by 2+ adversarial
+> verifiers or inline-verified at the cited lines), 3 refuted. Full record with failure
+> scenarios + fix sketches: `docs/agent/reviews/m1-gate.md`. Order 016 → 017 → 018 →
+> 019; 019's CSV-injection item MUST precede WU-020 (real usernames).
+
+### WU-016 · M1-gate fix: run lifecycle integrity — M · `pending`
+Backend run state machine holes (findings 1, 2, 3, 9 in the gate record):
+(a) Start(): job_id-UPDATE failure after a successful StartJob strands the live engine
+job (run stuck `queued`, no watcher, no `run.finished` audit event) — make the
+post-StartJob path fail-safe (mini-ADR: cancel-the-job + finalize failed vs
+retry-then-adopt; trail complete either way); (b) finalize(): guard the terminal
+transition (UPDATE … WHERE state NOT IN terminal, audit INSERT only when a row
+actually transitioned) so double-finalize can't duplicate `run.finished` or overwrite
+a terminal state; (c) SweepOrphans: per-run best-effort instead of abort-on-first-error;
+(d) SSE `end` event: emit the run's true terminal state (bounded wait on the row) or
+amend SPEC-013's "final run state" wording — decide in-WU, one line either way.
+**Verify:** new -race tests: double-finalize → exactly one `run.finished`; injected
+job_id-UPDATE failure → no stranded live job + complete trail; e2e golden flow still
+one `end`, now terminal-state-correct (or spec amended); `npm run check` green.
+**Context brief:** docs/agent/reviews/m1-gate.md items 1-3, 9; internal/runs/service.go
+(Start/finalize/watcher/SweepOrphans); internal/server/runs_http.go:165-186; SPEC-012/013.
+
+### WU-017 · M1-gate fix: audit hardening (TRUNCATE + job_id) — S · `pending`
+Migration 0004: `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger reusing
+audit_event_immutable() + `REVOKE TRUNCATE`; add `job_id text NULL` to audit_event,
+stamped on `run.finished` (NULL at submit is honest — the id doesn't exist yet).
+Reconcile SPEC-012 mini-ADR 1's "every §5 field" claim with reality.
+**Verify:** DB test: `TRUNCATE audit_event` raises "append-only" (alongside the
+existing UPDATE/DELETE tests); golden flow asserts job_id on the finished event;
+goose down walks one migration; `npm run check` green.
+**Context brief:** docs/agent/reviews/m1-gate.md items 4-5; 0003_runs_audit.sql;
+internal/runs/service.go audit INSERTs; ARCHITECTURE §5; migrate_test down-walk.
+
+### WU-018 · M1-gate fix: inventory size_gb canonicalization — S · `pending`
+csv.go keeps the raw size_gb string; Postgres canonicalizes — two symptoms, one root
+cause (gate items 8a/8b, one reproduced live): hex-float forms Go accepts but PG
+rejects abort the WHOLE import instead of quarantining the row; PG-normalized forms
+('1e2'→'100', '.5'→'0.5') re-import as "updated" forever, churning updated_at.
+Fix at the source: canonicalize SizeGB at parse time (strconv.FormatFloat) so store
+and compare see one form, and make PG-rejectable forms quarantine, not abort.
+**Verify:** parse/import tests with '1e2', '.5', '0120', '0x1p4' → canonical store or
+quarantine, never abort; same-file re-import → all unchanged (SPEC-010 behavior 2);
+`npm run check` green.
+**Context brief:** docs/agent/reviews/m1-gate.md item 8; internal/inventory/csv.go
+(size_gb parse + finite check), import.go:140-165 (canonical compare); SPEC-010.
+
+### WU-019 · M1-gate fix: frontend resilience — S · `pending`
+Gate items 6-7 + the low bundle 10-13: RunDetail/api.ts SSE — transient stream failure
+(5xx) must retry/backoff keeping received lines, not morph into permanent "logs gone";
+LaunchDrawer — overlay click must not dismiss mid-launch or swallow a just-fired prod
+confirmation; getJSON/postJSON — wrap res.json() so a 2xx malformed body surfaces as
+ApiError per the module contract; Activity — drop stale fetch responses under newer
+filters (CSV export must match the view); exportCsv — defer revokeObjectURL past the
+click (Safari); csv.ts field() — neutralize leading `=+-@\t` (OWASP CSV injection;
+latent until WU-020's real usernames, so this WU precedes it).
+**Verify:** vitest for each beat (fake EventSource transient error → lines kept +
+retried; overlay click during launch keeps drawer; stale response ignored;
+`=SUM(A1)` field neutralized; malformed 2xx → ApiError); `npm run check` green.
+**Context brief:** docs/agent/reviews/m1-gate.md items 6-7, 10-13; frontend/src/lib/
+{api,csv}.ts, components/LaunchDrawer.tsx, pages/{RunDetail,Activity}.tsx; SPEC-013/014/015.
 
 ---
 
@@ -338,7 +401,9 @@ spec); audit actor = AD identity everywhere (replaces the `local-dev` constant i
 internal/runs). Carries the deferred ledger accumulated across Phase 1 — this is why it
 grew S → M: `run.canceled` audit action (SPEC-013 deferral), Activity requester/user
 filter (SPEC-014), prod-ritual server-side enforcement + actor on the ritual
-(SPEC-015 — the API stops being deliberately unguarded here).
+(SPEC-015 — the API stops being deliberately unguarded here). Also from the M1 gate
+(m1-gate.md item 15): POST /api/runs body cap — http.MaxBytesReader (413 on overflow)
++ server-side `reason` length limit — lands with the route guards.
 **Verify:** non-DBA user → 403 on POST /api/runs (audit records the denial — decide
 shape in spec); cancel writes `run.canceled` with the canceling actor; runs list
 `?requested_by=` filter; prod run submitted by an authenticated DBA carries their AD
@@ -398,6 +463,8 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 
 - CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today)
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
+- CI: pin the golangci-lint installer to the VM's v2.12.2 instead of `curl | sh` from HEAD (M1-gate item 14 — supply-chain + silent lint drift; check.yml:18)
+- config.LocateDotenv: stop the upward .env walk at a repo marker (.git/go.mod) or explicit path, and log the resolved file at startup (M1-gate item 16 — foreign-.env footgun)
 - Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
 - Activity: date-range filter + pagination past 50 + server-side audit export (SPEC-014 deferred; client CSV caps at the view)

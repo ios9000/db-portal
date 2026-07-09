@@ -67,7 +67,7 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
 - `POST /api/runs` `{instance, operation, reason?}` → 201 run JSON.
   400 unknown operation / bad body; 404 unknown instance; 502 engine refused
   (StartJob error — audit `submitted` row already written, run finalized
-  `failed`). Flow: instance lookup → catalog lookup → ClassForEnv →
+  `failed`). Flow: catalog lookup → instance lookup → ClassForEnv →
   Registry.For (fail closed) → INSERT run (`queued`) + audit `run.submitted`
   in one tx → StartJob → job_id onto run → watcher.
 - `GET /api/runs` → `{"runs":[...]}` newest-first, limit 50. Optional
