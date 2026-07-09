@@ -5,19 +5,20 @@
 
 ## Now
 
-- **Active WU:** WU-017 (M1-gate fix: audit hardening — TRUNCATE trigger + job_id) —
-  **not started**. WU-016 DONE 2026-07-09 (s08, commit 8531c68).
-- **Status:** WU-016 closed all four run-lifecycle gate findings (items 1-3, 9 in
-  docs/agent/reviews/m1-gate.md): stranded-job repair in Start (cancel + finalize
-  failed, SPEC-012 mini-ADR 7), terminal guard on finalize AND on the watcher's status
-  mirror (mini-ADR 8 — the unguarded mirror could resurrect a finalized run; found by
-  the new concurrent test, worse than the gate finding), SweepOrphans per-run
-  best-effort, SSE `end` waits (bounded 2 s) for the terminal row state. Evidence:
-  new -race tests (stranded-repair trail-complete; exactly one run.finished under 3
-  racing finalizers; SSE end waits/bounded via server.SetEndStateWait); npm run check
-  green both stacks (vitest 52/52); LIVE check — streamed a live dump run, `end`
-  carried {"state":"success"} (the gate's live repro emitted "running"). Test seams:
-  export_test.go in runs (SetFailRecordJobID, Finalize) + server (SetEndStateWait).
+- **Active WU:** WU-018 (M1-gate fix: inventory size_gb canonicalization) —
+  **not started**. WU-017 DONE 2026-07-09 (s09, commit 07a12e5).
+- **Status:** WU-017 closed gate items 4-5 (docs/agent/reviews/m1-gate.md): migration
+  0004 adds a statement-level BEFORE TRUNCATE trigger reusing audit_event_immutable()
+  + REVOKE TRUNCATE (same trigger-enforces/REVOKE-documents split as 0003), and
+  `audit_event.job_id text NULL` stamped from run.job_id on `run.finished` via the
+  finalize INSERT..SELECT JOIN (NULL at submit is honest — the id doesn't exist yet).
+  SPEC-012 reconciled: mini-ADR 1 now says §5 fields appear on the event PAIR
+  (final_status + job_id finished-only); data section covers 0003+0004. Evidence:
+  TestAuditEventIsAppendOnly extended with TRUNCATE → "append-only"; TestMigrateUpDown
+  walks 0004 down (job_id gone, table intact) then 0003→0001; golden flow requireAudit
+  asserts job_id '' on submitted / non-empty on finished for all three runs; npm run
+  check green both stacks (vitest 52/52); LIVE dev DB: migrate up applied 0004, psql
+  `TRUNCATE audit_event` → ERROR "audit_event is append-only".
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -26,12 +27,12 @@
 
 ## Next action (be exact)
 
-1. **WU-017 in a fresh session:** audit hardening migration 0004 — BEFORE TRUNCATE
-   statement trigger reusing audit_event_immutable() + REVOKE TRUNCATE; add
-   `job_id text NULL` to audit_event, stamped on run.finished; reconcile SPEC-012
-   mini-ADR 1's "every §5 field" claim. Read: BACKLOG WU-017; m1-gate.md items 4-5;
-   0003_runs_audit.sql; runs/service.go audit INSERTs; migrate_test down-walk.
-2. Then WU-018 → 019 (order fixed; 019's CSV-injection beat MUST precede WU-020).
+1. **WU-018 in a fresh session:** size_gb canonicalization — canonicalize SizeGB at
+   parse time (strconv.FormatFloat) so store and compare see one form; PG-rejectable
+   forms (hex floats) must quarantine the row, never abort the import. Read: BACKLOG
+   WU-018; m1-gate.md item 8; internal/inventory/csv.go (size_gb parse + finite
+   check); import.go:140-165 (canonical compare); SPEC-010.
+2. Then WU-019 (frontend resilience; its CSV-injection beat MUST precede WU-020).
 3. **WU-020 (AuthN) after the gate fixes, FRESH session:** write `docs/specs/authn.md`
    FIRST (mini-ADRs: session store shape, go-ldap dep, fake-directory seam, break-glass
    alarm action, golden-flow e2e authentication), then implement per BACKLOG.
@@ -63,8 +64,8 @@
   detail 404 JSON. server.InstanceReader = handler seam. Frontend MyDatabases
   cards/table, view+env in URL params.
 - Runs (WU-012, SPEC-012 = docs/specs/runs.md): run mutable; audit_event append-only
-  (trigger raises on UPDATE/DELETE), one event per transition, env + playbook_tag
-  stamped. internal/runs.Service = ONLY Registry caller (Start → watcher → finalize;
+  (triggers raise on UPDATE/DELETE/TRUNCATE — 0004), one event per transition, env +
+  playbook_tag stamped; job_id stamped on run.finished only (0004, WU-017). internal/runs.Service = ONLY Registry caller (Start → watcher → finalize;
   SweepOrphans on boot; actor='local-dev' until WU-021). POST /api/runs: 400/404/502,
   trail complete either way. engineParams seam is tests-only (API passes nil).
 - Run detail + logs (WU-013, SPEC-013): GET /api/runs/{id}/logs = SSE replay→follow,
@@ -95,14 +96,12 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-09 — WU-017 done (s09, 07a12e5): audit hardening — 0004 TRUNCATE trigger +
+  REVOKE, audit_event.job_id stamped on run.finished, SPEC-012 §5 claim reconciled
+  (live-verified: psql TRUNCATE → append-only). Active → WU-018 (fresh session).
 - 2026-07-09 — WU-016 done (s08, 8531c68): run lifecycle integrity — stranded-job
   repair, single-finalizer guards (incl. watcher mirror), sweep best-effort, SSE end
   terminal state (live-verified). Active → WU-017 (fresh session).
 - 2026-07-09 — M-gate review DONE (s08): 17 confirmed findings (2 high) → WU-016..019
   + icebox + WU-021 ledger; 3 refuted; record in docs/agent/reviews/m1-gate.md.
   Active → WU-016 (fresh session).
-- 2026-07-08 — M1 CLOSED (s07): demo-m1.md live-verified, golden-flow e2e in the gate
-  (ADR-011), Phase 2 groomed. Active → M-gate review (user opt-in) then WU-020
-  (fresh session, spec first).
-- 2026-07-07 — WU-014 done (failure/cancel mail + Screen 6 Activity, live-verified
-  incl. unattended orphan-sweep mail); active → WU-015.

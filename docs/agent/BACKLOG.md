@@ -332,7 +332,7 @@ one `end`, now terminal-state-correct (or spec amended); `npm run check` green.
 **Context brief:** docs/agent/reviews/m1-gate.md items 1-3, 9; internal/runs/service.go
 (Start/finalize/watcher/SweepOrphans); internal/server/runs_http.go:165-186; SPEC-012/013.
 
-### WU-017 · M1-gate fix: audit hardening (TRUNCATE + job_id) — S · `pending`
+### WU-017 · M1-gate fix: audit hardening (TRUNCATE + job_id) — S · `done` (2026-07-09, commit 07a12e5)
 Migration 0004: `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger reusing
 audit_event_immutable() + `REVOKE TRUNCATE`; add `job_id text NULL` to audit_event,
 stamped on `run.finished` (NULL at submit is honest — the id doesn't exist yet).
