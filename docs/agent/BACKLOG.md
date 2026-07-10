@@ -409,7 +409,7 @@ or via the dev bypass — decide the e2e wiring in the spec).
 **Context brief:** ARCHITECTURE §2 (Identity) + §4; D2/D3; internal/server/middleware.go
 (the middleware seam); server.Deps wiring in cmd/portal/main.go; backend/e2e (gate impact).
 
-### WU-021 · AuthZ: DBA role, route guards, real actor — M · `pending`
+### WU-021 · AuthZ: DBA role, route guards, real actor — M · `done (2026-07-10, commits 5dbb24a spec + 4daf552 backend + f0a7d45 docs + 99bac19 UI via 3rd Sonnet delegation)`
 Portal-DB role store (role table + user↦role, seeded DBA); route guards on every
 mutating endpoint (DBA-only per D2 — read endpoints stay role-gated-lite, decide in
 spec); audit actor = AD identity everywhere (replaces the `local-dev` constant in
@@ -420,9 +420,11 @@ filter (SPEC-014), prod-ritual server-side enforcement + actor on the ritual
 (m1-gate.md item 15): POST /api/runs body cap — http.MaxBytesReader (413 on overflow)
 + server-side `reason` length limit — lands with the route guards.
 **Verify:** non-DBA user → 403 on POST /api/runs (audit records the denial — decide
-shape in spec); cancel writes `run.canceled` with the canceling actor; runs list
+shape in spec → `authz.denied` on auth_event, SPEC-021 mini-ADR 3); cancel writes
+`run.cancel_requested` with the canceling actor (spec kept SPEC-013's name over this
+entry's `run.canceled` shorthand — cancel can race a success finish); runs list
 `?requested_by=` filter; prod run submitted by an authenticated DBA carries their AD
-identity in both audit rows; `npm run check` green.
+identity in both audit rows; `npm run check` green. ALL VERIFIED LIVE 2026-07-10.
 **Context brief:** D2/D3; SPEC-012 §audit + SPEC-015 deferrals; internal/runs/service.go
 (actor constant); server router; WU-020's session context.
 
