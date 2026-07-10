@@ -49,6 +49,10 @@ approval flows (post-MVP).
    cancel introduces NO new finalization path. No `run.cancel_requested`
    audit action yet: actor is still the 'local-dev' placeholder, so the row
    would add no information; WU-021 (real identity) adds it.
+   *Amended by SPEC-021 mini-ADR 5 (WU-021):* Cancel now writes
+   `run.cancel_requested` (canceling actor, final_status NULL, job_id
+   stamped) before the engine call — a canceled run carries THREE audit
+   rows. Behavior 5's "exactly 2 audit events" is superseded accordingly.
 
 ## Interfaces
 

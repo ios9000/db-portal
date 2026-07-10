@@ -45,9 +45,10 @@ DBA-list mail is unconditional).
 5. **List filters are server-side and composable.** `state`, `env`,
    `operation` join the existing `instance` param on GET /api/runs, ANDed.
    Unknown values are filters that match nothing (SPEC-012 behavior 8
-   semantics), never 400/404. Deferred: `user` filter (one constant actor
-   until WU-021), date range + pagination (limit 50 makes a range picker
-   theater; icebox until a history WU raises the cap), server-side export.
+   semantics), never 400/404. `requested_by` joined them in WU-021
+   (SPEC-021). Still deferred: date range + pagination (limit 50 makes a
+   range picker theater; icebox until a history WU raises the cap),
+   server-side export.
 6. **Requester comes from the audit trail.** Run JSON gains
    `requested_by` = the `run.submitted` event's actor — the read model
    surfaces audit data instead of duplicating actor onto the run row.
@@ -123,7 +124,8 @@ DBA-list mail is unconditional).
 ## Out of scope / deferred
 
 - Approval rows, warnings state → post-MVP (no approvals, no warn state).
-- `user` filter chip + real requester identities → WU-021.
+- ~~`user` filter chip + real requester identities~~ → landed in WU-021
+  (SPEC-021: `requested_by` param; `by` URL param in Activity).
 - Date-range filter, pagination past 50, server-side audit export → icebox.
 - Window-warn email → WU-023. Success digests → scheduler era (WU-022).
 - Per-run notify toggle (`🔔`) → post-MVP polish.

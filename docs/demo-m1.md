@@ -74,12 +74,15 @@ Start a dump on **crm-test**, and on the run page hit **Abort** while it streams
 
 ```sh
 docker compose -f infra/compose.yaml exec -T postgres psql -U portal -d portal \
-  -c "SELECT run_id, action, environment, final_status FROM audit_event ORDER BY id;" \
+  -c "SELECT run_id, actor, action, environment, final_status FROM audit_event ORDER BY id;" \
   -c "UPDATE audit_event SET actor = 'evil' WHERE id = 1;"
 ```
 
-Two rows per run (`run.submitted` / `run.finished`), environment stamped on every
-row — and the UPDATE **fails**: `audit_event is append-only`.
+Every row names **who** (`actor = dba1` — the signed-in identity, WU-021), with
+environment stamped throughout. The successful run has two rows
+(`run.submitted` / `run.finished`); the aborted one has **three** — the extra
+`run.cancel_requested` row pins who hit Abort. And the UPDATE **fails**:
+`audit_event is append-only`.
 
 Optional hard-failure variant (+60 s, skip when tight): `kill -9` the portal
 mid-run, restart it — the orphan sweep finalizes the run **failed** and the
@@ -90,6 +93,8 @@ failure mail arrives unattended (proven live in WU-014).
 Card **billing-prod** → **Dump**. The drawer turns prod: red **PROD** banner
 (text + color, never color alone), and the launch button stays locked until you
 **type the exact instance name** — paste is disabled; friction, not memory.
+Since WU-021 the API enforces the same ritual server-side (a scripted POST
+without the typed name is refused), and mutations require the **dba** role.
 Type `billing-prod`, launch, open the run: PROD banner on the run page, and the
 engine job id is prefixed `mock-prod-` — prod jobs run through a **separate
 engine adapter** (guardrail layer 3), even as mocks. Audit rows for this run

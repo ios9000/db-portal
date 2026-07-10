@@ -69,7 +69,10 @@ and ritual are pure frontend, layer 3 is boot-time, layer 4 is schema + tests.
 - Approval workflow, risk tiers, impact chips (Screen 4/7) — icebox.
 - Window warning in the drawer — WU-023.
 - Required reason/ticket on prod — travels with approvals (icebox).
-- AuthN/AuthZ actor in the ritual — WU-020/021.
+- ~~AuthN/AuthZ actor in the ritual~~ → landed in WU-020/021: the ritual is
+  now ALSO server-side (SPEC-021 mini-ADR 6 — POST /api/runs `confirm`
+  must equal the instance name on prod) and the launch is attributed to
+  the session identity in both audit rows.
 
 ## Open questions
 

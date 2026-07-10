@@ -68,7 +68,9 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
   `submitted_at timestamptz NOT NULL DEFAULT now()`, `started_at/finished_at
   timestamptz NULL`, `updated_at`.
 - `audit_event`: `id PK`, `ts timestamptz NOT NULL DEFAULT now()`, `actor text
-  NOT NULL`, `action text NOT NULL` (`run.submitted` | `run.finished`),
+  NOT NULL` (since WU-021 the real session identity — SPEC-021; `run.finished`
+  inherits the submitting actor), `action text NOT NULL` (`run.submitted` |
+  `run.finished` | `run.cancel_requested` since WU-021),
   `run_id FK -> run NOT NULL`, `instance_id FK -> instance NOT NULL`,
   `environment text NOT NULL`, `playbook_tag text NOT NULL`, `params_digest
   text NOT NULL` (sha256 hex of canonical params JSON), `final_status text
@@ -85,14 +87,16 @@ placeholder), real artifact upload (O-1 → WU-035; metadata only here).
 - `GET /api/operations` → `{"operations":[{id,label,icon,description,
   duration_hint,online_hint}]}` — catalog for the UI (template/playbook_tag
   stay server-side).
-- `POST /api/runs` `{instance, operation, reason?}` → 201 run JSON.
-  400 unknown operation / bad body; 404 unknown instance; 502 engine refused
-  (StartJob error — audit `submitted` row already written, run finalized
-  `failed`). Flow: catalog lookup → instance lookup → ClassForEnv →
-  Registry.For (fail closed) → INSERT run (`queued`) + audit `run.submitted`
-  in one tx → StartJob → job_id onto run → watcher.
+- `POST /api/runs` `{instance, operation, reason?, confirm?}` → 201 run JSON.
+  400 unknown operation / bad body / failed prod ritual (SPEC-021) / reason
+  over 500 chars; 403 without the dba role; 404 unknown instance; 413 body
+  over 64 KiB; 502 engine refused (StartJob error — audit `submitted` row
+  already written, run finalized `failed`). Flow: catalog lookup → instance
+  lookup (+ prod ritual) → ClassForEnv → Registry.For (fail closed) →
+  INSERT run (`queued`) + audit `run.submitted` in one tx → StartJob →
+  job_id onto run → watcher.
 - `GET /api/runs` → `{"runs":[...]}` newest-first, limit 50. Optional
-  `?instance=<name>`. Run JSON: `{id, instance, environment, operation, state,
+  `?instance=<name>` (SPEC-014/021 added state/env/operation/requested_by). Run JSON: `{id, instance, environment, operation, state,
   reason, error, job_id, submitted_at, started_at, finished_at,
   artifact: {name,size_bytes,checksum} | null}`.
 - `GET /api/runs/{id}` → run JSON or 404 (WU-013 builds detail on this).
