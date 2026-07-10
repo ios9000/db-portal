@@ -5,7 +5,7 @@
 
 ## Now
 
-- **Active WU:** WU-020 (AuthN) — **not started, spec first**. WU-019 DONE
+- **Active WU:** WU-020 (AuthN) — **spec DONE (0e30914, SPEC-020 = docs/specs/authn.md), implementation next**. WU-019 DONE
   2026-07-10 (s10, commit 3cfdf8f). ALL m1-gate fix WUs (016-019) now closed.
 - **Status:** WU-019 closed gate items 6-7 + 10-13 (docs/agent/reviews/m1-gate.md):
   SSE streams that die before `end` retry with backoff keeping displayed lines
