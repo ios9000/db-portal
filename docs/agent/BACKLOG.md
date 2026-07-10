@@ -394,7 +394,7 @@ retried; overlay click during launch keeps drawer; stale response ignored;
 > etc. at WU start, not before. Order is fixed: 020 → 021 (guards need sessions) → 022 →
 > 023 (windows warn on BOTH launch paths, so the scheduler must exist first).
 
-### WU-020 · AuthN: LDAP bind against AD — M · `pending`
+### WU-020 · AuthN: LDAP bind against AD — M · `done (2026-07-10, commits 0e30914+5034dc8+d5c6731 — spec+backend by architect, UI slice via Sonnet 5 delegation)`
 Login page + server sessions; AD LDAP bind (portal NEVER stores AD passwords —
 ARCHITECTURE §2 Identity); dev mode = bypass flag + fake in-process directory (CI-safe,
 same seam pattern as MockEngine); ONE break-glass local account whose every use writes
