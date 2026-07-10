@@ -44,6 +44,11 @@
 
 - Nothing. (Paused workflow run wf_3ba143f2-9c0 can be ignored/discarded — its results
   are harvested into docs/agent/reviews/m1-gate.md.)
+- HEADS-UP: a demo portal may be running as transient systemd unit `dbportal-demo`
+  on :8080 (started s10 for the user, survives SSH drops; binary of commit 391e955,
+  publicly reachable — no authn until WU-020). Before any live check that runs its
+  own portal: `systemctl stop dbportal-demo` — else bind-in-use + the s05
+  two-portals-one-DB sweep hazard.
 
 ## Standing context (stable facts worth re-stating)
 
