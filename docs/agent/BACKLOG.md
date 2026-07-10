@@ -232,6 +232,21 @@ List/detail endpoints with env filter; cards view per design brief Screen 1 (hea
 badges, last-backup line) + `Cards ⇄ Table` toggle (Screen 2, minus bulk actions).
 **Context brief:** design brief Screens 1–2; WU-010 schema; EnvBadge from WU-004.
 
+### WU-011R · Last backup on fleet views — S · `done` (2026-07-10, user-requested s10)
+WU-011 shipped "Last backup: —" as a placeholder; WU-012 created the data source
+(runs) but nothing wired them — user hit it live after a successful backup. Fix:
+`Instance.last_backup_at` = max(finished_at) of SUCCESSFUL dump runs (correlated
+subquery in inventory.Store, shared by list+get; failed/canceled/non-dump excluded,
+never-dumped = null); card + table render formatTimestamp or "—". Health/vacuum/
+bloat stay placeholders (no probes until M3+).
+**Evidence:** TestLastBackupAt (newest success wins over newer failed/canceled;
+restore ≠ backup; no runs = nil); handler JSON contract (RFC3339 / explicit null);
+golden flow asserts billing-test carries last_backup_at post-success, others null;
+vitest card+table assertions both states; npm run check green; LIVE: analytics-dev
+card shows the user's 03:45 backup, crm-test honestly "—" (only canceled runs).
+**Context brief:** inventory/store.go, server/instances.go seam, MyDatabases.tsx,
+lib/api.ts+format.ts; SPEC-012 run model.
+
 ### WU-012 · Catalog + run-now dump (hero) — M · `done` (2026-07-07, commits 5139a28+26d09ed+21d9e54)
 **Evidence:** `npm run check` green both stacks (Go `-race`: 7 runs-service tests on
 scratch DBs incl. failure injection, engine-refusal audit trail, orphan sweep, prod/nonprod

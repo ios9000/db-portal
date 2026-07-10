@@ -66,6 +66,8 @@ export interface Instance {
   size_gb: number | null;
   owner: string;
   maintenance_window: string | null;
+  /** Newest successful dump run's finish time (WU-011R); null if never dumped. */
+  last_backup_at: string | null;
 }
 
 /** List instances, optionally narrowed to one environment (server-side). */

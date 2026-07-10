@@ -10,6 +10,7 @@ import {
   type InstanceEnv,
   type Operation,
 } from '../lib/api';
+import { formatTimestamp } from '../lib/format';
 
 type View = 'cards' | 'table';
 
@@ -22,8 +23,9 @@ const ENV_PILLS: { label: string; env?: InstanceEnv }[] = [
 
 /**
  * My Databases (design brief Screens 1–2, WU-011 scope): cards ⇄ table over
- * the imported inventory. Health, last backup/vacuum and bloat have no data
- * source until runs/probes exist (WU-012+) and render as "—" / unknown.
+ * the imported inventory. Last backup = the newest successful dump run
+ * (WU-011R). Health, last vacuum and bloat have no data source until probes
+ * exist (M3+) and render as "—" / unknown.
  */
 export function MyDatabases() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -179,6 +181,10 @@ function formatSize(sizeGB: number | null): string {
   return sizeGB === null ? '—' : `${sizeGB} GB`;
 }
 
+function formatLastBackup(iso: string | null): string {
+  return iso === null ? '—' : formatTimestamp(iso);
+}
+
 interface LaunchProps {
   dump: Operation | undefined;
   onLaunch: (instance: Instance) => void;
@@ -198,7 +204,7 @@ function CardGrid({ instances, dump, onLaunch }: { instances: Instance[] } & Lau
             PostgreSQL {i.pg_version}
             {i.size_gb !== null && <> · {formatSize(i.size_gb)}</>}
           </p>
-          <p className="instance-meta">Last backup: —</p>
+          <p className="instance-meta">Last backup: {formatLastBackup(i.last_backup_at)}</p>
           {dump !== undefined && (
             <div className="card-actions">
               <button type="button" className="btn-secondary" onClick={() => onLaunch(i)}>
@@ -248,7 +254,7 @@ function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & L
             <td>{i.pg_version}</td>
             <td>{formatSize(i.size_gb)}</td>
             <td>{i.owner}</td>
-            <td>—</td>
+            <td>{formatLastBackup(i.last_backup_at)}</td>
             <td>—</td>
             <td>—</td>
             {dump !== undefined && (

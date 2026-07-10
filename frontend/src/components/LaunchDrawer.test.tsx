@@ -24,6 +24,7 @@ function makeInstance(overrides: Partial<Instance>): Instance {
     size_gb: 12,
     owner: 'team-billing',
     maintenance_window: null,
+    last_backup_at: null,
     ...overrides,
   };
 }

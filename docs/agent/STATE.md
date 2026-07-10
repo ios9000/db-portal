@@ -6,7 +6,8 @@
 ## Now
 
 - **Active WU:** WU-019 (M1-gate fix: frontend resilience) — **not started**.
-  WU-018 DONE 2026-07-10 (s10, commit 391e955).
+  WU-018 DONE 2026-07-10 (s10, commit 391e955). WU-011R (user-requested, s10):
+  last_backup_at wired API→UI, done same day.
 - **Status:** WU-018 closed gate item 8 (docs/agent/reviews/m1-gate.md): size_gb is
   canonicalized at parse time (strconv.FormatFloat plain decimal, -0 folded) so the
   store and the unchanged-row compare see one form — hex floats never reach the
@@ -71,7 +72,9 @@
   plain-decimal FormatFloat text is what stores and compares.
 - Instance API (WU-011): GET /api/instances[?env=] ordered/never-null/snake_case,
   detail 404 JSON. server.InstanceReader = handler seam. Frontend MyDatabases
-  cards/table, view+env in URL params.
+  cards/table, view+env in URL params. last_backup_at (WU-011R) = newest
+  SUCCESSFUL dump run's finished_at, null if never dumped; health/vacuum/bloat
+  still placeholder "—" until probes (M3+).
 - Runs (WU-012, SPEC-012 = docs/specs/runs.md): run mutable; audit_event append-only
   (triggers raise on UPDATE/DELETE/TRUNCATE — 0004), one event per transition, env +
   playbook_tag stamped; job_id stamped on run.finished only (0004, WU-017). internal/runs.Service = ONLY Registry caller (Start → watcher → finalize;

@@ -87,6 +87,21 @@ func TestGoldenFlow(t *testing.T) {
 	require.NotEmpty(t, run.Artifact.Checksum)
 	requireAudit(t, ctx, pool, run.ID, "test", "success")
 
+	// The fleet view reflects the backup (WU-011R): billing-test now carries
+	// last_backup_at; untouched instances stay null.
+	for _, raw := range listInstances(t, ts, "") {
+		var in struct {
+			Name         string  `json:"name"`
+			LastBackupAt *string `json:"last_backup_at"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &in))
+		if in.Name == "billing-test" {
+			require.NotNil(t, in.LastBackupAt, "successful dump must surface as last_backup_at")
+		} else {
+			require.Nil(t, in.LastBackupAt, "%s was never dumped", in.Name)
+		}
+	}
+
 	// Beat 4 — live logs over SSE: replay of the finished job, then exactly
 	// one `end` event (SPEC-013).
 	sse := readLogStream(t, ts, run.ID)

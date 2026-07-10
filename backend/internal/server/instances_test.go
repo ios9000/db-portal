@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -77,10 +78,12 @@ func apiGet(t *testing.T, ts *httptest.Server, path string, out any) *http.Respo
 func sampleInstances() []inventory.Instance {
 	size := func(v float64) *float64 { return &v }
 	window := "Sat 02:00-06:00"
+	backedUp := time.Date(2026, 7, 10, 4, 30, 0, 0, time.UTC)
 	return []inventory.Instance{
 		{
 			Name: "billing-prod", Cluster: "billing", Env: "prod", Platform: "k8s_patroni",
 			PGVersion: "16.3", SizeGB: size(412), Owner: "billing-team", MaintenanceWindow: &window,
+			LastBackupAt: &backedUp,
 		},
 		{
 			Name: "billing-test", Cluster: "billing", Env: "test", Platform: "k8s_patroni",
@@ -108,11 +111,14 @@ func TestListInstances(t *testing.T) {
 	require.InDelta(t, 412, first["size_gb"], 0.001)
 	require.Equal(t, "billing-team", first["owner"])
 	require.Equal(t, "Sat 02:00-06:00", first["maintenance_window"])
+	require.Equal(t, "2026-07-10T04:30:00Z", first["last_backup_at"])
 
 	// Nullable fields serialize as JSON null, not omitted (the UI renders "—").
 	second := body.Instances[1]
 	require.Contains(t, second, "maintenance_window")
 	require.Nil(t, second["maintenance_window"])
+	require.Contains(t, second, "last_backup_at")
+	require.Nil(t, second["last_backup_at"])
 }
 
 func TestListInstancesEnvFilter(t *testing.T) {

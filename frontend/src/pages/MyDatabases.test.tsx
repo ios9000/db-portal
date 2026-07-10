@@ -3,7 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Instance } from '../lib/api';
+import { formatTimestamp } from '../lib/format';
 import { MyDatabases } from './MyDatabases';
+
+const BACKED_UP_AT = '2026-07-10T04:30:00Z';
 
 const SAMPLE: Instance[] = [
   {
@@ -15,6 +18,7 @@ const SAMPLE: Instance[] = [
     size_gb: 412,
     owner: 'billing-team',
     maintenance_window: 'Sat 02:00-06:00',
+    last_backup_at: null,
   },
   {
     name: 'billing-test',
@@ -25,6 +29,7 @@ const SAMPLE: Instance[] = [
     size_gb: 38,
     owner: 'billing-team',
     maintenance_window: null,
+    last_backup_at: BACKED_UP_AT,
   },
   {
     name: 'analytics-dev',
@@ -35,6 +40,7 @@ const SAMPLE: Instance[] = [
     size_gb: null,
     owner: 'analytics-team',
     maintenance_window: null,
+    last_backup_at: null,
   },
 ];
 
@@ -85,16 +91,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('renders instance cards with env badge and placeholder backup line', async () => {
+test('renders instance cards with env badge and last-backup line', async () => {
   stubInstances();
   renderPage();
 
+  // never dumped → em-dash, no fake value
   const card = (await screen.findByText('billing-prod')).closest('article');
   expect(card).not.toBeNull();
   expect(within(card!).getByText('PROD')).toBeInTheDocument();
   expect(within(card!).getByText('PostgreSQL 16.3 · 412 GB')).toBeInTheDocument();
   expect(within(card!).getByText('Last backup: —')).toBeInTheDocument();
   expect(card).toHaveClass('prod-edge');
+
+  // WU-011R: a successful dump surfaces as the formatted timestamp
+  const testCard = screen.getByText('billing-test').closest('article');
+  expect(
+    within(testCard!).getByText(`Last backup: ${formatTimestamp(BACKED_UP_AT)}`),
+  ).toBeInTheDocument();
 
   // null size_gb: the size segment is simply absent
   const devCard = screen.getByText('analytics-dev').closest('article');
@@ -118,6 +131,8 @@ test('toggles to the fleet table (no bulk-action checkboxes)', async () => {
   expect(within(table).queryByRole('checkbox')).not.toBeInTheDocument();
   // unknown-data columns render em-dashes, never fake values
   expect(within(table).getAllByText('—').length).toBeGreaterThanOrEqual(6);
+  // ...but a real backup shows its timestamp (WU-011R)
+  expect(within(table).getByText(formatTimestamp(BACKED_UP_AT))).toBeInTheDocument();
 });
 
 test('env pills refetch with the server-side filter', async () => {

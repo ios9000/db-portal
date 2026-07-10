@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,6 +24,10 @@ type Instance struct {
 	SizeGB            *float64 `json:"size_gb"`
 	Owner             string   `json:"owner"`
 	MaintenanceWindow *string  `json:"maintenance_window"`
+	// LastBackupAt is when the newest successful dump run on this instance
+	// finished (WU-011R); nil until one exists. Only backups the portal ran
+	// count — it has no visibility into backups taken elsewhere.
+	LastBackupAt *time.Time `json:"last_backup_at"`
 }
 
 // Store reads the inventory tables. Writes happen only through Import.
@@ -35,7 +40,9 @@ func NewStore(pool *pgxpool.Pool) *Store {
 }
 
 const instanceColumns = `
-	SELECT i.name, c.name, i.env, c.platform, i.pg_version, i.size_gb, i.owner, i.maintenance_window
+	SELECT i.name, c.name, i.env, c.platform, i.pg_version, i.size_gb, i.owner, i.maintenance_window,
+	       (SELECT max(r.finished_at) FROM run r
+	        WHERE r.instance_id = i.id AND r.operation = 'dump' AND r.state = 'success')
 	FROM instance i
 	JOIN cluster c ON c.id = i.cluster_id`
 
@@ -57,7 +64,7 @@ func (s *Store) ListInstances(ctx context.Context, env string) ([]Instance, erro
 	for rows.Next() {
 		var in Instance
 		if err := rows.Scan(&in.Name, &in.Cluster, &in.Env, &in.Platform,
-			&in.PGVersion, &in.SizeGB, &in.Owner, &in.MaintenanceWindow); err != nil {
+			&in.PGVersion, &in.SizeGB, &in.Owner, &in.MaintenanceWindow, &in.LastBackupAt); err != nil {
 			return nil, fmt.Errorf("inventory: scan instance: %w", err)
 		}
 		instances = append(instances, in)
@@ -74,7 +81,7 @@ func (s *Store) GetInstance(ctx context.Context, name string) (Instance, error) 
 	var in Instance
 	err := s.pool.QueryRow(ctx, instanceColumns+` WHERE i.name = $1`, name).
 		Scan(&in.Name, &in.Cluster, &in.Env, &in.Platform,
-			&in.PGVersion, &in.SizeGB, &in.Owner, &in.MaintenanceWindow)
+			&in.PGVersion, &in.SizeGB, &in.Owner, &in.MaintenanceWindow, &in.LastBackupAt)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Instance{}, ErrNotFound
