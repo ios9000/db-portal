@@ -50,6 +50,7 @@ func requireSession(auth Authenticator) func(http.Handler) http.Handler {
 // session guard. Failures are uniform 401s (no user-exists oracle).
 func login(log *slog.Logger, d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10) // two short fields (SPEC-021 mini-ADR 7)
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`

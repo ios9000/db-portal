@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ios9000/db-portal/backend/internal/authn"
+	"github.com/ios9000/db-portal/backend/internal/authz"
 	"github.com/ios9000/db-portal/backend/internal/config"
 	"github.com/ios9000/db-portal/backend/internal/db"
 	"github.com/ios9000/db-portal/backend/internal/engine"
@@ -106,6 +107,16 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
+	roles := authz.NewStore(pool, log)
+	// Role provisioning follows the auth mode (SPEC-021 mini-ADR 8): dev
+	// principals get the dba role at boot; ldap mode grants nothing — real
+	// grants are admin INSERTs. Degraded mode (down DB) warns and continues,
+	// matching the sweep above; guards then fail closed until the DB is back.
+	if devUsers := devGrants(cfg.AuthMode); len(devUsers) > 0 {
+		if err := roles.Grant(ctx, authz.RoleDBA, devUsers...); err != nil {
+			log.Warn("dev role grants skipped", "err", err.Error())
+		}
+	}
 
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
@@ -113,8 +124,21 @@ func run(log *slog.Logger, args []string) error {
 		Instances:     inventory.NewStore(pool),
 		Runs:          runSvc,
 		Auth:          auth,
+		Roles:         roles,
 		SecureCookies: cfg.CookieSecure,
 	}).Run(ctx)
+}
+
+// devGrants names the principals each non-ldap auth mode must be able to
+// act as, so dev and demo work out of the box.
+func devGrants(mode string) []string {
+	switch mode {
+	case "fake":
+		return []string{"dba1", "dba2"}
+	case "off":
+		return []string{"local-dev"}
+	}
+	return nil
 }
 
 // buildAuthenticator is the composition root for SPEC-020's directory seam.

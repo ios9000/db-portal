@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ios9000/db-portal/backend/internal/authz"
 	"github.com/ios9000/db-portal/backend/internal/webui"
 )
 
@@ -26,6 +27,7 @@ type Deps struct {
 	Instances InstanceReader
 	Runs      RunService
 	Auth      Authenticator
+	Roles     RoleGuard
 	// SecureCookies marks the session cookie Secure (PORTAL_COOKIE_SECURE;
 	// off in dev — plain HTTP).
 	SecureCookies bool
@@ -48,11 +50,17 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 			r.Get("/instances", listInstances(log, d.Instances))
 			r.Get("/instances/{name}", getInstance(log, d.Instances))
 			r.Get("/operations", listOperations())
-			r.Post("/runs", startRun(log, d.Runs))
 			r.Get("/runs", listRuns(log, d.Runs))
 			r.Get("/runs/{id}", getRun(log, d.Runs))
 			r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
-			r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
+			// Mutations need the dba role; reads stay session-gated
+			// (SPEC-021 mini-ADR 2). Logout stays role-free above — any
+			// session may end itself.
+			r.Group(func(r chi.Router) {
+				r.Use(requireRole(log, d.Roles, authz.RoleDBA))
+				r.Post("/runs", startRun(log, d.Runs))
+				r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
+			})
 		})
 	})
 	// Everything unmatched goes to the embedded SPA (WU-006): real files

@@ -53,14 +53,27 @@ func (s *Service) StreamLogs(ctx context.Context, id int64) (<-chan engine.LogLi
 
 // Cancel asks the engine to stop a run's job. The transition to `canceled`
 // is asynchronous: the run's watcher observes it and finalizes as usual
-// (SPEC-013 mini-ADR 4 — cancel adds no new finalization path).
-func (s *Service) Cancel(ctx context.Context, id int64) error {
+// (SPEC-013 mini-ADR 4 — cancel adds no new finalization path). actor is
+// the canceling principal; the request is recorded on the audit trail
+// BEFORE the engine call (SPEC-021 mini-ADR 5, record-intent-first) — the
+// trail shows the attempt even if the engine then refuses. Because cancel
+// can race a success finish, the row is `run.cancel_requested` with
+// final_status NULL; the terminal outcome stays on `run.finished`.
+func (s *Service) Cancel(ctx context.Context, actor string, id int64) error {
 	jobID, class, state, err := s.jobRef(ctx, id)
 	if err != nil {
 		return err
 	}
 	if engine.JobState(state).Terminal() || jobID == nil {
 		return ErrNotCancelable
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest, job_id)
+		SELECT $1, 'run.cancel_requested', ae.run_id, ae.instance_id, ae.environment, ae.playbook_tag, ae.params_digest, $3
+		FROM audit_event ae
+		WHERE ae.run_id = $2 AND ae.action = 'run.submitted'`,
+		actor, id, *jobID); err != nil {
+		return fmt.Errorf("runs: audit cancel request: %w", err)
 	}
 	adapter, err := s.registry.For(class)
 	if err != nil {

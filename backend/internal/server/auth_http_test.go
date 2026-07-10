@@ -51,7 +51,7 @@ func authServer(t *testing.T) (*httptest.Server, *strictAuth) {
 	auth := &strictAuth{}
 	ts := depsServer(t, server.Deps{
 		DB: fakePinger{}, Instances: stubReader{instances: sampleInstances()},
-		Runs: stubRuns{}, Auth: auth,
+		Runs: stubRuns{}, Auth: auth, Roles: allowAllRoles{},
 	})
 	return ts, auth
 }

@@ -51,9 +51,20 @@ func TestMigrateUpDown(t *testing.T) {
 	require.True(t, columnExists(t, pool, "audit_event", "job_id"), "0004 up must add audit_event.job_id")
 	require.True(t, tableExists(t, pool, "session"), "0005 up must create the session table")
 	require.True(t, tableExists(t, pool, "auth_event"), "0005 up must create the auth trail")
+	require.True(t, tableExists(t, pool, "user_role"), "0006 up must create the role store")
+	var seeded bool
+	require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM user_role ur JOIN role r ON r.id = ur.role_id
+		WHERE ur.username = 'break-glass' AND r.name = 'dba')`).Scan(&seeded))
+	require.True(t, seeded, "0006 up must seed the break-glass dba grant")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "role"), "0006 down must remove the role store")
+	require.False(t, tableExists(t, pool, "user_role"))
+	require.True(t, tableExists(t, pool, "auth_event"), "0005 must survive 0006 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "session"), "0005 down must remove the session table")
 	require.False(t, tableExists(t, pool, "auth_event"), "0005 down must remove the auth trail")

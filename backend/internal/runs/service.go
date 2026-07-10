@@ -41,11 +41,10 @@ var (
 	// ErrNotCancelable means the run is already terminal or its engine job
 	// is lost — there is nothing left to cancel.
 	ErrNotCancelable = errors.New("runs: run is not cancelable")
+	// ErrProdUnconfirmed is the server side of the prod ritual (SPEC-021
+	// mini-ADR 6): a prod launch whose Confirm doesn't name the instance.
+	ErrProdUnconfirmed = errors.New("runs: prod launch requires typing the instance name")
 )
-
-// actor is the audit identity placeholder until authn/authz land
-// (WU-020/021, SPEC-012 mini-ADR 6).
-const actor = "local-dev"
 
 // Notifier receives a copy of every run that ends not-success (SPEC-014).
 // Implementations MUST NOT include params, reason or log content in what
@@ -86,26 +85,47 @@ func NewService(pool *pgxpool.Pool, registry *engine.Registry, log *slog.Logger)
 // sweep repairs on next boot).
 func (s *Service) Wait() { s.wg.Wait() }
 
-// Start launches operationID on the named instance: run row + audit
-// `run.submitted` first (one tx), then the engine job via the Registry.
-// Engine refusal finalizes the run failed and returns ErrEngine — the audit
-// trail records the attempt either way. engineParams is for tests and
+// StartRequest is one launch ask. Actor is the audit identity — explicit,
+// never context magic (SPEC-021 mini-ADR 4): a missed middleware must fail
+// loudly at the call site, not silently audit "". WU-022's scheduler passes
+// `schedule:<owner>` through the same door. Confirm is the server side of
+// the prod ritual; non-prod ignores it. EngineParams is for tests and
 // future parameterized ops; the API passes nil (MVP accepts no client params).
-func (s *Service) Start(ctx context.Context, instanceName, operationID, reason string, engineParams map[string]string) (Run, error) {
-	op, ok := catalog.ByID(operationID)
+type StartRequest struct {
+	Actor        string
+	Instance     string
+	Operation    string
+	Reason       string
+	Confirm      string
+	EngineParams map[string]string
+}
+
+// Start launches the requested operation: run row + audit `run.submitted`
+// first (one tx), then the engine job via the Registry. Engine refusal
+// finalizes the run failed and returns ErrEngine — the audit trail records
+// the attempt either way.
+func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
+	op, ok := catalog.ByID(req.Operation)
 	if !ok {
-		return Run{}, fmt.Errorf("%w: %q", ErrUnknownOperation, operationID)
+		return Run{}, fmt.Errorf("%w: %q", ErrUnknownOperation, req.Operation)
 	}
 
 	var instanceID int64
 	var env string
-	err := s.pool.QueryRow(ctx, `SELECT id, env FROM instance WHERE name = $1`, instanceName).
+	err := s.pool.QueryRow(ctx, `SELECT id, env FROM instance WHERE name = $1`, req.Instance).
 		Scan(&instanceID, &env)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return Run{}, fmt.Errorf("%w: %q", ErrUnknownInstance, instanceName)
+		return Run{}, fmt.Errorf("%w: %q", ErrUnknownInstance, req.Instance)
 	case err != nil:
 		return Run{}, fmt.Errorf("runs: look up instance: %w", err)
+	}
+
+	// The prod ritual, enforced where env is authoritative (SPEC-021 mini-
+	// ADR 6): same exact-match predicate as the drawer. Checked before any
+	// row is written — a failed ritual is friction, not a security event.
+	if env == "prod" && req.Confirm != req.Instance {
+		return Run{}, ErrProdUnconfirmed
 	}
 
 	class, err := engine.ClassForEnv(env) // fails closed on garbage
@@ -113,8 +133,8 @@ func (s *Service) Start(ctx context.Context, instanceName, operationID, reason s
 		return Run{}, fmt.Errorf("runs: %w", err)
 	}
 
-	params := map[string]string{"instance": instanceName}
-	for k, v := range engineParams {
+	params := map[string]string{"instance": req.Instance}
+	for k, v := range req.EngineParams {
 		params[k] = v
 	}
 	digest := paramsDigest(params)
@@ -132,14 +152,14 @@ func (s *Service) Start(ctx context.Context, instanceName, operationID, reason s
 		INSERT INTO run (instance_id, operation, environment, engine_class, playbook_tag, state, reason)
 		VALUES ($1, $2, $3, $4, $5, 'queued', NULLIF($6, ''))
 		RETURNING id`,
-		instanceID, op.ID, env, string(class), op.PlaybookTag, reason).Scan(&runID)
+		instanceID, op.ID, env, string(class), op.PlaybookTag, req.Reason).Scan(&runID)
 	if err != nil {
 		return Run{}, fmt.Errorf("runs: insert run: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest)
 		VALUES ($1, 'run.submitted', $2, $3, $4, $5, $6)`,
-		actor, runID, instanceID, env, op.PlaybookTag, digest); err != nil {
+		req.Actor, runID, instanceID, env, op.PlaybookTag, digest); err != nil {
 		return Run{}, fmt.Errorf("runs: audit submit: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -273,12 +293,16 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 		return nil
 	}
 
+	// Actor is inherited from the submitted row along with the other
+	// immutable stamps: it means "on whose behalf", not "which component
+	// wrote the row" — watcher and sweep finalizations carry the requester
+	// (SPEC-021 mini-ADR 4).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest, final_status, job_id)
-		SELECT $1, 'run.finished', ae.run_id, ae.instance_id, ae.environment, ae.playbook_tag, ae.params_digest, $3, r.job_id
+		SELECT ae.actor, 'run.finished', ae.run_id, ae.instance_id, ae.environment, ae.playbook_tag, ae.params_digest, $2, r.job_id
 		FROM audit_event ae JOIN run r ON r.id = ae.run_id
-		WHERE ae.run_id = $2 AND ae.action = 'run.submitted'`,
-		actor, runID, state); err != nil {
+		WHERE ae.run_id = $1 AND ae.action = 'run.submitted'`,
+		runID, state); err != nil {
 		return fmt.Errorf("runs: audit finish: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

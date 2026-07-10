@@ -40,7 +40,7 @@ func TestStreamLogsReplaysFinishedRun(t *testing.T) {
 	svc, _ := newService(t)
 	ctx := context.Background()
 
-	run, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	waitTerminal(t, svc, run.ID)
 
@@ -56,7 +56,7 @@ func TestStreamLogsFollowsLiveRun(t *testing.T) {
 	svc, _ := newServiceWithDelay(t, 20*time.Millisecond)
 	ctx := context.Background()
 
-	run, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 
 	lines := collectLines(t, mustStream(t, svc, run.ID)) // job still running here
@@ -69,7 +69,7 @@ func TestStreamLogsFollowsLiveRun(t *testing.T) {
 func TestStreamLogsClientDisconnect(t *testing.T) {
 	svc, _ := newServiceWithDelay(t, 20*time.Millisecond)
 
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 
 	streamCtx, cancel := context.WithCancel(context.Background())
@@ -119,7 +119,7 @@ func TestStreamLogsEngineRefusedRun(t *testing.T) {
 
 	svc := runs.NewService(pool, engine.NewRegistry(), // fails closed
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.ErrorIs(t, err, runs.ErrEngine)
 
 	_, err = svc.StreamLogs(context.Background(), run.ID)
@@ -129,15 +129,16 @@ func TestStreamLogsEngineRefusedRun(t *testing.T) {
 	require.Equal(t, "failed", got.State)
 }
 
-// SPEC-013 behavior 5: cancel drives the run to `canceled` through the
-// normal watcher/finalize path — audit stays at exactly two events.
+// SPEC-013 behavior 5 (as amended by SPEC-021 mini-ADR 5): cancel drives
+// the run to `canceled` through the normal watcher/finalize path — no new
+// finalization path, just the run.cancel_requested attribution row.
 func TestCancelRunningJob(t *testing.T) {
 	svc, pool := newServiceWithDelay(t, 50*time.Millisecond)
 	ctx := context.Background()
 
-	run, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
-	require.NoError(t, svc.Cancel(ctx, run.ID))
+	require.NoError(t, svc.Cancel(ctx, testActor, run.ID))
 
 	final := waitTerminal(t, svc, run.ID)
 	require.Equal(t, "canceled", final.State)
@@ -145,9 +146,10 @@ func TestCancelRunningJob(t *testing.T) {
 	require.Contains(t, *final.Error, "canceled by operator")
 
 	events := auditEvents(t, pool, run.ID)
-	require.Len(t, events, 2, "cancel adds no audit action (SPEC-013 mini-ADR 4)")
-	require.Equal(t, "run.finished", events[1].action)
-	require.Equal(t, "canceled", *events[1].finalStatus)
+	require.Len(t, events, 3)
+	require.Equal(t, "run.cancel_requested", events[1].action)
+	require.Equal(t, "run.finished", events[2].action)
+	require.Equal(t, "canceled", *events[2].finalStatus)
 }
 
 // SPEC-013 behavior 6: terminal, ghost and unknown runs are not cancelable.
@@ -155,18 +157,18 @@ func TestCancelNotCancelable(t *testing.T) {
 	svc, pool := newService(t)
 	ctx := context.Background()
 
-	require.ErrorIs(t, svc.Cancel(ctx, 99999), runs.ErrNotFound)
+	require.ErrorIs(t, svc.Cancel(ctx, testActor, 99999), runs.ErrNotFound)
 
-	run, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	final := waitTerminal(t, svc, run.ID)
-	require.ErrorIs(t, svc.Cancel(ctx, run.ID), runs.ErrNotCancelable)
+	require.ErrorIs(t, svc.Cancel(ctx, testActor, run.ID), runs.ErrNotCancelable)
 	unchanged, err := svc.Get(ctx, run.ID)
 	require.NoError(t, err)
 	require.Equal(t, final.State, unchanged.State)
 
 	ghostID := insertGhostRun(t, pool, "running")
-	require.ErrorIs(t, svc.Cancel(ctx, ghostID), runs.ErrNotCancelable)
+	require.ErrorIs(t, svc.Cancel(ctx, testActor, ghostID), runs.ErrNotCancelable)
 }
 
 func mustStream(t *testing.T, svc *runs.Service, id int64) <-chan engine.LogLine {

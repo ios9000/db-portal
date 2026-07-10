@@ -4,9 +4,9 @@
 // didn't silently break — it must stay green in every session. Skips (like
 // every DB test) when the compose Postgres is absent; see ADR-011.
 //
-// The automated twin of docs/demo-m1.md. UI-only beats (typed-name prod
-// ritual, EnvBanner, drawer) are pinned by the vitest component suite —
-// the API beneath them is deliberately unguarded until authz (SPEC-015).
+// The automated twin of docs/demo-m1.md. UI-only beats (EnvBanner, drawer)
+// are pinned by the vitest component suite; since WU-021 the API beneath
+// them is guarded for real — dba role on mutations, prod ritual server-side.
 package e2e
 
 import (
@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ios9000/db-portal/backend/internal/authn"
+	"github.com/ios9000/db-portal/backend/internal/authz"
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
@@ -60,9 +61,15 @@ func TestGoldenFlow(t *testing.T) {
 		To: []string{"dba@example.test"}, BaseURL: "http://portal.local:8080",
 	}
 
+	// Same boot-time grants as main.go's fake mode (SPEC-021 mini-ADR 8):
+	// the dev directory's DBAs get the dba role; the guard is otherwise live.
+	roles := authz.NewStore(pool, log)
+	require.NoError(t, roles.Grant(ctx, authz.RoleDBA, "dba1", "dba2"))
+
 	ts := httptest.NewServer(server.NewRouter(log, server.Deps{
 		DB: pool, Instances: inventory.NewStore(pool), Runs: svc,
-		Auth: authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
+		Auth:  authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
+		Roles: roles,
 	}))
 	t.Cleanup(ts.Close)
 
@@ -132,7 +139,10 @@ func TestGoldenFlow(t *testing.T) {
 	// DBA list. Failure injection rides the engineParams seam (tests only;
 	// the API passes nil — SPEC-012), everything downstream is production
 	// code: watcher, finalize, audit append, post-commit mail.
-	failRun, err := svc.Start(ctx, "crm-test", "dump", "", map[string]string{"mock_fail_at": "1"})
+	failRun, err := svc.Start(ctx, runs.StartRequest{
+		Actor: "dba1", Instance: "crm-test", Operation: "dump",
+		EngineParams: map[string]string{"mock_fail_at": "1"},
+	})
 	require.NoError(t, err)
 	failRun = waitTerminal(t, c, failRun.ID)
 	require.Equal(t, "failed", failRun.State)
@@ -149,14 +159,28 @@ func TestGoldenFlow(t *testing.T) {
 	require.Contains(t, msg.Data, fmt.Sprintf("http://portal.local:8080/runs/%d", failRun.ID))
 	require.NotContains(t, msg.Data, "injected failure") // error text never leaves the portal
 
-	// Beat 6 — PROD: same API, different engine credentials (layer 3) and
-	// env stamped 'prod' in every audit row (layer 4).
+	// Beat 6 — PROD: the ritual is server-side since WU-021 (SPEC-021
+	// mini-ADR 6) — no confirm means no run, no rows; then the confirmed
+	// launch rides different engine credentials (layer 3) with env stamped
+	// 'prod' in every audit row (layer 4).
+	refused, err := c.post("/api/runs", `{"instance": "billing-prod", "operation": "dump"}`)
+	require.NoError(t, err)
+	require.NoError(t, refused.Body.Close())
+	require.Equal(t, http.StatusBadRequest, refused.StatusCode,
+		"prod launch without the typed-name confirm must be refused")
+
 	prodRun := startRun(t, c, "billing-prod")
 	prodRun = waitTerminal(t, c, prodRun.ID)
 	require.Equal(t, "success", prodRun.State)
 	require.NotNil(t, prodRun.JobID)
 	require.True(t, strings.HasPrefix(*prodRun.JobID, "mock-prod-"), "job %q not on prod engine", *prodRun.JobID)
+	require.Equal(t, "dba1", prodRun.RequestedBy, "the run carries the AD identity that launched it")
 	requireAudit(t, ctx, pool, prodRun.ID, "prod", "success")
+
+	// Beat 7 — the trail answers "who": the requester filter finds dba1's
+	// runs and an unknown username matches nothing (SPEC-021).
+	require.NotEmpty(t, listRuns(t, c, "?requested_by=dba1"))
+	require.Empty(t, listRuns(t, c, "?requested_by=nobody"))
 }
 
 // apiClient is the authenticated client every HTTP beat runs through: a
@@ -206,7 +230,8 @@ func listInstances(t *testing.T, c *apiClient, query string) []json.RawMessage {
 
 func startRun(t *testing.T, c *apiClient, instance string) runs.Run {
 	t.Helper()
-	payload := fmt.Sprintf(`{"instance": %q, "operation": "dump"}`, instance)
+	// confirm mirrors the drawer's typed-name ritual; non-prod ignores it.
+	payload := fmt.Sprintf(`{"instance": %q, "operation": "dump", "confirm": %q}`, instance, instance)
 	resp, err := c.post("/api/runs", payload)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -214,6 +239,19 @@ func startRun(t *testing.T, c *apiClient, instance string) runs.Run {
 	var run runs.Run
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&run))
 	return run
+}
+
+func listRuns(t *testing.T, c *apiClient, query string) []runs.Run {
+	t.Helper()
+	resp, err := c.get("/api/runs" + query)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Runs []runs.Run `json:"runs"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body.Runs
 }
 
 func waitTerminal(t *testing.T, c *apiClient, id int64) runs.Run {
@@ -248,29 +286,30 @@ func readLogStream(t *testing.T, c *apiClient, id int64) string {
 }
 
 // requireAudit pins guardrail layer 4 (SPEC-015): exactly one submitted +
-// one finished audit event per run, environment stamped on both.
+// one finished audit event per run, environment stamped on both — and,
+// since WU-021, the requesting identity as actor on both (SPEC-021).
 func requireAudit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID int64, env, finalStatus string) {
 	t.Helper()
 	rows, err := pool.Query(ctx, `
-		SELECT action, environment, COALESCE(final_status, ''), COALESCE(job_id, '')
+		SELECT actor, action, environment, COALESCE(final_status, ''), COALESCE(job_id, '')
 		FROM audit_event WHERE run_id = $1 ORDER BY id`, runID)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	type event struct{ action, env, final string }
+	type event struct{ actor, action, env, final string }
 	var events []event
 	var jobIDs []string
 	for rows.Next() {
 		var e event
 		var jobID string
-		require.NoError(t, rows.Scan(&e.action, &e.env, &e.final, &jobID))
+		require.NoError(t, rows.Scan(&e.actor, &e.action, &e.env, &e.final, &jobID))
 		events = append(events, e)
 		jobIDs = append(jobIDs, jobID)
 	}
 	require.NoError(t, rows.Err())
 	require.Equal(t, []event{
-		{"run.submitted", env, ""},
-		{"run.finished", env, finalStatus},
+		{"dba1", "run.submitted", env, ""},
+		{"dba1", "run.finished", env, finalStatus},
 	}, events)
 	// job_id (0004): NULL at submit — the engine id doesn't exist yet — and
 	// stamped on finished, anchoring the run<->engine-job linkage immutably.

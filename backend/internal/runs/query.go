@@ -81,6 +81,7 @@ type ListFilter struct {
 	State       string
 	Environment string
 	Operation   string
+	RequestedBy string
 }
 
 // List returns the newest 50 runs matching the filter (fields ANDed).
@@ -94,6 +95,13 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]Run, error) {
 			args = append(args, val)
 			where = append(where, fmt.Sprintf("%s = $%d", col, len(args)))
 		}
+	}
+	if f.RequestedBy != "" {
+		// The requester lives on the run.submitted audit row (SPEC-014
+		// mini-ADR 6), so the filter matches where the read model reads.
+		args = append(args, f.RequestedBy)
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM audit_event a
+			WHERE a.run_id = r.id AND a.action = 'run.submitted' AND a.actor = $%d)`, len(args)))
 	}
 	query := runColumns
 	if len(where) > 0 {

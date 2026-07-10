@@ -21,6 +21,20 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/testutil"
 )
 
+// testActor is every test's audit identity (SPEC-021: the actor is an
+// explicit Start/Cancel argument; authz grants are the server's concern).
+const testActor = "dba-test"
+
+// testReq wraps the common launch ask. Confirm is pre-set to the instance
+// name so prod launches pass the ritual — the ritual itself has its own
+// tests.
+func testReq(instance, operation, reason string, params map[string]string) runs.StartRequest {
+	return runs.StartRequest{
+		Actor: testActor, Instance: instance, Operation: operation,
+		Reason: reason, Confirm: instance, EngineParams: params,
+	}
+}
+
 // newService builds a Service on a migrated scratch DB with the fixture
 // imported and fast mock engines for both env classes.
 func newService(t *testing.T) (*runs.Service, *pgxpool.Pool) {
@@ -65,24 +79,26 @@ func waitTerminal(t *testing.T, svc *runs.Service, id int64) runs.Run {
 }
 
 type auditRow struct {
+	actor       string
 	action      string
 	environment string
 	playbookTag string
 	digest      string
 	finalStatus *string
+	jobID       *string
 }
 
 func auditEvents(t *testing.T, pool *pgxpool.Pool, runID int64) []auditRow {
 	t.Helper()
 	rows, err := pool.Query(context.Background(), `
-		SELECT action, environment, playbook_tag, params_digest, final_status
+		SELECT actor, action, environment, playbook_tag, params_digest, final_status, job_id
 		FROM audit_event WHERE run_id = $1 ORDER BY id`, runID)
 	require.NoError(t, err)
 	defer rows.Close()
 	var out []auditRow
 	for rows.Next() {
 		var a auditRow
-		require.NoError(t, rows.Scan(&a.action, &a.environment, &a.playbookTag, &a.digest, &a.finalStatus))
+		require.NoError(t, rows.Scan(&a.actor, &a.action, &a.environment, &a.playbookTag, &a.digest, &a.finalStatus, &a.jobID))
 		out = append(out, a)
 	}
 	require.NoError(t, rows.Err())
@@ -94,7 +110,7 @@ func auditEvents(t *testing.T, pool *pgxpool.Pool, runID int64) []auditRow {
 func TestStartHappyPath(t *testing.T) {
 	svc, pool := newService(t)
 
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "CHG-1 nightly check", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "CHG-1 nightly check", nil))
 	require.NoError(t, err)
 	require.Equal(t, "billing-test", run.Instance)
 	require.Equal(t, "test", run.Environment)
@@ -125,6 +141,8 @@ func TestStartHappyPath(t *testing.T) {
 		require.Equal(t, "test", e.environment, "guardrail: env stamped on every audit row")
 		require.Equal(t, "dump", e.playbookTag)
 		require.NotEmpty(t, e.digest)
+		require.Equal(t, testActor, e.actor,
+			"both rows carry the requesting identity (SPEC-021 mini-ADR 4)")
 	}
 	require.Equal(t, events[0].digest, events[1].digest)
 }
@@ -135,7 +153,7 @@ func TestStartHappyPath(t *testing.T) {
 func TestStartProdRoutesToProdAdapter(t *testing.T) {
 	svc, pool := newService(t)
 
-	run, err := svc.Start(context.Background(), "billing-prod", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-prod", "dump", "", nil))
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(*run.JobID, "mock-prod"), "got %s", *run.JobID)
 	waitTerminal(t, svc, run.ID)
@@ -153,7 +171,7 @@ func TestStartProdRoutesToProdAdapter(t *testing.T) {
 func TestAuditEnvironmentNotNullable(t *testing.T) {
 	svc, pool := newService(t)
 
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	waitTerminal(t, svc, run.ID)
 
@@ -173,8 +191,8 @@ func TestAuditEnvironmentNotNullable(t *testing.T) {
 func TestStartFailurePath(t *testing.T) {
 	svc, pool := newService(t)
 
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "",
-		map[string]string{"mock_fail_at": "1"})
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "",
+		map[string]string{"mock_fail_at": "1"}))
 	require.NoError(t, err)
 
 	final := waitTerminal(t, svc, run.ID)
@@ -193,10 +211,10 @@ func TestStartUnknownInstanceAndOperation(t *testing.T) {
 	svc, pool := newService(t)
 	ctx := context.Background()
 
-	_, err := svc.Start(ctx, "nope", "dump", "", nil)
+	_, err := svc.Start(ctx, testReq("nope", "dump", "", nil))
 	require.ErrorIs(t, err, runs.ErrUnknownInstance)
 
-	_, err = svc.Start(ctx, "billing-test", "reindex-the-moon", "", nil)
+	_, err = svc.Start(ctx, testReq("billing-test", "reindex-the-moon", "", nil))
 	require.ErrorIs(t, err, runs.ErrUnknownOperation)
 
 	var count int
@@ -220,7 +238,7 @@ func TestStartEngineRefusalIsAudited(t *testing.T) {
 	rec := &recordingNotifier{}
 	svc.Notifier = rec
 
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.ErrorIs(t, err, runs.ErrEngine)
 	require.Equal(t, "failed", run.State)
 	require.NotNil(t, run.Error)
@@ -250,7 +268,7 @@ func TestSweepOrphans(t *testing.T) {
 		RETURNING id`, instanceID).Scan(&runID))
 	_, err := pool.Exec(ctx, `
 		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest)
-		VALUES ('local-dev', 'run.submitted', $1, $2, 'test', 'dump', 'digest')`, runID, instanceID)
+		VALUES ($3, 'run.submitted', $1, $2, 'test', 'dump', 'digest')`, runID, instanceID, testActor)
 	require.NoError(t, err)
 
 	rec := &recordingNotifier{}
@@ -263,7 +281,10 @@ func TestSweepOrphans(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "failed", run.State)
 	require.Contains(t, *run.Error, "engine job lost")
-	require.Equal(t, "failed", *auditEvents(t, pool, runID)[1].finalStatus)
+	finished := auditEvents(t, pool, runID)[1]
+	require.Equal(t, "failed", *finished.finalStatus)
+	require.Equal(t, testActor, finished.actor,
+		"a sweep finalization acts on the requester's behalf (SPEC-021 mini-ADR 4)")
 
 	svc.Wait()
 	require.Len(t, rec.all(), 1, "orphan sweep must notify (SPEC-014 behavior 3)")
@@ -298,18 +319,18 @@ func TestNotifierOnTerminalStates(t *testing.T) {
 	svc.Notifier = rec
 	ctx := context.Background()
 
-	okRun, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	okRun, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	require.Equal(t, "success", waitTerminal(t, svc, okRun.ID).State)
 
-	failRun, err := svc.Start(ctx, "billing-test", "dump", "",
-		map[string]string{"mock_fail_at": "1"})
+	failRun, err := svc.Start(ctx, testReq("billing-test", "dump", "",
+		map[string]string{"mock_fail_at": "1"}))
 	require.NoError(t, err)
 	require.Equal(t, "failed", waitTerminal(t, svc, failRun.ID).State)
 
-	abortRun, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	abortRun, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
-	require.NoError(t, svc.Cancel(ctx, abortRun.ID))
+	require.NoError(t, svc.Cancel(ctx, testActor, abortRun.ID))
 	require.Equal(t, "canceled", waitTerminal(t, svc, abortRun.ID).State)
 
 	svc.Wait() // drain watcher + notifier goroutines before asserting
@@ -319,7 +340,7 @@ func TestNotifierOnTerminalStates(t *testing.T) {
 	states := map[int64]string{}
 	for _, r := range got {
 		states[r.ID] = r.State
-		require.Equal(t, "local-dev", r.RequestedBy,
+		require.Equal(t, testActor, r.RequestedBy,
 			"notification carries the who (SPEC-014 mini-ADR 3)")
 		require.Equal(t, "billing-test", r.Instance)
 	}
@@ -327,9 +348,10 @@ func TestNotifierOnTerminalStates(t *testing.T) {
 	require.Equal(t, "canceled", states[abortRun.ID])
 
 	// The notifier erroring every time changed nothing durable: runs are
-	// finalized and the audit trail is complete.
+	// finalized and the audit trail is complete (the aborted run carries
+	// its extra run.cancel_requested row — SPEC-021 mini-ADR 5).
 	require.Len(t, auditEvents(t, pool, failRun.ID), 2)
-	require.Len(t, auditEvents(t, pool, abortRun.ID), 2)
+	require.Len(t, auditEvents(t, pool, abortRun.ID), 3)
 }
 
 // SPEC-012 behavior 8: newest-first list, instance filter, unknown filter
@@ -338,10 +360,10 @@ func TestList(t *testing.T) {
 	svc, _ := newService(t)
 	ctx := context.Background()
 
-	first, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	first, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	waitTerminal(t, svc, first.ID)
-	second, err := svc.Start(ctx, "crm-test", "dump", "", nil)
+	second, err := svc.Start(ctx, testReq("crm-test", "dump", "", nil))
 	require.NoError(t, err)
 	waitTerminal(t, svc, second.ID)
 
@@ -350,7 +372,7 @@ func TestList(t *testing.T) {
 	require.Len(t, all, 2)
 	require.Equal(t, second.ID, all[0].ID, "newest first")
 	for _, r := range all {
-		require.Equal(t, "local-dev", r.RequestedBy,
+		require.Equal(t, testActor, r.RequestedBy,
 			"SPEC-014: requester surfaces from the submitted audit event")
 	}
 
@@ -373,11 +395,11 @@ func TestListFilters(t *testing.T) {
 	svc, _ := newService(t)
 	ctx := context.Background()
 
-	ok, err := svc.Start(ctx, "billing-test", "dump", "", nil)
+	ok, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	waitTerminal(t, svc, ok.ID)
-	bad, err := svc.Start(ctx, "billing-prod", "dump", "",
-		map[string]string{"mock_fail_at": "1"})
+	bad, err := svc.Start(ctx, testReq("billing-prod", "dump", "",
+		map[string]string{"mock_fail_at": "1"}))
 	require.NoError(t, err)
 	waitTerminal(t, svc, bad.ID)
 
@@ -407,7 +429,7 @@ func TestStartRecordJobIDFailureRepairsRun(t *testing.T) {
 	svc, pool := newService(t)
 	svc.SetFailRecordJobID(errors.New("db hiccup"))
 
-	_, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	_, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.ErrorContains(t, err, "record job id")
 
 	var id int64
@@ -431,7 +453,7 @@ func TestStartRecordJobIDFailureRepairsRun(t *testing.T) {
 // outcome nor write a duplicate run.finished event (mini-ADR 8).
 func TestFinalizeIdempotent(t *testing.T) {
 	svc, pool := newService(t)
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 	final := waitTerminal(t, svc, run.ID)
 	require.Equal(t, "success", final.State)
@@ -450,7 +472,7 @@ func TestFinalizeIdempotent(t *testing.T) {
 // run.finished event lands, and the watcher's own late finalize no-ops.
 func TestFinalizeConcurrentSingleWinner(t *testing.T) {
 	svc, pool := newServiceWithDelay(t, 100*time.Millisecond) // job stays live
-	run, err := svc.Start(context.Background(), "billing-test", "dump", "", nil)
+	run, err := svc.Start(context.Background(), testReq("billing-test", "dump", "", nil))
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -468,4 +490,95 @@ func TestFinalizeConcurrentSingleWinner(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, []string{"failed", "canceled"}, got.State)
 	require.Len(t, auditEvents(t, pool, run.ID), 2, "exactly one run.finished despite three finalizers")
+}
+
+// SPEC-021 mini-ADR 6: prod launches need Confirm == instance name, checked
+// server-side before any row is written; non-prod ignores Confirm.
+func TestProdRitualServerSide(t *testing.T) {
+	svc, pool := newService(t)
+	ctx := context.Background()
+
+	for _, confirm := range []string{"", "billing-Prod", "billing-test"} {
+		req := testReq("billing-prod", "dump", "", nil)
+		req.Confirm = confirm
+		_, err := svc.Start(ctx, req)
+		require.ErrorIs(t, err, runs.ErrProdUnconfirmed, "confirm=%q", confirm)
+	}
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM run`).Scan(&count))
+	require.Zero(t, count, "a failed ritual must leave no run row")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM audit_event`).Scan(&count))
+	require.Zero(t, count, "a failed ritual must leave no audit row")
+
+	// Exact match launches; non-prod launches with any Confirm at all.
+	run, err := svc.Start(ctx, testReq("billing-prod", "dump", "", nil))
+	require.NoError(t, err)
+	waitTerminal(t, svc, run.ID)
+	nonprod := testReq("billing-test", "dump", "", nil)
+	nonprod.Confirm = "whatever"
+	run, err = svc.Start(ctx, nonprod)
+	require.NoError(t, err)
+	waitTerminal(t, svc, run.ID)
+}
+
+// SPEC-021 mini-ADR 5: cancel records run.cancel_requested with the
+// canceling actor before the engine is asked; the finished row still
+// inherits the SUBMITTING actor — three rows, two identities.
+func TestCancelRequestIsAudited(t *testing.T) {
+	svc, pool := newServiceWithDelay(t, 50*time.Millisecond)
+	ctx := context.Background()
+
+	run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
+	require.NoError(t, err)
+	require.NoError(t, svc.Cancel(ctx, "dba-canceler", run.ID))
+	require.Equal(t, "canceled", waitTerminal(t, svc, run.ID).State)
+	svc.Wait()
+
+	events := auditEvents(t, pool, run.ID)
+	require.Len(t, events, 3)
+	require.Equal(t, "run.submitted", events[0].action)
+	require.Equal(t, testActor, events[0].actor)
+
+	cancelReq := events[1]
+	require.Equal(t, "run.cancel_requested", cancelReq.action)
+	require.Equal(t, "dba-canceler", cancelReq.actor, "the cancel row names who asked")
+	require.Nil(t, cancelReq.finalStatus, "the outcome is not known at request time")
+	require.NotNil(t, cancelReq.jobID, "the job being canceled is the forensic anchor")
+	require.Equal(t, "test", cancelReq.environment)
+	require.NotEmpty(t, cancelReq.digest)
+
+	require.Equal(t, "run.finished", events[2].action)
+	require.Equal(t, testActor, events[2].actor, "finished inherits the submitter")
+	require.Equal(t, "canceled", *events[2].finalStatus)
+}
+
+// SPEC-021 behavior 5: requested_by filters on the submitted row's actor,
+// composes with the other filters, and unknown usernames match nothing.
+func TestListRequestedByFilter(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	mine := testReq("billing-test", "dump", "", nil)
+	theirs := testReq("crm-test", "dump", "", nil)
+	theirs.Actor = "dba-other"
+	first, err := svc.Start(ctx, mine)
+	require.NoError(t, err)
+	waitTerminal(t, svc, first.ID)
+	second, err := svc.Start(ctx, theirs)
+	require.NoError(t, err)
+	waitTerminal(t, svc, second.ID)
+
+	got, err := svc.List(ctx, runs.ListFilter{RequestedBy: "dba-other"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, second.ID, got[0].ID)
+	require.Equal(t, "dba-other", got[0].RequestedBy)
+
+	got, err = svc.List(ctx, runs.ListFilter{RequestedBy: "dba-other", Instance: "billing-test"})
+	require.NoError(t, err)
+	require.Empty(t, got, "filters AND together")
+
+	got, err = svc.List(ctx, runs.ListFilter{RequestedBy: "nobody"})
+	require.NoError(t, err)
+	require.Empty(t, got, "unknown requester is a filter that matches nothing")
 }

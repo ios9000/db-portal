@@ -22,25 +22,23 @@ import (
 // stubRuns fakes internal/runs for handler tests (the real Service is
 // covered by DB-backed tests in internal/runs).
 type stubRuns struct {
-	run        runs.Run
-	list       []runs.Run
-	err        error
-	started    *startRunCall
-	listFilter *runs.ListFilter
-	logs       []engine.LogLine
-	logsErr    error
-	cancelErr  error
-	canceled   *int64
+	run         runs.Run
+	list        []runs.Run
+	err         error
+	started     *startRunCall
+	listFilter  *runs.ListFilter
+	logs        []engine.LogLine
+	logsErr     error
+	cancelErr   error
+	canceled    *int64
+	cancelActor *string
 }
 
-type startRunCall struct {
-	instance, operation, reason string
-	params                      map[string]string
-}
+type startRunCall = runs.StartRequest
 
-func (s stubRuns) Start(_ context.Context, instance, operation, reason string, params map[string]string) (runs.Run, error) {
+func (s stubRuns) Start(_ context.Context, req runs.StartRequest) (runs.Run, error) {
 	if s.started != nil {
-		*s.started = startRunCall{instance, operation, reason, params}
+		*s.started = req
 	}
 	return s.run, s.err
 }
@@ -73,9 +71,12 @@ func (s stubRuns) StreamLogs(context.Context, int64) (<-chan engine.LogLine, err
 	return ch, nil
 }
 
-func (s stubRuns) Cancel(_ context.Context, id int64) error {
+func (s stubRuns) Cancel(_ context.Context, actor string, id int64) error {
 	if s.canceled != nil {
 		*s.canceled = id
+	}
+	if s.cancelActor != nil {
+		*s.cancelActor = actor
 	}
 	return s.cancelErr
 }
@@ -90,7 +91,7 @@ func sampleRun() runs.Run {
 
 func runsServer(t *testing.T, rs server.RunService) *httptest.Server {
 	t.Helper()
-	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: stubReader{}, Runs: rs, Auth: allowAllAuth{}})
+	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: stubReader{}, Runs: rs, Auth: allowAllAuth{}, Roles: allowAllRoles{}})
 }
 
 func TestListOperationsServesCatalog(t *testing.T) {
@@ -133,10 +134,11 @@ func TestStartRun(t *testing.T) {
 	require.Equal(t, "queued", body["state"])
 	require.Equal(t, "billing-test", body["instance"])
 
-	require.Equal(t, "billing-test", called.instance)
-	require.Equal(t, "dump", called.operation)
-	require.Equal(t, "CHG-1", called.reason)
-	require.Nil(t, called.params, "no client engine params may cross the API (SPEC-012)")
+	require.Equal(t, "billing-test", called.Instance)
+	require.Equal(t, "dump", called.Operation)
+	require.Equal(t, "CHG-1", called.Reason)
+	require.Equal(t, "local-dev", called.Actor, "the session identity is the audit actor (SPEC-021)")
+	require.Nil(t, called.EngineParams, "no client engine params may cross the API (SPEC-012)")
 }
 
 func TestStartRunErrorMapping(t *testing.T) {
@@ -187,10 +189,11 @@ func TestListRunsForwardsFilters(t *testing.T) {
 	var body struct {
 		Runs []map[string]any `json:"runs"`
 	}
-	resp := apiGet(t, ts, "/api/runs?instance=billing-test&state=failed&env=test&operation=dump", &body)
+	resp := apiGet(t, ts, "/api/runs?instance=billing-test&state=failed&env=test&operation=dump&requested_by=dba1", &body)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, runs.ListFilter{
 		Instance: "billing-test", State: "failed", Environment: "test", Operation: "dump",
+		RequestedBy: "dba1",
 	}, got)
 }
 

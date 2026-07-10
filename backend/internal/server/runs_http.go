@@ -20,11 +20,11 @@ import (
 // RunService is what the run endpoints need from internal/runs; satisfied
 // by *runs.Service, stubbed in handler tests.
 type RunService interface {
-	Start(ctx context.Context, instanceName, operationID, reason string, engineParams map[string]string) (runs.Run, error)
+	Start(ctx context.Context, req runs.StartRequest) (runs.Run, error)
 	Get(ctx context.Context, id int64) (runs.Run, error)
 	List(ctx context.Context, filter runs.ListFilter) ([]runs.Run, error)
 	StreamLogs(ctx context.Context, id int64) (<-chan engine.LogLine, error)
-	Cancel(ctx context.Context, id int64) error
+	Cancel(ctx context.Context, actor string, id int64) error
 }
 
 // listOperations answers GET /api/operations from the static catalog.
@@ -38,24 +38,58 @@ type startRunRequest struct {
 	Instance  string `json:"instance"`
 	Operation string `json:"operation"`
 	Reason    string `json:"reason"`
+	Confirm   string `json:"confirm"`
 }
 
+// startRunBodyCap bounds POST /api/runs bodies (m1-gate item 15): four
+// short string fields need nowhere near 64 KiB.
+const startRunBodyCap = 64 << 10
+
+// reasonMaxLen is policy, not storage — the column is unbounded text
+// (SPEC-021 mini-ADR 7).
+const reasonMaxLen = 500
+
 // startRun answers POST /api/runs — the hero flow's entry point. No engine
-// params cross this boundary in MVP (SPEC-012).
+// params cross this boundary in MVP (SPEC-012). The audit actor is the
+// session identity, passed explicitly (SPEC-021 mini-ADR 4).
 func startRun(log *slog.Logger, rs RunService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := actorFrom(w, r)
+		if !ok {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, startRunBodyCap)
 		var req startRunRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
 			writeJSONError(w, http.StatusBadRequest, "bad JSON body")
 			return
 		}
-		run, err := rs.Start(r.Context(), req.Instance, req.Operation, req.Reason, nil)
+		if len(req.Reason) > reasonMaxLen {
+			writeJSONError(w, http.StatusBadRequest,
+				fmt.Sprintf("reason too long (max %d characters)", reasonMaxLen))
+			return
+		}
+		run, err := rs.Start(r.Context(), runs.StartRequest{
+			Actor:     actor,
+			Instance:  req.Instance,
+			Operation: req.Operation,
+			Reason:    req.Reason,
+			Confirm:   req.Confirm,
+		})
 		switch {
 		case errors.Is(err, runs.ErrUnknownOperation):
 			writeJSONError(w, http.StatusBadRequest, "unknown operation")
 			return
 		case errors.Is(err, runs.ErrUnknownInstance):
 			writeJSONError(w, http.StatusNotFound, "no such instance")
+			return
+		case errors.Is(err, runs.ErrProdUnconfirmed):
+			writeJSONError(w, http.StatusBadRequest, "prod launch requires typing the instance name")
 			return
 		case errors.Is(err, runs.ErrEngine):
 			// The run exists, finalized failed, audit trail complete — the
@@ -72,7 +106,7 @@ func startRun(log *slog.Logger, rs RunService) http.HandlerFunc {
 	}
 }
 
-// listRuns answers GET /api/runs[?instance=&state=&env=&operation=].
+// listRuns answers GET /api/runs[?instance=&state=&env=&operation=&requested_by=].
 // Filters compose (ANDed); unknown values match nothing (SPEC-014).
 func listRuns(log *slog.Logger, rs RunService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +116,7 @@ func listRuns(log *slog.Logger, rs RunService) http.HandlerFunc {
 			State:       q.Get("state"),
 			Environment: q.Get("env"),
 			Operation:   q.Get("operation"),
+			RequestedBy: q.Get("requested_by"),
 		})
 		if err != nil {
 			log.Error("list runs", "err", err.Error())
@@ -209,11 +244,15 @@ func streamRunLogs(log *slog.Logger, rs RunService) http.HandlerFunc {
 // (SPEC-013 mini-ADR 4) and clients observe `canceled` via polling.
 func cancelRun(log *slog.Logger, rs RunService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := actorFrom(w, r)
+		if !ok {
+			return
+		}
 		id, ok := runIDParam(w, r)
 		if !ok {
 			return
 		}
-		err := rs.Cancel(r.Context(), id)
+		err := rs.Cancel(r.Context(), actor, id)
 		switch {
 		case errors.Is(err, runs.ErrNotFound):
 			writeJSONError(w, http.StatusNotFound, "no such run")

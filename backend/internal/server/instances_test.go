@@ -68,9 +68,15 @@ func (allowAllAuth) Validate(context.Context, string) (authn.Identity, error) {
 
 func (allowAllAuth) Logout(context.Context, string) error { return nil }
 
+// allowAllRoles satisfies the role guard for tests that aren't about
+// authz; the strict counterpart lives in authz_http_test.go.
+type allowAllRoles struct{}
+
+func (allowAllRoles) Require(context.Context, string, string, string, string) error { return nil }
+
 func apiServer(t *testing.T, inv server.InstanceReader) *httptest.Server {
 	t.Helper()
-	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: inv, Runs: stubRuns{}, Auth: allowAllAuth{}})
+	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: inv, Runs: stubRuns{}, Auth: allowAllAuth{}, Roles: allowAllRoles{}})
 }
 
 func depsServer(t *testing.T, d server.Deps) *httptest.Server {

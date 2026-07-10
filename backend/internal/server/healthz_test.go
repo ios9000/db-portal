@@ -22,7 +22,7 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 func get(t *testing.T, db server.Pinger, path string) (*http.Response, map[string]string) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ts := httptest.NewServer(server.NewRouter(log, server.Deps{DB: db, Instances: stubReader{}, Runs: stubRuns{}, Auth: allowAllAuth{}}))
+	ts := httptest.NewServer(server.NewRouter(log, server.Deps{DB: db, Instances: stubReader{}, Runs: stubRuns{}, Auth: allowAllAuth{}, Roles: allowAllRoles{}}))
 	t.Cleanup(ts.Close)
 
 	resp, err := http.Get(ts.URL + path)
