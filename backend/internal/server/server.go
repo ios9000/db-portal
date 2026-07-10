@@ -25,6 +25,10 @@ type Deps struct {
 	DB        Pinger
 	Instances InstanceReader
 	Runs      RunService
+	Auth      Authenticator
+	// SecureCookies marks the session cookie Secure (PORTAL_COOKIE_SECURE;
+	// off in dev — plain HTTP).
+	SecureCookies bool
 }
 
 // NewRouter builds the portal's HTTP handler with the full middleware
@@ -35,14 +39,21 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 	r.Use(requestLogger(log))
 	r.Get("/healthz", healthz(d.DB))
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/instances", listInstances(log, d.Instances))
-		r.Get("/instances/{name}", getInstance(log, d.Instances))
-		r.Get("/operations", listOperations())
-		r.Post("/runs", startRun(log, d.Runs))
-		r.Get("/runs", listRuns(log, d.Runs))
-		r.Get("/runs/{id}", getRun(log, d.Runs))
-		r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
-		r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
+		// The one API route outside the session guard (SPEC-020).
+		r.Post("/auth/login", login(log, d))
+		r.Group(func(r chi.Router) {
+			r.Use(requireSession(d.Auth))
+			r.Post("/auth/logout", logout(log, d))
+			r.Get("/auth/me", me())
+			r.Get("/instances", listInstances(log, d.Instances))
+			r.Get("/instances/{name}", getInstance(log, d.Instances))
+			r.Get("/operations", listOperations())
+			r.Post("/runs", startRun(log, d.Runs))
+			r.Get("/runs", listRuns(log, d.Runs))
+			r.Get("/runs/{id}", getRun(log, d.Runs))
+			r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
+			r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
+		})
 	})
 	// Everything unmatched goes to the embedded SPA (WU-006): real files
 	// as-is, client-side routes fall back to index.html, /api misses stay 404.

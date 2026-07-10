@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ios9000/db-portal/backend/internal/authn"
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
@@ -60,8 +62,24 @@ func TestGoldenFlow(t *testing.T) {
 
 	ts := httptest.NewServer(server.NewRouter(log, server.Deps{
 		DB: pool, Instances: inventory.NewStore(pool), Runs: svc,
+		Auth: authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
 	}))
 	t.Cleanup(ts.Close)
+
+	// Beat 0 — the door is locked (SPEC-020): the API is 401 until a real
+	// login against the fake directory mints a session; the cookie jar then
+	// carries it through every later beat, exactly like the browser. No
+	// test-only bypass here — the canary covers authn end to end.
+	c := newAPIClient(t, ts)
+	locked, err := c.get("/api/instances")
+	require.NoError(t, err)
+	require.NoError(t, locked.Body.Close())
+	require.Equal(t, http.StatusUnauthorized, locked.StatusCode, "API must be locked before login")
+
+	loginResp, err := c.post("/api/auth/login", `{"username":"dba1","password":"dba1"}`)
+	require.NoError(t, err)
+	require.NoError(t, loginResp.Body.Close())
+	require.Equal(t, http.StatusOK, loginResp.StatusCode)
 
 	// Beat 1 — import the estate, twice: the second pass must be a no-op
 	// (idempotent natural-key import, SPEC-010).
@@ -73,13 +91,13 @@ func TestGoldenFlow(t *testing.T) {
 	require.Equal(t, 8, rep.Unchanged)
 
 	// Beat 2 — the fleet is visible, env filter is server-side.
-	require.Len(t, listInstances(t, ts, ""), 8)
-	require.Len(t, listInstances(t, ts, "?env=test"), 3)
+	require.Len(t, listInstances(t, c, ""), 8)
+	require.Len(t, listInstances(t, c, "?env=test"), 3)
 
 	// Beat 3+4 — dump on a TEST instance through the API, watch it succeed
 	// with artifact metadata, routed to the nonprod adapter.
-	run := startRun(t, ts, "billing-test")
-	run = waitTerminal(t, ts, run.ID)
+	run := startRun(t, c, "billing-test")
+	run = waitTerminal(t, c, run.ID)
 	require.Equal(t, "success", run.State)
 	require.NotNil(t, run.JobID)
 	require.True(t, strings.HasPrefix(*run.JobID, "mock-nonprod-"), "job %q not on nonprod engine", *run.JobID)
@@ -89,7 +107,7 @@ func TestGoldenFlow(t *testing.T) {
 
 	// The fleet view reflects the backup (WU-011R): billing-test now carries
 	// last_backup_at; untouched instances stay null.
-	for _, raw := range listInstances(t, ts, "") {
+	for _, raw := range listInstances(t, c, "") {
 		var in struct {
 			Name         string  `json:"name"`
 			LastBackupAt *string `json:"last_backup_at"`
@@ -104,7 +122,7 @@ func TestGoldenFlow(t *testing.T) {
 
 	// Beat 4 — live logs over SSE: replay of the finished job, then exactly
 	// one `end` event (SPEC-013).
-	sse := readLogStream(t, ts, run.ID)
+	sse := readLogStream(t, c, run.ID)
 	require.Contains(t, sse, "event: log")
 	require.Contains(t, sse, "PLAY RECAP")
 	require.Equal(t, 1, strings.Count(sse, "event: end"))
@@ -116,7 +134,7 @@ func TestGoldenFlow(t *testing.T) {
 	// code: watcher, finalize, audit append, post-commit mail.
 	failRun, err := svc.Start(ctx, "crm-test", "dump", "", map[string]string{"mock_fail_at": "1"})
 	require.NoError(t, err)
-	failRun = waitTerminal(t, ts, failRun.ID)
+	failRun = waitTerminal(t, c, failRun.ID)
 	require.Equal(t, "failed", failRun.State)
 	requireAudit(t, ctx, pool, failRun.ID, "test", "failed")
 
@@ -133,12 +151,34 @@ func TestGoldenFlow(t *testing.T) {
 
 	// Beat 6 — PROD: same API, different engine credentials (layer 3) and
 	// env stamped 'prod' in every audit row (layer 4).
-	prodRun := startRun(t, ts, "billing-prod")
-	prodRun = waitTerminal(t, ts, prodRun.ID)
+	prodRun := startRun(t, c, "billing-prod")
+	prodRun = waitTerminal(t, c, prodRun.ID)
 	require.Equal(t, "success", prodRun.State)
 	require.NotNil(t, prodRun.JobID)
 	require.True(t, strings.HasPrefix(*prodRun.JobID, "mock-prod-"), "job %q not on prod engine", *prodRun.JobID)
 	requireAudit(t, ctx, pool, prodRun.ID, "prod", "success")
+}
+
+// apiClient is the authenticated client every HTTP beat runs through: a
+// cookie jar carries the session minted by the login beat.
+type apiClient struct {
+	base string
+	http *http.Client
+}
+
+func newAPIClient(t *testing.T, ts *httptest.Server) *apiClient {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	return &apiClient{base: ts.URL, http: &http.Client{Jar: jar}}
+}
+
+func (c *apiClient) get(path string) (*http.Response, error) {
+	return c.http.Get(c.base + path)
+}
+
+func (c *apiClient) post(path, body string) (*http.Response, error) {
+	return c.http.Post(c.base+path, "application/json", strings.NewReader(body))
 }
 
 func importFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inventory.Report {
@@ -151,9 +191,9 @@ func importFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) invent
 	return rep
 }
 
-func listInstances(t *testing.T, ts *httptest.Server, query string) []json.RawMessage {
+func listInstances(t *testing.T, c *apiClient, query string) []json.RawMessage {
 	t.Helper()
-	resp, err := http.Get(ts.URL + "/api/instances" + query)
+	resp, err := c.get("/api/instances" + query)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -164,10 +204,10 @@ func listInstances(t *testing.T, ts *httptest.Server, query string) []json.RawMe
 	return body.Instances
 }
 
-func startRun(t *testing.T, ts *httptest.Server, instance string) runs.Run {
+func startRun(t *testing.T, c *apiClient, instance string) runs.Run {
 	t.Helper()
 	payload := fmt.Sprintf(`{"instance": %q, "operation": "dump"}`, instance)
-	resp, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(payload))
+	resp, err := c.post("/api/runs", payload)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -176,11 +216,11 @@ func startRun(t *testing.T, ts *httptest.Server, instance string) runs.Run {
 	return run
 }
 
-func waitTerminal(t *testing.T, ts *httptest.Server, id int64) runs.Run {
+func waitTerminal(t *testing.T, c *apiClient, id int64) runs.Run {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(fmt.Sprintf("%s/api/runs/%d", ts.URL, id))
+		resp, err := c.get(fmt.Sprintf("/api/runs/%d", id))
 		require.NoError(t, err)
 		var run runs.Run
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&run))
@@ -195,9 +235,9 @@ func waitTerminal(t *testing.T, ts *httptest.Server, id int64) runs.Run {
 	return runs.Run{}
 }
 
-func readLogStream(t *testing.T, ts *httptest.Server, id int64) string {
+func readLogStream(t *testing.T, c *apiClient, id int64) string {
 	t.Helper()
-	resp, err := http.Get(fmt.Sprintf("%s/api/runs/%d/logs", ts.URL, id))
+	resp, err := c.get(fmt.Sprintf("/api/runs/%d/logs", id))
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

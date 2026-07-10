@@ -16,6 +16,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ios9000/db-portal/backend/internal/authn"
 	"github.com/ios9000/db-portal/backend/internal/config"
 	"github.com/ios9000/db-portal/backend/internal/db"
 	"github.com/ios9000/db-portal/backend/internal/engine"
@@ -99,12 +102,46 @@ func run(log *slog.Logger, args []string) error {
 		log.Info("orphaned runs finalized", "count", n)
 	}
 
+	auth, err := buildAuthenticator(cfg, pool, log)
+	if err != nil {
+		return err
+	}
+
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
-		DB:        pool,
-		Instances: inventory.NewStore(pool),
-		Runs:      runSvc,
+		DB:            pool,
+		Instances:     inventory.NewStore(pool),
+		Runs:          runSvc,
+		Auth:          auth,
+		SecureCookies: cfg.CookieSecure,
 	}).Run(ctx)
+}
+
+// buildAuthenticator is the composition root for SPEC-020's directory seam.
+// Unknown modes fail at startup rather than guessing — auth config is not
+// a place for silent fallbacks.
+func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) (server.Authenticator, error) {
+	switch cfg.AuthMode {
+	case "off":
+		log.Warn("AUTH BYPASS ACTIVE (PORTAL_AUTH_MODE=off) — every request is local-dev; demo/dev only")
+		return authn.Bypass{}, nil
+	case "fake":
+		log.Info("auth mode: fake in-process directory (dev/CI)")
+		return authn.NewService(pool, authn.DevDirectory(), log, cfg.SessionTTL, cfg.BreakglassHash), nil
+	case "ldap":
+		if cfg.LDAPInsecure {
+			log.Warn("PORTAL_LDAP_INSECURE=true — LDAP TLS verification is off; dev only")
+		}
+		dir := authn.LDAP{
+			URL:          cfg.LDAPURL,
+			BindTemplate: cfg.LDAPBindTemplate,
+			Insecure:     cfg.LDAPInsecure,
+		}
+		log.Info("auth mode: ldap", "url", cfg.LDAPURL)
+		return authn.NewService(pool, dir, log, cfg.SessionTTL, cfg.BreakglassHash), nil
+	default:
+		return nil, fmt.Errorf("unknown PORTAL_AUTH_MODE %q (want ldap, fake or off)", cfg.AuthMode)
+	}
 }
 
 // runImport implements `portal import <file>`. Exit 0 means the file was

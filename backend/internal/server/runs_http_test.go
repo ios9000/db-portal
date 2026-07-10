@@ -90,7 +90,7 @@ func sampleRun() runs.Run {
 
 func runsServer(t *testing.T, rs server.RunService) *httptest.Server {
 	t.Helper()
-	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: stubReader{}, Runs: rs})
+	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: stubReader{}, Runs: rs, Auth: allowAllAuth{}})
 }
 
 func TestListOperationsServesCatalog(t *testing.T) {

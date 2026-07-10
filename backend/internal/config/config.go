@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -33,6 +34,17 @@ type Config struct {
 	SMTPFrom string `env:"PORTAL_SMTP_FROM" envDefault:"portal@db-portal.local"`
 	NotifyTo string `env:"PORTAL_NOTIFY_TO"`
 	BaseURL  string `env:"PORTAL_BASE_URL"  envDefault:"http://localhost:8080"`
+
+	// AuthN (SPEC-020). AuthMode defaults to ldap so a misconfigured portal
+	// fails closed (no LDAP URL → every login fails, API stays 401).
+	// BreakglassHash empty = the break-glass account is disabled.
+	AuthMode         string        `env:"PORTAL_AUTH_MODE"          envDefault:"ldap"`
+	LDAPURL          string        `env:"PORTAL_LDAP_URL"`
+	LDAPBindTemplate string        `env:"PORTAL_LDAP_BIND_TEMPLATE"`
+	LDAPInsecure     bool          `env:"PORTAL_LDAP_INSECURE"      envDefault:"false"`
+	BreakglassHash   string        `env:"PORTAL_BREAKGLASS_HASH"`
+	SessionTTL       time.Duration `env:"PORTAL_SESSION_TTL"        envDefault:"12h"`
+	CookieSecure     bool          `env:"PORTAL_COOKIE_SECURE"      envDefault:"false"`
 }
 
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv

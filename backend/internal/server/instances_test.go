@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/ios9000/db-portal/backend/internal/authn"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/server"
 )
@@ -52,9 +53,24 @@ func (s stubReader) GetInstance(_ context.Context, name string) (inventory.Insta
 	return inventory.Instance{}, inventory.ErrNotFound
 }
 
+// allowAllAuth satisfies the session guard for tests that aren't about
+// authn: every request is local-dev. Auth behavior itself is covered by
+// auth_http_test.go with a strict stub.
+type allowAllAuth struct{}
+
+func (allowAllAuth) Login(context.Context, string, string, string) (authn.Session, error) {
+	return authn.Session{Identity: authn.Identity{Username: "local-dev", DisplayName: "Local Dev"}}, nil
+}
+
+func (allowAllAuth) Validate(context.Context, string) (authn.Identity, error) {
+	return authn.Identity{Username: "local-dev", DisplayName: "Local Dev"}, nil
+}
+
+func (allowAllAuth) Logout(context.Context, string) error { return nil }
+
 func apiServer(t *testing.T, inv server.InstanceReader) *httptest.Server {
 	t.Helper()
-	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: inv, Runs: stubRuns{}})
+	return depsServer(t, server.Deps{DB: fakePinger{}, Instances: inv, Runs: stubRuns{}, Auth: allowAllAuth{}})
 }
 
 func depsServer(t *testing.T, d server.Deps) *httptest.Server {
