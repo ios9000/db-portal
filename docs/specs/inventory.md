@@ -48,6 +48,11 @@ run/audit row FKs `instance.id` (ARCHITECTURE §2).
 CSV contract: header REQUIRED, exactly
 `instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window`
 (order fixed, UTF-8, `size_gb`/`maintenance_window` may be empty).
+`size_gb` must be a finite number; it is canonicalized to plain decimal at parse
+time (WU-018, m1-gate item 8): forms Go accepts but PG rejects (hex floats)
+never reach the `::numeric` cast, and forms PG normalizes (`1e2`→`100`,
+`.5`→`0.5`) can't defeat the unchanged-row compare — store and compare see one
+form. Unparseable values quarantine per behavior 4, never abort the import.
 
 1. Happy path: fixture CSV (8 rows) → 8 instances, 6 clusters, report
    `imported 8 new, ... quarantined 0`; import row records counts.

@@ -36,7 +36,7 @@ type Row struct {
 	Env               string
 	Platform          string
 	PGVersion         string
-	SizeGB            *string // validated numeric, kept as text; nil when empty
+	SizeGB            *string // validated finite number, canonical decimal text; nil when empty
 	Owner             string
 	MaintenanceWindow *string // raw string, semantics owned by WU-022 (O-3); nil when empty
 }
@@ -155,7 +155,15 @@ func parseRow(raw string) (Row, []string) {
 		if v, err := strconv.ParseFloat(s, 64); err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			reasons = append(reasons, fmt.Sprintf("size_gb must be numeric, got %q", s))
 		} else {
-			row.SizeGB = &s
+			// Keep the canonical decimal rendering, not the raw text: Go
+			// accepts forms Postgres rejects (hex floats — the ::numeric cast
+			// would abort the whole import) or normalizes ('1e2' -> '100' —
+			// the unchanged-row compare would report "updated" forever).
+			if v == 0 {
+				v = 0 // fold -0: Postgres numeric has no signed zero
+			}
+			c := strconv.FormatFloat(v, 'f', -1, 64)
+			row.SizeGB = &c
 		}
 	}
 	if row.Owner == "" {

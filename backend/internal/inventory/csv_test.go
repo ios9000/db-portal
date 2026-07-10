@@ -55,6 +55,8 @@ func TestParseRowValidation(t *testing.T) {
 		{"leading dash cluster_name", "billing-prod,-billing,prod,k8s_patroni,16.3,412,team,", []string{"cluster_name must match"}},
 		{"overlong instance_name", strings.Repeat("a", 64) + ",billing,prod,k8s_patroni,16.3,412,team,", []string{"instance_name must match"}},
 		{"non-numeric size_gb", "billing-prod,billing,prod,k8s_patroni,16.3,huge,team,", []string{"size_gb must be numeric"}},
+		{"infinite size_gb", "billing-prod,billing,prod,k8s_patroni,16.3,inf,team,", []string{"size_gb must be numeric"}},
+		{"truncated hex size_gb", "billing-prod,billing,prod,k8s_patroni,16.3,0x1p,team,", []string{"size_gb must be numeric"}},
 		{"too few columns", "billing-prod,billing,prod,k8s_patroni", []string{"wrong column count: got 4, want 8"}},
 		{"too many columns", "billing-prod,billing,prod,k8s_patroni,16.3,412,team,,extra", []string{"wrong column count: got 9, want 8"}},
 		{"unknown platform", "billing-prod,billing,prod,docker,16.3,412,team,", []string{"unknown platform"}},
@@ -93,6 +95,35 @@ func TestParseRowValidation(t *testing.T) {
 					return false
 				}, "missing reason %q in %v", want, rej.Reasons)
 			}
+		})
+	}
+}
+
+// WU-018 (m1-gate item 8): size_gb is kept in one canonical decimal form, so
+// exotic forms Go accepts must either canonicalize or quarantine — the raw
+// text never reaches Postgres, which would reject hex floats (aborting the
+// import) or normalize '1e2'-style forms (defeating the unchanged compare).
+func TestParseSizeGBCanonicalized(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"412", "412"},
+		{"16.3", "16.3"},
+		{"1e2", "100"},
+		{".5", "0.5"},
+		{"0120", "120"},
+		{"0x1p4", "16"},
+		{"+7", "7"},
+		{"-0", "0"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			row := "billing-prod,billing,prod,k8s_patroni,16.3," + tc.in + ",team,"
+			res, err := inventory.Parse(strings.NewReader(goodHeader + "\n" + row + "\n"))
+			require.NoError(t, err)
+			require.Len(t, res.Rows, 1, "rejects: %v", res.Rejects)
+			require.NotNil(t, res.Rows[0].SizeGB)
+			require.Equal(t, tc.want, *res.Rows[0].SizeGB)
 		})
 	}
 }

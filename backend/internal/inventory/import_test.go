@@ -152,6 +152,41 @@ func TestImportQuarantine(t *testing.T) {
 	}
 }
 
+// WU-018 (m1-gate item 8): exotic-but-valid size_gb forms import canonically —
+// hex floats no longer abort the whole import at the ::numeric cast, and forms
+// Postgres normalizes ('1e2' -> '100') no longer re-import as "updated"
+// forever: the identical file is all-unchanged (SPEC-010 behavior 2).
+func TestImportSizeGBFormsIdempotent(t *testing.T) {
+	pool := testutil.MigratedDB(t)
+
+	csv := goodHeader + "\n" +
+		"a-1,c-1,dev,vm,16.3,1e2,team,\n" +
+		"a-2,c-1,dev,vm,16.3,.5,team,\n" +
+		"a-3,c-1,dev,vm,16.3,0120,team,\n" +
+		"a-4,c-1,dev,vm,16.3,0x1p4,team,\n"
+
+	rep := importCSV(t, pool, "sizes.csv", csv)
+	require.Equal(t, "imported 4 new, updated 0, unchanged 0, quarantined 0", rep.String())
+
+	rows, err := pool.Query(context.Background(),
+		`SELECT name, size_gb::text FROM instance ORDER BY name`)
+	require.NoError(t, err)
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var name, size string
+		require.NoError(t, rows.Scan(&name, &size))
+		got[name] = size
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, map[string]string{
+		"a-1": "100", "a-2": "0.5", "a-3": "120", "a-4": "16",
+	}, got, "stored form must equal the parser's canonical form")
+
+	rep = importCSV(t, pool, "sizes.csv", csv)
+	require.Equal(t, "imported 0 new, updated 0, unchanged 4, quarantined 0", rep.String())
+}
+
 // SPEC-010 behavior 6: a file-level failure writes nothing at all.
 func TestImportFileLevelFailureWritesNothing(t *testing.T) {
 	pool := testutil.MigratedDB(t)
