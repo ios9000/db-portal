@@ -343,7 +343,7 @@ goose down walks one migration; `npm run check` green.
 **Context brief:** docs/agent/reviews/m1-gate.md items 4-5; 0003_runs_audit.sql;
 internal/runs/service.go audit INSERTs; ARCHITECTURE §5; migrate_test down-walk.
 
-### WU-018 · M1-gate fix: inventory size_gb canonicalization — S · `pending`
+### WU-018 · M1-gate fix: inventory size_gb canonicalization — S · `done (2026-07-10, commit 391e955)`
 csv.go keeps the raw size_gb string; Postgres canonicalizes — two symptoms, one root
 cause (gate items 8a/8b, one reproduced live): hex-float forms Go accepts but PG
 rejects abort the WHOLE import instead of quarantining the row; PG-normalized forms

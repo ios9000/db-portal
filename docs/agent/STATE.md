@@ -5,20 +5,21 @@
 
 ## Now
 
-- **Active WU:** WU-018 (M1-gate fix: inventory size_gb canonicalization) —
-  **not started**. WU-017 DONE 2026-07-09 (s09, commit 07a12e5).
-- **Status:** WU-017 closed gate items 4-5 (docs/agent/reviews/m1-gate.md): migration
-  0004 adds a statement-level BEFORE TRUNCATE trigger reusing audit_event_immutable()
-  + REVOKE TRUNCATE (same trigger-enforces/REVOKE-documents split as 0003), and
-  `audit_event.job_id text NULL` stamped from run.job_id on `run.finished` via the
-  finalize INSERT..SELECT JOIN (NULL at submit is honest — the id doesn't exist yet).
-  SPEC-012 reconciled: mini-ADR 1 now says §5 fields appear on the event PAIR
-  (final_status + job_id finished-only); data section covers 0003+0004. Evidence:
-  TestAuditEventIsAppendOnly extended with TRUNCATE → "append-only"; TestMigrateUpDown
-  walks 0004 down (job_id gone, table intact) then 0003→0001; golden flow requireAudit
-  asserts job_id '' on submitted / non-empty on finished for all three runs; npm run
-  check green both stacks (vitest 52/52); LIVE dev DB: migrate up applied 0004, psql
-  `TRUNCATE audit_event` → ERROR "audit_event is append-only".
+- **Active WU:** WU-019 (M1-gate fix: frontend resilience) — **not started**.
+  WU-018 DONE 2026-07-10 (s10, commit 391e955).
+- **Status:** WU-018 closed gate item 8 (docs/agent/reviews/m1-gate.md): size_gb is
+  canonicalized at parse time (strconv.FormatFloat plain decimal, -0 folded) so the
+  store and the unchanged-row compare see one form — hex floats never reach the
+  ::numeric cast (no whole-import abort), PG-normalized forms ('1e2'→'100',
+  '.5'→'0.5') no longer re-import as "updated" forever; unparseable forms still
+  quarantine. SPEC-010 CSV contract updated. Evidence: parse tests (1e2/.5/0120/
+  0x1p4/+7/-0 → canonical; inf + truncated hex → quarantine reasons);
+  TestImportSizeGBFormsIdempotent (4 exotic forms import, stored text = canonical,
+  re-import all-unchanged); npm run check green both stacks (vitest 52/52); LIVE
+  CLI import x2 on dev DB: "3 new, 1 quarantined (0x1p)" then "3 unchanged, 1
+  quarantined" — stored 100/0.5/16; dev DB restored (test rows deleted).
+  NOTE: s10 resumed uncommitted WU-018 work left by an SSH-reset-killed session —
+  the tree-wins rule worked; code was reviewed against the brief, then verified.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -27,14 +28,16 @@
 
 ## Next action (be exact)
 
-1. **WU-018 in a fresh session:** size_gb canonicalization — canonicalize SizeGB at
-   parse time (strconv.FormatFloat) so store and compare see one form; PG-rejectable
-   forms (hex floats) must quarantine the row, never abort the import. Read: BACKLOG
-   WU-018; m1-gate.md item 8; internal/inventory/csv.go (size_gb parse + finite
-   check); import.go:140-165 (canonical compare); SPEC-010.
-2. Then WU-019 (frontend resilience; its CSV-injection beat MUST precede WU-020).
-3. **WU-020 (AuthN) after the gate fixes, FRESH session:** write `docs/specs/authn.md`
-   FIRST (mini-ADRs: session store shape, go-ldap dep, fake-directory seam, break-glass
+1. **WU-019 in a fresh session:** frontend resilience — gate items 6-7 + lows 10-13:
+   RunDetail/api.ts SSE transient failure must retry/backoff keeping lines (not
+   permanent "logs gone"); LaunchDrawer overlay click must not dismiss mid-launch;
+   getJSON/postJSON wrap res.json() → ApiError on malformed 2xx; Activity drops stale
+   fetch responses; exportCsv defers revokeObjectURL; csv.ts field() neutralizes
+   leading `=+-@\t` (OWASP CSV injection — MUST precede WU-020's real usernames).
+   Read: BACKLOG WU-019; m1-gate.md items 6-7, 10-13; frontend/src/lib/{api,csv}.ts,
+   components/LaunchDrawer.tsx, pages/{RunDetail,Activity}.tsx; SPEC-013/014/015.
+2. **WU-020 (AuthN) after, FRESH session:** write `docs/specs/authn.md` FIRST
+   (mini-ADRs: session store shape, go-ldap dep, fake-directory seam, break-glass
    alarm action, golden-flow e2e authentication), then implement per BACKLOG.
 
 ## Blocked / needs user
@@ -59,7 +62,8 @@
   dev|test|prod, maintenance_window raw text — WU-023 gives it warn-only semantics),
   quarantine tables. `portal import <csv>` idempotent; report line
   `imported N new, updated M, unchanged U, quarantined Q`. Env validity =
-  engine.ClassForEnv (single authority).
+  engine.ClassForEnv (single authority). size_gb canonicalized at parse (WU-018) —
+  plain-decimal FormatFloat text is what stores and compares.
 - Instance API (WU-011): GET /api/instances[?env=] ordered/never-null/snake_case,
   detail 404 JSON. server.InstanceReader = handler seam. Frontend MyDatabases
   cards/table, view+env in URL params.
@@ -96,12 +100,13 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-10 — WU-018 done (s10, 391e955): size_gb canonicalized at parse time —
+  hex floats can't abort imports, normalized forms can't churn updated_at
+  (live-verified: CLI import x2 → 3 new/1 quarantined then 3 unchanged).
+  Active → WU-019 (fresh session).
 - 2026-07-09 — WU-017 done (s09, 07a12e5): audit hardening — 0004 TRUNCATE trigger +
   REVOKE, audit_event.job_id stamped on run.finished, SPEC-012 §5 claim reconciled
   (live-verified: psql TRUNCATE → append-only). Active → WU-018 (fresh session).
 - 2026-07-09 — WU-016 done (s08, 8531c68): run lifecycle integrity — stranded-job
   repair, single-finalizer guards (incl. watcher mirror), sweep best-effort, SSE end
   terminal state (live-verified). Active → WU-017 (fresh session).
-- 2026-07-09 — M-gate review DONE (s08): 17 confirmed findings (2 high) → WU-016..019
-  + icebox + WU-021 ledger; 3 refuted; record in docs/agent/reviews/m1-gate.md.
-  Active → WU-016 (fresh session).
