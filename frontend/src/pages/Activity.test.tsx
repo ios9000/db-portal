@@ -128,6 +128,32 @@ test('filters compose into one query string', async () => {
   });
 });
 
+// WU-021: the Requester column doubles as a filter control, with a
+// clearable chip in the toolbar mirroring the other pill-group filters.
+test('clicking a requester cell filters by that requester; the chip clears it', async () => {
+  const fetchMock = stubApi(RUNS);
+  renderActivity();
+  const table = await screen.findByRole('table');
+
+  await userEvent.click(within(table).getByRole('button', { name: 'local-dev' }));
+
+  await vi.waitFor(() => {
+    const runCalls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(runCalls).toContain('/api/runs?requested_by=local-dev');
+  });
+  expect(screen.getByRole('group', { name: 'Requester filter' })).toHaveTextContent(
+    'Requester: local-dev',
+  );
+
+  await userEvent.click(screen.getByRole('button', { name: 'Clear requester filter' }));
+
+  await vi.waitFor(() => {
+    const runCalls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(runCalls).toContain('/api/runs');
+  });
+  expect(screen.queryByRole('group', { name: 'Requester filter' })).not.toBeInTheDocument();
+});
+
 test('empty history shows the launch hint, filtered-empty names the filters', async () => {
   stubApi([]);
   renderActivity();

@@ -60,6 +60,7 @@ export function Activity() {
   const state = searchParams.get('state') ?? undefined;
   const env = searchParams.get('env') ?? undefined;
   const op = searchParams.get('op') ?? undefined;
+  const by = searchParams.get('by') ?? undefined;
 
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export function Activity() {
     const poll = async () => {
       let next = POLL_IDLE_MS;
       try {
-        const list = await fetchRuns({ state, env, operation: op });
+        const list = await fetchRuns({ state, env, operation: op, requestedBy: by });
         if (cancelled) return;
         setRuns(list);
         setError(null);
@@ -116,7 +117,7 @@ export function Activity() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [state, env, op]);
+  }, [state, env, op, by]);
 
   const live = (runs ?? []).filter((r) => !isTerminal(r));
   const history = (runs ?? []).filter(isTerminal);
@@ -138,7 +139,7 @@ export function Activity() {
     setSearchParams(next, { replace: true });
   };
 
-  const filtersActive = Boolean(state ?? env ?? op);
+  const filtersActive = Boolean(state ?? env ?? op ?? by);
 
   return (
     <>
@@ -192,6 +193,19 @@ export function Activity() {
                 {o.label}
               </button>
             ))}
+          </div>
+        )}
+        {by !== undefined && (
+          <div className="filter-chip-group" role="group" aria-label="Requester filter">
+            <span className="chip">Requester: {by}</span>
+            <button
+              type="button"
+              className="chip-clear"
+              aria-label="Clear requester filter"
+              onClick={() => setParam('by', undefined)}
+            >
+              ✕
+            </button>
           </div>
         )}
         <span className="spacer" />
@@ -272,7 +286,15 @@ export function Activity() {
                 <td>
                   <EnvBadge env={r.environment} />
                 </td>
-                <td>{r.requested_by}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => setParam('by', r.requested_by)}
+                  >
+                    {r.requested_by}
+                  </button>
+                </td>
                 <td>{formatTimestamp(r.submitted_at)}</td>
                 <td>{formatDuration(r.started_at, r.finished_at)}</td>
               </tr>

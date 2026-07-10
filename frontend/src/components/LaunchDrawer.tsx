@@ -41,12 +41,21 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
     setSubmitting(true);
     setError(null);
     try {
-      setStarted(await startRun(instance.name, operation.id, reason.trim()));
+      setStarted(
+        await startRun(
+          instance.name,
+          operation.id,
+          reason.trim(),
+          isProd ? confirmName : undefined,
+        ),
+      );
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 0
           ? 'API unreachable — is the backend running?'
-          : 'The run could not be started.',
+          : err instanceof ApiError
+            ? err.detail
+            : 'The run could not be started.',
       );
     } finally {
       setSubmitting(false);
@@ -88,6 +97,7 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="CHG-1234"
+                maxLength={500}
               />
             </label>
 

@@ -364,6 +364,43 @@ h1 {
   font-weight: 600;
 }
 
+/* ---- Activity: requester filter (WU-021) ---- */
+
+.link-btn {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.link-btn:hover {
+  color: var(--text-strong);
+}
+
+.filter-chip-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-05);
+}
+
+.chip-clear {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.chip-clear:hover {
+  color: var(--text-strong);
+}
+
 .instance-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

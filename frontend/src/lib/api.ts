@@ -16,12 +16,32 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Error bodies are `{"error": "message"}` (the backend's writeJSONError,
+ * WU-021) — unwrap that envelope so callers can show the server's message
+ * directly. Non-JSON/unshaped bodies fall back to the raw text as before.
+ */
 async function errorDetail(res: Response): Promise<string> {
+  let text: string;
   try {
-    return (await res.text()) || res.statusText;
+    text = await res.text();
   } catch {
     return res.statusText;
   }
+  if (!text) return res.statusText;
+  try {
+    const body: unknown = JSON.parse(text);
+    if (
+      body &&
+      typeof body === 'object' &&
+      typeof (body as { error?: unknown }).error === 'string'
+    ) {
+      return (body as { error: string }).error;
+    }
+  } catch {
+    // not JSON — fall through to the raw text
+  }
+  return text;
 }
 
 /**
@@ -212,6 +232,7 @@ export interface RunFilter {
   state?: string;
   env?: string;
   operation?: string;
+  requestedBy?: string;
 }
 
 export async function fetchRuns(filter: RunFilter = {}): Promise<Run[]> {
@@ -219,6 +240,7 @@ export async function fetchRuns(filter: RunFilter = {}): Promise<Run[]> {
   if (filter.state) params.set('state', filter.state);
   if (filter.env) params.set('env', filter.env);
   if (filter.operation) params.set('operation', filter.operation);
+  if (filter.requestedBy) params.set('requested_by', filter.requestedBy);
   const qs = params.toString();
   return (await getJSON<{ runs: Run[] }>(qs ? `/api/runs?${qs}` : '/api/runs')).runs;
 }
@@ -320,9 +342,23 @@ export function openRunLogStream(id: number, h: RunLogStreamHandlers): () => voi
   };
 }
 
-/** Launch an operation. The consequence-labeled button calls this. */
-export async function startRun(instance: string, operation: string, reason: string): Promise<Run> {
-  return postJSON<Run>('/api/runs', { instance, operation, reason });
+/**
+ * Launch an operation. The consequence-labeled button calls this. `confirm`
+ * carries the prod typed-name ritual (SPEC-015/021); the server ignores it
+ * on non-prod, so it's omitted from the body rather than sent empty.
+ */
+export async function startRun(
+  instance: string,
+  operation: string,
+  reason: string,
+  confirm?: string,
+): Promise<Run> {
+  return postJSON<Run>('/api/runs', {
+    instance,
+    operation,
+    reason,
+    ...(confirm ? { confirm } : {}),
+  });
 }
 
 export interface Healthz {

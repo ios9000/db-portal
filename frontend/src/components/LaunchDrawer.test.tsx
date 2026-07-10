@@ -46,7 +46,9 @@ const STARTED: Run = {
 };
 
 function stubStartRun() {
-  const mock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(STARTED), { status: 201 })));
+  const mock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+    Promise.resolve(new Response(JSON.stringify(STARTED), { status: 201 })),
+  );
   vi.stubGlobal('fetch', mock);
   return mock;
 }
@@ -157,6 +159,40 @@ test('overlay click during an in-flight launch keeps the drawer open', async () 
   // Let the in-flight request settle so it doesn't leak into other tests.
   resolvePost(new Response(JSON.stringify(STARTED), { status: 201 }));
   expect(await screen.findByText(/Run #42 started/)).toBeInTheDocument();
+});
+
+// WU-021: the confirm field's value must ride along on a prod launch so the
+// server can enforce the same typed-name ritual the client already gates on.
+test('confirmed prod launch sends confirm=typed name', async () => {
+  const fetchMock = stubStartRun();
+  renderDrawer(makeInstance({ name: 'billing-prod', env: 'prod' }));
+
+  await userEvent.type(screen.getByLabelText(/type the instance name/i), 'billing-prod');
+  await userEvent.click(launchButton());
+
+  expect(await screen.findByText(/Run #42 started/)).toBeInTheDocument();
+  const init = fetchMock.mock.calls[0][1]!;
+  const body = JSON.parse(init.body as string) as Record<string, unknown>;
+  expect(body.confirm).toBe('billing-prod');
+});
+
+// WU-021: a 403 from the server (operator lost the dba role mid-session,
+// or a non-dba somehow reaches the drawer) must surface its own message,
+// not a generic one — this is the guardrail of last resort.
+test('a 403 from the server renders its message in the drawer error slot', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'dba role required' }), { status: 403 }),
+      ),
+    ),
+  );
+  renderDrawer(makeInstance({ env: 'test' }));
+
+  await userEvent.click(launchButton());
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('dba role required');
 });
 
 // m1-gate item 7: the started state (run id + "View run") must survive an
