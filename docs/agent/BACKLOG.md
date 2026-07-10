@@ -371,7 +371,7 @@ quarantine, never abort; same-file re-import → all unchanged (SPEC-010 behavio
 **Context brief:** docs/agent/reviews/m1-gate.md item 8; internal/inventory/csv.go
 (size_gb parse + finite check), import.go:140-165 (canonical compare); SPEC-010.
 
-### WU-019 · M1-gate fix: frontend resilience — S · `pending`
+### WU-019 · M1-gate fix: frontend resilience — S · `done (2026-07-10, commit 3cfdf8f — Sonnet 5 delegation pilot)`
 Gate items 6-7 + the low bundle 10-13: RunDetail/api.ts SSE — transient stream failure
 (5xx) must retry/backoff keeping received lines, not morph into permanent "logs gone";
 LaunchDrawer — overlay click must not dismiss mid-launch or swallow a just-fired prod
@@ -480,6 +480,7 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
 - CI: pin the golangci-lint installer to the VM's v2.12.2 instead of `curl | sh` from HEAD (M1-gate item 14 — supply-chain + silent lint drift; check.yml:18)
 - config.LocateDotenv: stop the upward .env walk at a repo marker (.git/go.mod) or explicit path, and log the resolved file at startup (M1-gate item 16 — foreign-.env footgun)
+- frontend test hygiene (found by WU-019 delegation agent): pre-existing React act() warning on several RunDetail tests (likely IS_REACT_ACT_ENVIRONMENT missing in src/test/setup.ts); jsdom "navigation to another Document" noise when tests click the CSV export anchor — both cosmetic, tests green
 - Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
 
 - Activity: date-range filter + pagination past 50 + server-side audit export (SPEC-014 deferred; client CSV caps at the view)

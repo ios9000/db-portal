@@ -5,22 +5,27 @@
 
 ## Now
 
-- **Active WU:** WU-019 (M1-gate fix: frontend resilience) — **not started**.
-  WU-018 DONE 2026-07-10 (s10, commit 391e955). WU-011R (user-requested, s10):
-  last_backup_at wired API→UI, done same day.
-- **Status:** WU-018 closed gate item 8 (docs/agent/reviews/m1-gate.md): size_gb is
-  canonicalized at parse time (strconv.FormatFloat plain decimal, -0 folded) so the
-  store and the unchanged-row compare see one form — hex floats never reach the
-  ::numeric cast (no whole-import abort), PG-normalized forms ('1e2'→'100',
-  '.5'→'0.5') no longer re-import as "updated" forever; unparseable forms still
-  quarantine. SPEC-010 CSV contract updated. Evidence: parse tests (1e2/.5/0120/
-  0x1p4/+7/-0 → canonical; inf + truncated hex → quarantine reasons);
-  TestImportSizeGBFormsIdempotent (4 exotic forms import, stored text = canonical,
-  re-import all-unchanged); npm run check green both stacks (vitest 52/52); LIVE
-  CLI import x2 on dev DB: "3 new, 1 quarantined (0x1p)" then "3 unchanged, 1
-  quarantined" — stored 100/0.5/16; dev DB restored (test rows deleted).
-  NOTE: s10 resumed uncommitted WU-018 work left by an SSH-reset-killed session —
-  the tree-wins rule worked; code was reviewed against the brief, then verified.
+- **Active WU:** WU-020 (AuthN) — **not started, spec first**. WU-019 DONE
+  2026-07-10 (s10, commit 3cfdf8f). ALL m1-gate fix WUs (016-019) now closed.
+- **Status:** WU-019 closed gate items 6-7 + 10-13 (docs/agent/reviews/m1-gate.md):
+  SSE streams that die before `end` retry with backoff keeping displayed lines
+  (only an exhausted budget shows "logs no longer available"); LaunchDrawer overlay
+  click can't dismiss mid-launch or on the started state; malformed 2xx bodies
+  surface as ApiError; Activity drops the on-screen list on filter change (stale
+  rows + stale CSV export were reachable); revokeObjectURL deferred (Safari);
+  csv field() neutralizes leading =+-@/TAB (OWASP — landed BEFORE WU-020's real
+  usernames, as the gate required). SPEC-013/014 reconciled. Evidence: vitest
+  65/65, npm run check green both stacks.
+  **Delegation pilot (s10): WU-019 was implemented by a Sonnet 5 subagent** from
+  an architect-written brief (Fable wrote the brief, reviewed the diff, ran the
+  gate, reconciled specs, committed). First pass came back all-green; one
+  brief-vs-reality deviation was correctly caught and empirically justified by
+  the agent (Activity's cancelled-flag was already sound; the real bug was the
+  uncleared stale view). Implementer spend: 166,242 tokens / 78 tool calls /
+  ~15 min — billed at Sonnet rates (3.3× cheaper than Fable, 5× on intro
+  pricing through 2026-08-31). Policy recorded in agent memory: well-specified
+  implementation WUs → Sonnet subagent; specs/mini-ADRs, concurrency/security
+  WUs, review + verification stay with the architect.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -29,24 +34,19 @@
 
 ## Next action (be exact)
 
-1. **WU-019 in a fresh session:** frontend resilience — gate items 6-7 + lows 10-13:
-   RunDetail/api.ts SSE transient failure must retry/backoff keeping lines (not
-   permanent "logs gone"); LaunchDrawer overlay click must not dismiss mid-launch;
-   getJSON/postJSON wrap res.json() → ApiError on malformed 2xx; Activity drops stale
-   fetch responses; exportCsv defers revokeObjectURL; csv.ts field() neutralizes
-   leading `=+-@\t` (OWASP CSV injection — MUST precede WU-020's real usernames).
-   Read: BACKLOG WU-019; m1-gate.md items 6-7, 10-13; frontend/src/lib/{api,csv}.ts,
-   components/LaunchDrawer.tsx, pages/{RunDetail,Activity}.tsx; SPEC-013/014/015.
-2. **WU-020 (AuthN) after, FRESH session:** write `docs/specs/authn.md` FIRST
-   (mini-ADRs: session store shape, go-ldap dep, fake-directory seam, break-glass
-   alarm action, golden-flow e2e authentication), then implement per BACKLOG.
+1. **WU-020 (AuthN) in a FRESH session, spec FIRST:** write `docs/specs/authn.md`
+   before any code (mini-ADRs: session store shape, go-ldap dep, fake-directory
+   seam, break-glass alarm action, golden-flow e2e authentication), then implement
+   per BACKLOG. This is design work — architect (Fable) writes the spec; consider
+   delegating the post-spec implementation slices per the delegation policy.
+2. Then WU-021 (authz + deferred ledger: run.cancel_requested audit action,
+   requester filter, server-side prod ritual enforcement, POST body cap).
 
 ## Blocked / needs user
 
-- Nothing. (Paused workflow run wf_3ba143f2-9c0 can be ignored/discarded — its results
-  are harvested into docs/agent/reviews/m1-gate.md.)
+- Nothing.
 - HEADS-UP: a demo portal may be running as transient systemd unit `dbportal-demo`
-  on :8080 (started s10 for the user, survives SSH drops; binary of commit 391e955,
+  on :8080 (started s10 for the user, survives SSH drops; binary of commit 3cfdf8f,
   publicly reachable — no authn until WU-020). Before any live check that runs its
   own portal: `systemctl stop dbportal-demo` — else bind-in-use + the s05
   two-portals-one-DB sweep hazard.
@@ -54,6 +54,12 @@
 ## Standing context (stable facts worth re-stating)
 
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
+- **Delegation model (piloted s10, WU-019):** implementation WUs with a tight
+  BACKLOG brief can run on a Sonnet 5 general-purpose subagent (Agent tool,
+  `model: sonnet`, no git access — architect commits after review + full gate).
+  Fable stays on: specs/mini-ADRs, concurrency/security-sensitive WUs, diff
+  review, verification, checkpointing. Workflow tool only for multi-agent
+  pipelines (gate reviews), not single-implementer WUs.
 - **Golden flow (M1 close, ADR-011):** `backend/e2e/golden_flow_test.go` must stay
   green EVERY session — it is the canary for the whole hero flow (import → fleet →
   run → SSE → audit → mail → prod routing). It's a normal Go test: real router +
@@ -81,13 +87,18 @@
   SweepOrphans on boot; actor='local-dev' until WU-021). POST /api/runs: 400/404/502,
   trail complete either way. engineParams seam is tests-only (API passes nil).
 - Run detail + logs (WU-013, SPEC-013): GET /api/runs/{id}/logs = SSE replay→follow,
-  ONE `end` event, 404/410; logs NOT persisted. Cancel → 202 async → `canceled`.
-  MockEngine job ids nonce'd; stale ids MUST fail (JobID contract in engine.go).
+  ONE `end` event (bounded 2s wait for terminal state — WU-016), 404/410; logs NOT
+  persisted. Cancel → 202 async → `canceled`. MockEngine job ids nonce'd; stale ids
+  MUST fail (JobID contract in engine.go). Client (WU-019): stream death before
+  `end` retries w/ backoff (500ms×2^n cap 8s, 5 attempts), lines kept; placeholder
+  only after budget exhausted.
 - Notify + Activity (WU-014, SPEC-014): Notifier fired from finalize() post-commit for
   failed|canceled, tracked goroutine, log-only errors; mail = who/what/where/status +
   link ONLY (tests assert absence of reason/error). PORTAL_SMTP_*/PORTAL_NOTIFY_TO
   (empty = off)/PORTAL_BASE_URL. GET /api/runs?instance=&state=&env=&operation=
-  (ANDed, unknown → empty). Activity: chips, Now-running, Requester, client CSV.
+  (ANDed, unknown → empty). Activity: chips, Now-running, Requester, client CSV
+  (WU-019: filter change drops stale view; export fields formula-neutralized;
+  revoke deferred).
 - Test helpers: `testutil.MigratedDB(t)` scratch DB + migrations (skips w/o compose
   PG); `testutil.DB(t)` dev DB; `testutil.FakeSMTP(t)` capture-only SMTP (one session
   per call). goose down reverts ONE migration.
@@ -97,7 +108,8 @@
   params["mock_fail_at"]="N" injects failure. Only tests reference MockEngine concretely.
 - Chassis (WU-003)/frontend (WU-004): config.Load env>file>defaults; server.NewRouter =
   test seam incl. SPA fallback; react-router v7 (`react-router`, NOT react-router-dom);
-  tokens ONLY in src/index.css; lib/api.ts typed client. tsc strict.
+  tokens ONLY in src/index.css; lib/api.ts typed client (ALL failures = ApiError,
+  incl. malformed 2xx — WU-019). tsc strict.
 - VM toolchain: Docker 29.6.1, Compose v5.3.0, node 22.23.1, Go 1.26.4, golangci-lint
   2.12.2, gh 2.96.0 (authed ios9000). CI = check.yml, NO Postgres service — DB tests +
   golden flow skip there (icebox); VM gate is the real gate.
@@ -108,13 +120,14 @@
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-10 — WU-018 done (s10, 391e955): size_gb canonicalized at parse time —
-  hex floats can't abort imports, normalized forms can't churn updated_at
-  (live-verified: CLI import x2 → 3 new/1 quarantined then 3 unchanged).
-  Active → WU-019 (fresh session).
+- 2026-07-10 — WU-019 done (s10, 3cfdf8f): frontend resilience — SSE retry w/
+  backoff, overlay guard, ApiError contract, stale-filter drop, deferred revoke,
+  CSV injection neutralized. Implemented by Sonnet 5 subagent (delegation pilot,
+  first pass green); architect reviewed/gated/committed. M1-GATE FIXES COMPLETE
+  (WU-016..019). Active → WU-020 (fresh session, spec first).
+- 2026-07-10 — WU-011R done (s10, df5fadf): last_backup_at wired API→UI
+  (user-requested; newest successful dump per instance, live-verified on the
+  demo portal). WU-018 done same day (391e955): size_gb canonicalization.
 - 2026-07-09 — WU-017 done (s09, 07a12e5): audit hardening — 0004 TRUNCATE trigger +
   REVOKE, audit_event.job_id stamped on run.finished, SPEC-012 §5 claim reconciled
   (live-verified: psql TRUNCATE → append-only). Active → WU-018 (fresh session).
-- 2026-07-09 — WU-016 done (s08, 8531c68): run lifecycle integrity — stranded-job
-  repair, single-finalizer guards (incl. watcher mirror), sweep best-effort, SSE end
-  terminal state (live-verified). Active → WU-017 (fresh session).
