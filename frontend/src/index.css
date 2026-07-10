@@ -125,6 +125,21 @@ h1 {
   background: var(--surface);
 }
 
+.topbar .spacer {
+  flex: 1;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar-user .identity {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 .content {
   flex: 1;
   padding: var(--space-4) var(--space-3);
@@ -815,4 +830,52 @@ tr.prod-edge td:first-child {
 .log-waiting {
   color: #64748b;
   font-style: italic;
+}
+
+/* ---- bootstrap loading + login (SPEC-020, WU-020 slice b) ---- */
+
+.app-loading {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-screen {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+}
+
+.login-card {
+  width: min(360px, calc(100vw - var(--space-4)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.login-card h1 {
+  margin: 0;
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.login-card .btn-primary {
+  justify-content: center;
+}
+
+.login-error {
+  margin: 0;
+  color: var(--status-failed-fg);
+  font-size: 14px;
 }

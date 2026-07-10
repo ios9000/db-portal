@@ -23,6 +23,10 @@ npm run db-reset          # fresh portal DB (also how you reset between demos)
 
 Open two browser tabs: **portal** <http://localhost:8080> · **mailpit** <http://localhost:8025>.
 
+Since WU-020 the portal asks you to sign in first: `.env.example` ships
+`PORTAL_AUTH_MODE=fake`, so use the dev directory account **dba1 / dba1**
+(the badge top-right shows who's signed in; Sign out ends the session).
+
 ## The demo (target < 5 min total)
 
 ### 1 · Import the estate — ~30 s

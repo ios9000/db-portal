@@ -37,7 +37,30 @@ async function parseJSON<T>(res: Response): Promise<T> {
   }
 }
 
-export async function getJSON<T>(path: string): Promise<T> {
+/**
+ * Single-slot subscription for "the session just died" (SPEC-020). The
+ * shell registers one handler on mount; getJSON/postJSON/postVoid fire it
+ * whenever a call comes back 401, UNLESS the caller opts out via
+ * `signal401: false`. Login (bad credentials) and the bootstrap
+ * `/api/auth/me` probe are expected to see 401s during normal operation —
+ * without the opt-out they'd immediately re-trigger the very redirect
+ * they're already handling themselves.
+ */
+type FetchOpts = { signal401?: boolean };
+
+let unauthorizedHandler: (() => void) | null = null;
+
+export function onUnauthorized(handler: () => void): void {
+  unauthorizedHandler = handler;
+}
+
+function signalIfUnauthorized(status: number, opts: FetchOpts | undefined): void {
+  if (status === 401 && opts?.signal401 !== false) {
+    unauthorizedHandler?.();
+  }
+}
+
+export async function getJSON<T>(path: string, opts?: FetchOpts): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, { headers: { Accept: 'application/json' } });
@@ -45,12 +68,13 @@ export async function getJSON<T>(path: string): Promise<T> {
     throw new ApiError(0, err instanceof Error ? err.message : String(err));
   }
   if (!res.ok) {
+    signalIfUnauthorized(res.status, opts);
     throw new ApiError(res.status, await errorDetail(res));
   }
   return parseJSON<T>(res);
 }
 
-export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+export async function postJSON<T>(path: string, body: unknown, opts?: FetchOpts): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -62,9 +86,58 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
     throw new ApiError(0, err instanceof Error ? err.message : String(err));
   }
   if (!res.ok) {
+    signalIfUnauthorized(res.status, opts);
     throw new ApiError(res.status, await errorDetail(res));
   }
   return parseJSON<T>(res);
+}
+
+/**
+ * POST expecting no meaningful response body (204). Distinct from
+ * postJSON: parsing an empty 204 body as JSON would trip the
+ * malformed-body guard in parseJSON for a perfectly valid response.
+ */
+async function postVoid(path: string, body: unknown, opts?: FetchOpts): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : String(err));
+  }
+  if (!res.ok) {
+    signalIfUnauthorized(res.status, opts);
+    throw new ApiError(res.status, await errorDetail(res));
+  }
+}
+
+/** Signed-in user (SPEC-020). The cookie is httpOnly — this is the only
+ * shape the SPA ever learns identity in, via login/me. */
+export interface Identity {
+  username: string;
+  display_name: string;
+}
+
+/** POST /api/auth/login. 401 (bad credentials) is an expected outcome the
+ * login form handles inline — opt out of the generic 401 signal. */
+export async function login(username: string, password: string): Promise<Identity> {
+  return postJSON<Identity>('/api/auth/login', { username, password }, { signal401: false });
+}
+
+/** POST /api/auth/logout (204). A 401 here just means the session was
+ * already gone — routes through the generic signal like any other call. */
+export async function logout(): Promise<void> {
+  await postVoid('/api/auth/logout', {});
+}
+
+/** GET /api/auth/me — the app's bootstrap identity probe. A 401 here means
+ * "not signed in", handled directly by the caller, so it opts out of the
+ * generic signal too. */
+export async function fetchMe(): Promise<Identity> {
+  return getJSON<Identity>('/api/auth/me', { signal401: false });
 }
 
 export type InstanceEnv = 'dev' | 'test' | 'prod';

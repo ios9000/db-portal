@@ -29,10 +29,16 @@ func unsetenv(t *testing.T, key string) {
 func TestLoadDefaults(t *testing.T) {
 	unsetenv(t, "PORTAL_HTTP_ADDR")
 	unsetenv(t, "PORTAL_DB_NAME")
+	unsetenv(t, "PORTAL_AUTH_MODE")
+	unsetenv(t, "PORTAL_BREAKGLASS_HASH")
 	cfg, err := config.Load("")
 	require.NoError(t, err)
 	require.Equal(t, ":8080", cfg.HTTPAddr)
 	require.Equal(t, "portal", cfg.DBName)
+	// SPEC-020 mini-ADR 4: an unset auth mode MUST land on ldap — the mode
+	// that fails closed. "off" as a default would be an open door.
+	require.Equal(t, "ldap", cfg.AuthMode)
+	require.Empty(t, cfg.BreakglassHash, "break-glass must be disabled by default")
 }
 
 func TestLoadMissingDotenvIsNotAnError(t *testing.T) {
