@@ -24,6 +24,19 @@ async function errorDetail(res: Response): Promise<string> {
   }
 }
 
+/**
+ * Parse a 2xx body as JSON. A malformed body is still a failure of the
+ * module's contract ("every failure is an ApiError") — a raw SyntaxError
+ * must never escape past this point.
+ */
+async function parseJSON<T>(res: Response): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new ApiError(res.status, 'response body was not valid JSON');
+  }
+}
+
 export async function getJSON<T>(path: string): Promise<T> {
   let res: Response;
   try {
@@ -34,7 +47,7 @@ export async function getJSON<T>(path: string): Promise<T> {
   if (!res.ok) {
     throw new ApiError(res.status, await errorDetail(res));
   }
-  return (await res.json()) as T;
+  return parseJSON<T>(res);
 }
 
 export async function postJSON<T>(path: string, body: unknown): Promise<T> {
@@ -51,7 +64,7 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) {
     throw new ApiError(res.status, await errorDetail(res));
   }
-  return (await res.json()) as T;
+  return parseJSON<T>(res);
 }
 
 export type InstanceEnv = 'dev' | 'test' | 'prod';
@@ -168,29 +181,70 @@ export interface RunLogStreamHandlers {
   onUnavailable: () => void;
 }
 
+// Retry tuning for a stream that dies before `end` (m1-gate item 6): base
+// delay doubles each attempt, capped, and gives up after a fixed number of
+// tries. EventSource cannot see HTTP status codes, so a genuine 410 (portal
+// restart, logs gone) looks identical to a transient 5xx/network drop here —
+// both simply keep failing every reconnect, so "retry until give-up" is the
+// one design that serves both cases correctly.
+const RETRY_BASE_MS = 500;
+const RETRY_MAX_MS = 8_000;
+const RETRY_MAX_ATTEMPTS = 5;
+
 /**
  * Open the live log stream for a run (SPEC-013: replay, then follow, then
  * one `end` event). Returns a close function — always call it on cleanup.
- * Network drops are retried by EventSource itself (see onOpen).
+ *
+ * A CLOSED readyState on `error` means EventSource has given up reconnecting
+ * on its own (it only auto-retries from CONNECTING). Before `end` arrives,
+ * that is treated as transient: this wrapper opens a fresh EventSource with
+ * exponential backoff instead of surfacing `onUnavailable` immediately, so
+ * lines already delivered to the caller stay put (the caller's onOpen — not
+ * this retry — is what resets its buffer, per the replay-on-reconnect
+ * contract). Only once retries are exhausted does the stream give up for
+ * real. An error after `end` (or once the caller's cleanup runs) is ignored.
  */
 export function openRunLogStream(id: number, h: RunLogStreamHandlers): () => void {
-  const es = new EventSource(`/api/runs/${id}/logs`);
-  es.onopen = () => h.onOpen();
-  es.addEventListener('log', (e: MessageEvent<string>) => {
-    h.onLine(JSON.parse(e.data) as RunLogLine);
-  });
-  es.addEventListener('end', () => {
-    es.close();
-    h.onEnd();
-  });
-  es.onerror = () => {
-    // A CLOSED source means the server refused the stream (404/410) —
-    // EventSource only auto-retries from the CONNECTING state.
-    if (es.readyState === EventSource.CLOSED) {
-      h.onUnavailable();
-    }
+  let es: EventSource;
+  let attempt = 0;
+  let ended = false;
+  let stopped = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const connect = () => {
+    es = new EventSource(`/api/runs/${id}/logs`);
+    es.onopen = () => {
+      attempt = 0; // a live connection means the failure streak is over
+      h.onOpen();
+    };
+    es.addEventListener('log', (e: MessageEvent<string>) => {
+      h.onLine(JSON.parse(e.data) as RunLogLine);
+    });
+    es.addEventListener('end', () => {
+      ended = true;
+      es.close();
+      h.onEnd();
+    });
+    es.onerror = () => {
+      if (stopped || ended) return; // stream already done — clean close, no retry
+      if (es.readyState !== EventSource.CLOSED) return; // browser is retrying on its own
+      es.close();
+      if (attempt >= RETRY_MAX_ATTEMPTS) {
+        h.onUnavailable();
+        return;
+      }
+      const delay = Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_MAX_MS);
+      attempt += 1;
+      retryTimer = setTimeout(connect, delay);
+    };
   };
-  return () => es.close();
+  connect();
+
+  return () => {
+    stopped = true;
+    clearTimeout(retryTimer);
+    es.close();
+  };
 }
 
 /** Launch an operation. The consequence-labeled button calls this. */

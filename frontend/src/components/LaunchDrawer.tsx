@@ -29,6 +29,14 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
   const isProd = instance.env === 'prod';
   const confirmed = !isProd || confirmName === instance.name;
 
+  // Overlay (backdrop) click is a soft dismiss — it must not eat a launch in
+  // flight or a just-fired prod confirmation. Explicit Cancel/Close buttons
+  // bypass this and always work.
+  const dismissOverlay = () => {
+    if (submitting || started !== null) return;
+    onClose();
+  };
+
   const launch = async () => {
     setSubmitting(true);
     setError(null);
@@ -46,7 +54,7 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
   };
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <div className="drawer-overlay" onClick={dismissOverlay}>
       <aside
         className="drawer"
         role="dialog"

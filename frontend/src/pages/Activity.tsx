@@ -44,7 +44,9 @@ function exportCsv(runs: Run[]) {
   a.href = url;
   a.download = `db-portal-activity-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoking synchronously right after click() can cancel the download in
+  // Safari, which kicks it off asynchronously — give it a beat first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /**
@@ -81,6 +83,14 @@ export function Activity() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+
+    // A new filter combination invalidates whatever's on screen — drop it
+    // immediately (same pattern as MyDatabases' env-change effect) so a
+    // slow in-flight response for the OLD filter can never be mistaken for
+    // the new one, and Export CSV can't grab a stale/mismatched list while
+    // the fetch for the new filter is still in flight.
+    setRuns(null);
+    setError(null);
 
     const poll = async () => {
       let next = POLL_IDLE_MS;

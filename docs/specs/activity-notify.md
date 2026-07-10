@@ -55,7 +55,11 @@ DBA-list mail is unconditional).
    exactly what the table shows: id, state, operation, instance,
    environment, requested_by, submitted_at, started_at, finished_at — no
    error text, no params). A full audit export beyond the UI cap is
-   icebox'd with the pagination work.
+   icebox'd with the pagination work. Fields opening with `=`, `+`, `-`,
+   `@` or TAB are neutralized with a leading `'` (OWASP CSV injection,
+   WU-019 — latent until WU-020 puts real usernames in requested_by);
+   a filter change drops the on-screen list until the new fetch lands,
+   so the export can never contain another filter's rows.
 
 ## Config (config.Load + .env.example; no secrets committed)
 

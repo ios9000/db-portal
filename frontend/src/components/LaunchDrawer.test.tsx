@@ -51,12 +51,17 @@ function stubStartRun() {
   return mock;
 }
 
-function renderDrawer(instance: Instance) {
+function renderDrawer(instance: Instance, onClose: () => void = () => {}) {
   return render(
     <MemoryRouter>
-      <LaunchDrawer instance={instance} operation={DUMP} onClose={() => {}} />
+      <LaunchDrawer instance={instance} operation={DUMP} onClose={onClose} />
     </MemoryRouter>,
   );
+}
+
+/** The backdrop is the dialog's parent — clicks there simulate an overlay click. */
+function overlay() {
+  return screen.getByRole('dialog').parentElement!;
 }
 
 function launchButton() {
@@ -125,4 +130,50 @@ test('confirmed prod launch starts the run', async () => {
 
   expect(await screen.findByText(/Run #42 started/)).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+// m1-gate item 7: an overlay click firing mid-launch must not eat the
+// operator's confirmation/run-id feedback.
+test('overlay click during an in-flight launch keeps the drawer open', async () => {
+  let resolvePost!: (r: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    resolvePost = resolve;
+  });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => pending),
+  );
+  const onClose = vi.fn();
+  const user = userEvent.setup();
+  renderDrawer(makeInstance({ env: 'test' }), onClose);
+
+  await user.click(launchButton());
+  expect(await screen.findByRole('button', { name: /Starting…/ })).toBeDisabled();
+
+  await user.click(overlay());
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
+
+  // Let the in-flight request settle so it doesn't leak into other tests.
+  resolvePost(new Response(JSON.stringify(STARTED), { status: 201 }));
+  expect(await screen.findByText(/Run #42 started/)).toBeInTheDocument();
+});
+
+// m1-gate item 7: the started state (run id + "View run") must survive an
+// overlay click too; explicit Close still works.
+test('overlay click on the started state keeps it open; explicit Close still works', async () => {
+  stubStartRun();
+  const onClose = vi.fn();
+  const user = userEvent.setup();
+  renderDrawer(makeInstance({ env: 'test' }), onClose);
+
+  await user.click(launchButton());
+  expect(await screen.findByText(/Run #42 started/)).toBeInTheDocument();
+
+  await user.click(overlay());
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: 'Close' }));
+  expect(onClose).toHaveBeenCalledOnce();
 });

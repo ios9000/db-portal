@@ -17,8 +17,17 @@ const COLUMNS = [
   'finished_at',
 ] as const;
 
-function field(v: string | number | null): string {
-  const s = v === null ? '' : String(v);
+// OWASP CSV injection: a field opening with one of these is a formula in
+// Excel/Sheets/LibreOffice. Neutralize by prefixing a single quote before
+// the existing quoting/escaping logic runs. ASCII hyphen-minus only — the
+// em dash '—' (U+2014) must pass through untouched.
+const FORMULA_LEADERS = new Set(['=', '+', '-', '@', '\t']);
+
+export function field(v: string | number | null): string {
+  let s = v === null ? '' : String(v);
+  if (s.length > 0 && FORMULA_LEADERS.has(s[0])) {
+    s = `'${s}`;
+  }
   return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 

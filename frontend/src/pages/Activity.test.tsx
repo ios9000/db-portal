@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -151,4 +151,61 @@ test('network failure shows the unreachable message', async () => {
   );
   renderActivity();
   expect(await screen.findByRole('alert')).toHaveTextContent('API unreachable');
+});
+
+// m1-gate item 10: switching filters must drop the stale view immediately,
+// so a slow response for the OLD filter can never render (or be exported)
+// under newly pressed chips.
+test('switching filters drops the stale view while the new fetch is in flight', async () => {
+  let resolveFailed!: (r: Response) => void;
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith('/api/operations')) {
+      return Promise.resolve(new Response(JSON.stringify({ operations: [] })));
+    }
+    if (url === '/api/runs') {
+      return Promise.resolve(new Response(JSON.stringify({ runs: RUNS })));
+    }
+    if (url.includes('state=failed')) {
+      return new Promise<Response>((resolve) => {
+        resolveFailed = resolve;
+      });
+    }
+    return Promise.resolve(new Response(JSON.stringify({ runs: [] })));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const user = userEvent.setup();
+  renderActivity();
+  expect(await screen.findByText('billing-test')).toBeInTheDocument(); // RUNS[1]'s instance
+
+  await user.click(screen.getByRole('button', { name: 'Failed' }));
+
+  // The 'Failed' fetch hasn't resolved yet: the old (unfiltered) rows and
+  // the now-stale export must both be gone.
+  expect(screen.queryByText('billing-test')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+
+  resolveFailed(new Response(JSON.stringify({ runs: [] })));
+  expect(await screen.findByText(/No runs match these filters/)).toBeInTheDocument();
+});
+
+// m1-gate item 13: Safari can cancel a download if the blob URL is revoked
+// synchronously right after click().
+test('exportCsv defers revokeObjectURL past the click', async () => {
+  stubApi(RUNS);
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  renderActivity();
+  await screen.findByRole('table');
+
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    expect(revoke).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(revoke).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
 });

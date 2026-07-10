@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { ApiError, fetchHealthz, getJSON } from './api';
+import { ApiError, fetchHealthz, getJSON, postJSON } from './api';
 
 function stubFetch(impl: (input: RequestInfo | URL) => Promise<Response>) {
   vi.stubGlobal('fetch', vi.fn(impl));
@@ -44,4 +44,20 @@ test('fetchHealthz throws ApiError on unexpected statuses', async () => {
   const err = await fetchHealthz().catch((e: unknown) => e);
   expect(err).toBeInstanceOf(ApiError);
   expect((err as ApiError).status).toBe(502);
+});
+
+// m1-gate item 12: a malformed 2xx body must not let a raw SyntaxError
+// escape — every failure is an ApiError, no exceptions.
+test('getJSON throws ApiError when a 2xx body is not valid JSON', async () => {
+  stubFetch(() => Promise.resolve(new Response('not json{', { status: 200 })));
+  const err = await getJSON('/api/x').catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(ApiError);
+  expect((err as ApiError).status).toBe(200);
+});
+
+test('postJSON throws ApiError when a 2xx body is not valid JSON', async () => {
+  stubFetch(() => Promise.resolve(new Response('not json{', { status: 201 })));
+  const err = await postJSON('/api/x', {}).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(ApiError);
+  expect((err as ApiError).status).toBe(201);
 });

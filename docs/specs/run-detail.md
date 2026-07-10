@@ -115,8 +115,13 @@ approval flows (post-MVP).
 - Log pane: dark monospace, HH:MM:SS-stamped lines; `Follow` pill
   (aria-pressed) auto-scrolls on new lines, default on; buffer resets on
   EventSource `open` (replay-on-reconnect, mini-ADR 2); stream closed on
-  `end`, then one final run re-fetch. 410 → "logs no longer available"
-  placeholder; the page still shows outcome + artifact.
+  `end`, then one final run re-fetch. A stream that dies before `end`
+  (WU-019, m1-gate item 6): displayed lines stay put and the client
+  retries with exponential backoff (500ms base, ×2, cap 8s, 5 attempts,
+  streak resets on a live connection); only an exhausted budget shows the
+  "logs no longer available" placeholder — EventSource can't see status
+  codes, so a genuine 410 is simply the stream that keeps failing. The
+  page still shows outcome + artifact in that state.
 - Run polling: 3s while non-terminal, stops once terminal (page data);
   logs arrive only via SSE, never via polling.
 

@@ -68,7 +68,12 @@ class FakeEventSource {
     }
   }
 
-  /** Server refused the stream (404/410): closed, error, no retry. */
+  /**
+   * A failed connection: closed + error, exactly what a real EventSource
+   * looks like whether the cause is a genuine 404/410 or a transient
+   * network drop (EventSource can't tell the difference itself). The
+   * wrapper in api.ts decides whether that means "retry" or "give up".
+   */
   refuse() {
     this.readyState = FakeEventSource.CLOSED;
     this.onerror?.();
@@ -213,7 +218,50 @@ test('abort posts the cancel and locks the button', async () => {
   expect(String(post![0])).toBe('/api/runs/7/cancel');
 });
 
-test('refused stream shows the logs-gone note, outcome still served', async () => {
+// m1-gate item 6: a transient stream failure must not discard what's already
+// on screen — it retries with backoff and keeps the lines until it either
+// recovers or truly gives up.
+test('transient stream error keeps existing lines, retries, and streams normally on reconnect', async () => {
+  stubApi(makeRun({}));
+  renderRun(7);
+
+  const es1 = await findStream();
+  act(() => {
+    es1.onopen?.();
+    es1.emit('log', '{"ts":"2026-07-07T12:31:05Z","line":"TASK [preflight] ok"}');
+  });
+  expect(screen.getByText(/TASK \[preflight\]/)).toBeInTheDocument();
+
+  vi.useFakeTimers();
+  try {
+    act(() => {
+      es1.refuse(); // transient failure, well before any `end`
+    });
+    // Nothing is discarded while backoff is pending.
+    expect(screen.getByText(/TASK \[preflight\]/)).toBeInTheDocument();
+    expect(screen.queryByText(/Logs are no longer available/)).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000); // past the ~500ms base backoff
+    });
+    expect(FakeEventSource.instances).toHaveLength(2);
+    const es2 = FakeEventSource.instances[1];
+    expect(es2.url).toBe('/api/runs/7/logs');
+
+    act(() => {
+      es2.onopen?.(); // reconnect replays history (mini-ADR 2) -> buffer resets
+      es2.emit('log', '{"ts":"2026-07-07T12:31:07Z","line":"TASK [dump] ok"}');
+    });
+    expect(screen.getByText(/TASK \[dump\]/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A stream that keeps failing (including a genuine 410 after a portal
+// restart, indistinguishable to EventSource) exhausts its retry budget and
+// only then falls back to the logs-gone state; run outcome stays served.
+test('stream that keeps failing exhausts retries before showing the logs-gone state', async () => {
   stubApi(
     makeRun({
       state: 'failed',
@@ -223,12 +271,63 @@ test('refused stream shows the logs-gone note, outcome still served', async () =
   );
   renderRun(7);
 
+  let current = await findStream();
+  vi.useFakeTimers();
+  try {
+    for (let i = 0; i < 5; i++) {
+      act(() => {
+        current.refuse();
+      });
+      // Not exhausted yet: no logs-gone state, retry gets scheduled.
+      expect(screen.queryByText(/Logs are no longer available/)).not.toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000); // past the ~8s backoff cap
+      });
+      expect(FakeEventSource.instances).toHaveLength(i + 2);
+      current = FakeEventSource.instances[i + 1];
+    }
+    // 6th failure (initial connect + 5 retries, all failed): give up for real.
+    act(() => {
+      current.refuse();
+    });
+    expect(screen.getByText(/Logs are no longer available/)).toBeInTheDocument();
+    expect(FakeEventSource.instances).toHaveLength(6); // no further retry scheduled
+    expect(screen.getByRole('alert')).toHaveTextContent('engine job lost (portal restart)');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// An error that arrives after `end` (or after the stream is otherwise done)
+// is the existing clean-close case, not a failure to retry.
+test('an error after `end` does not retry', async () => {
+  stubApi(
+    makeRun({
+      state: 'success',
+      finished_at: '2026-07-07T12:33:01Z',
+      artifact: {
+        name: 'billing-test-mock-nonprod-1.dump',
+        size_bytes: 1048576,
+        checksum: 'deadbeefcafe0123',
+      },
+    }),
+  );
+  renderRun(7);
+
   const es = await findStream();
   act(() => {
-    es.refuse();
+    es.onopen?.();
+    es.emit('log', '{"ts":"2026-07-07T12:31:05Z","line":"PLAY RECAP ok=5 failed=0"}');
+    es.emit('end', '{"state":"success"}');
   });
-  expect(await screen.findByText(/Logs are no longer available/)).toBeInTheDocument();
-  expect(screen.getByRole('alert')).toHaveTextContent('engine job lost (portal restart)');
+  expect(es.readyState).toBe(FakeEventSource.CLOSED);
+
+  act(() => {
+    es.onerror?.(); // stray error after the stream already finished cleanly
+  });
+  expect(FakeEventSource.instances).toHaveLength(1); // no retry connection opened
+  expect(screen.queryByText(/Logs are no longer available/)).not.toBeInTheDocument();
+  expect(screen.getByText(/PLAY RECAP/)).toBeInTheDocument();
 });
 
 test('unknown run renders the not-found state without retry loops', async () => {
