@@ -6,10 +6,11 @@
 ## Now
 
 - **Active:** PHASE 3 (M3) — **WU-033 (SemaphoreAdapter, M) IN PROGRESS
-  (s18)**: SPEC-033 written (docs/specs/semaphore.md); **slice (a) — compose
-  Semaphore + poll-only adapter — is the next action.** WU-031 done s17
-  (f2dcf2d + 270e665, live-drilled 98fc2a8). Execution order 030 → 032 → 031 →
-  033 → 034 → 035 → 036.
+  (s18)**: SPEC-033 + **slice (a) DONE** (eb94c1f infra + edf4ac5 adapter,
+  gate green, itest ran LIVE against real Semaphore). **Slice (b) — webhook +
+  ReconcileByJobID + fallback test + full-portal live drill — is the next
+  action.** WU-031 done s17. Execution order 030 → 032 → 031 → 033 → 034 →
+  035 → 036.
 - **Status (s18, WU-033 spec):** SPEC-033 = docs/specs/semaphore.md (8
   mini-ADRs). ADR-002's payoff — the SAME portal drives REAL Semaphore for the
   NON-PROD class, opt-in, behind the UNCHANGED engine.Adapter seam. Key
@@ -39,18 +40,22 @@
 
 ## Next action (be exact)
 
-1. **WU-033 slice (a)** — SPEC-033 is written; build the compose Semaphore
-   service (BoltDB dialect, 127.0.0.1, creds `.env`-only) + `playbooks/` repo
-   layout + `smoke.yml` (echo/sleep), then `internal/engine/semaphore.go`
-   (StartJob/Status/Cancel + poll-based StreamLogs, JobID = task id, no job
-   state), config fields (`PORTAL_ENGINE_NONPROD` + semaphore block) + main
-   opt-in wiring, unit tests over a stub HTTP server + the skip-gated itest
-   (poll-only). Then CHECKPOINT (commit, STATE, journal) BEFORE slice (b)
-   (webhook + `ReconcileByJobID` + fallback test + live VM drill). Compose +
-   playbook scaffold = Sonnet-brief candidate; adapter/webhook = architect.
-   First live task: stand up the compose Semaphore, pin its REST specifics
-   (task-create payload, status enum, output pagination, cancel verb) against
-   the running BoltDB service — open question 1 in SPEC-033.
+1. **WU-033 slice (b)** — slice (a) is done (adapter poll-only, gate green,
+   itest live). Build: (i) `runs.Service.ReconcileByJobID(ctx, jobID)` — find
+   the run by `job_id`, do ONE Status→finalize (finalize-adjacent, guarded by
+   the WU-016 single-finalizer; SweepOrphans is the precedent); (ii) the
+   webhook route `POST /api/engine/semaphore/webhook` OUTSIDE requireSession,
+   shared-secret constant-time (`hmac.Equal`, `PORTAL_SEMAPHORE_WEBHOOK_SECRET`),
+   missing/wrong → 401 + zero state change, body-capped, writes NOTHING from
+   the body — it only maps the payload's task id → run and re-polls
+   (mini-ADR 2, 5); (iii) the fallback test (webhook absent → periodic poll
+   still finalizes) + a webhook-auth test; (iv) the full-portal LIVE DRILL on
+   the VM: to fire a portal run through Semaphore, map the catalog `dump`
+   op's template to the smoke template for dev (e.g. PORTAL_SEMAPHORE_TEMPLATES
+   also carries `dump:1`) so a button-dump on a non-prod instance runs
+   queued→running→success through real Semaphore with logs streaming into
+   RunDetail + cancel-mid-run. Then CLOSE WU-033 (all AC + Verify), BACKLOG
+   done, journal, → WU-034.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -219,19 +224,25 @@
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-11 — WU-033 spec written (s18, SPEC-CHECKPOINT — implementation not
-  started): SPEC-033 = docs/specs/semaphore.md (8 mini-ADRs) for the
-  SemaphoreAdapter. Core design: same portal drives REAL Semaphore for nonprod,
-  opt-in via PORTAL_ENGINE_NONPROD, behind the unchanged engine.Adapter seam;
-  JobID = durable Semaphore task id (no in-process job state); POLL is the only
-  finalizer and the webhook merely triggers a re-poll (never asserts state → an
-  absent webhook still finalizes by default; seam = new runs.ReconcileByJobID);
-  tag→template-id is fail-closed config; webhook route session-less +
-  shared-secret constant-time; disjoint per-class config = guardrail 3
-  structural; BoltDB compose dialect, creds .env-only; MockEngine stays the
-  test default + ONE skip-gated itest. Split: (a) compose + poll-only adapter +
-  itest → checkpoint; (b) webhook + fallback test + live drill. Docs-only, no
-  gate run needed. Active → WU-033 slice (a).
+- 2026-07-11 — WU-033 SPEC + slice (a) DONE (s18): SPEC-033 =
+  docs/specs/semaphore.md (8 mini-ADRs) + the poll-only SemaphoreAdapter.
+  Design: same portal drives REAL Semaphore for nonprod, opt-in via
+  PORTAL_ENGINE_NONPROD, behind the unchanged engine.Adapter seam; JobID =
+  durable Semaphore task id (no in-process job state); POLL is the only
+  finalizer, the webhook (slice b) merely re-polls (absent webhook still
+  finalizes; seam = runs.ReconcileByJobID); tag→template-id fail-closed config;
+  disjoint per-class config = guardrail 3 structural; BoltDB compose dialect,
+  creds .env-only; MockEngine stays test default + ONE skip-gated itest. Slice
+  (a): infra scaffold (eb94c1f, Sonnet-delegated + reviewed — compose semaphore
+  v2.17.39/BoltDB, playbooks/smoke.yml, bootstrap.sh) + adapter (edf4ac5 —
+  StartJob/Status/StreamLogs/Cancel over the REST API, stub-server units +
+  skip-gated itest, config PORTAL_ENGINE_NONPROD + main opt-in). Gate green
+  both stacks; itest ran LIVE (smoke→success w/ streamed logs 17s, cancel→
+  canceled). Semaphore REST pinned first-hand: create POST
+  /api/project/{pid}/tasks{template_id}→201{id:largeint}; status enum
+  waiting/running→success/error/stopped; output = full array no cursor (track
+  emitted count); stop needs {} body; unknown task→400. Left running on the VM
+  (127.0.0.1:3000). Active → WU-033 slice (b).
 - 2026-07-11 — WU-031 DONE (s17, f2dcf2d backend + 270e665 UI): restore
   workflow on MockEngine, all AC + Verify met. Backend (recovered from an
   interrupted twin — see below): internal/restore recipe, catalog
