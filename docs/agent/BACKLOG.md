@@ -599,7 +599,7 @@ finalize/SweepOrphans patterns to mirror); internal/schedule/executor.go
 internal/server/schedules_http.go (guarded-CRUD handler pattern);
 frontend/src/pages/RunDetail.tsx.
 
-### WU-031 · Restore workflow (MockEngine) — M · `todo`
+### WU-031 · Restore workflow (MockEngine) — M · `done`
 D4's second catalog operation: restore a registered artifact to an EXPLICIT
 target, with the incident-killing automatic pre-restore safety dump —
 MockEngine first (real playbook = 036). Catalog gains `restore`; POST assembles
@@ -617,15 +617,16 @@ institutionalized). Verify-fail halts BEFORE the safety dump: garbage artifact
 = zero runs on the target. UI slice (checkpoint boundary): Restore drawer from
 instance context — pick artifact (030 API), pick target, env banner + ritual,
 launch → chain view.
-**AC:**
-- [ ] Golden flow gains Beat 9: restore on MockEngine end to end — safety-dump
+**AC:** (all met — s17, commits f2dcf2d backend + 270e665 UI)
+- [x] Golden flow gains Beat 10: restore on MockEngine end to end — safety-dump
       run + restore run both fully audited, 'safety' artifact registered,
       lineage tied (restore step params reference the artifact/checksum).
-- [ ] Prod-target restore without the exact typed TARGET name → 400, no chain
+- [x] Prod-target restore without the exact typed TARGET name → 400, no chain
       row created; non-prod stays one click (D2 holds on the new path).
-- [ ] Injected verify failure → chain halts at step 1, zero runs on the target,
+- [x] Injected verify failure → chain halts at step 1, zero runs on the target,
       notify mail sent, resumable after "fix".
-- [ ] No API shape permits restore-without-safety-dump (handler test + grep).
+- [x] No API shape permits restore-without-safety-dump (handler test + grep —
+      Internal:true only in chain/driver.go; the recipe is the sole op source).
 **Verify:** e2e Beat 9; -race chain-assembly tests; vitest drawer tests
 (artifact pick, default-target rules, ritual); `npm run check` green.
 **Context brief:** ARCHITECTURE §3 (restore); D4/D5; SPEC-030 + SPEC-032 (exist

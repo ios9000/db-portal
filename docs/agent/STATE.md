@@ -5,10 +5,9 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-031 (restore workflow on MockEngine, M) IN
-  PROGRESS**: backend landed + gate-green this session (s17); the **UI slice
-  (Restore drawer) is the remaining half** and the next action. Execution
-  order 030 → 032 → 031 → 033 → 034 → 035 → 036.
+- **Active:** PHASE 3 (M3) — **WU-031 done 2026-07-11 (s17, f2dcf2d backend +
+  270e665 UI)**; next WU is **WU-033 (SemaphoreAdapter, M)** in a fresh
+  session. Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036.
 - **Status (s17, WU-031 backend):** restore backend complete, gate green both
   stacks. (Recovered an interrupted twin session's uncommitted backend after
   an ssh reset — verified-don't-redo: the on-disk code compiled and matched
@@ -46,27 +45,22 @@
 
 ## Next action (be exact)
 
-1. **WU-031 UI slice — Restore drawer** (the remaining half; the pre-UI
-   checkpoint boundary is already crossed — backend committed). Sonnet-brief
-   candidate (delegation model). Reached from an instance's context
-   (MyDatabases card / instance detail): pick a source artifact
-   (`GET /api/artifacts?instance=` — origin registry, newest first, with
-   checksum + size + class), pick an explicit TARGET (default a non-prod
-   instance), EnvBanner for the TARGET's env + the typed-name prod ritual
-   (reuse EnvBanner + the LaunchDrawer confirm pattern), a primary button that
-   NAMES the consequence, submit → `POST /api/restore` → the chain view
-   (RunDetail's chain strip already renders steps + Resume). The safety dump
-   shows as an unconditional, NON-optional step in the drawer preview — NEVER
-   a checkbox. `api.ts` gains `fetchArtifacts(instance)` +
-   `startRestore({artifactId, target, confirm, reason})`. vitest: artifact
-   pick, default-target rules, ritual. Then CLOSE WU-031 (all AC + Verify
-   commands pass — incl. the grep half of AC-4), mark done in BACKLOG,
-   journal, point STATE at WU-033.
-2. After WU-031: WU-033 (SemaphoreAdapter, M — compose service, webhook +
-   poll fallback; ritual/authz seams stay architect-side).
-3. Housekeeping note (carried): demo-m1.md header still says "live-verified
+1. **Start WU-033 in a fresh session** (SemaphoreAdapter, M — compose service,
+   webhook + poll fallback; ritual/authz seams stay architect-side). Read its
+   BACKLOG entry + ONLY its context brief; write SPEC-033 first. Semaphore
+   stays opt-in (PORTAL_ENGINE_NONPROD), MockEngine remains the default for
+   dev + ALL tests per ADR-002, with ONE skip-gated integration test.
+2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
+3. Optional follow-up (NOT blocking WU-031 closure): a live browser drive of
+   the Restore drawer against the new backend was NOT done — the demo unit is
+   still on b10b960/0010 (no /api/restore). The WU is verified by e2e Beat 10
+   (backend over real HTTP) + vitest (drawer over real fetch mocking the wire
+   shape), which cover both sides of the seam. To live-verify: build:release,
+   stop dbportal-demo, run the new binary (dev DB already at 0010 — WU-031 has
+   NO migration), drive MyDatabases → Restore. Watch the demo-unit-deletes and
+   bind-in-use hazards below.
 
 ## Blocked / needs user
 
@@ -206,19 +200,28 @@
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-11 — WU-031 backend done + gate-green (s17, CHECKPOINT — WU still in
-  progress): restore workflow on MockEngine. internal/restore recipe, catalog
+- 2026-07-11 — WU-031 DONE (s17, f2dcf2d backend + 270e665 UI): restore
+  workflow on MockEngine, all AC + Verify met. Backend (recovered from an
+  interrupted twin — see below): internal/restore recipe, catalog
   Launchable/RetentionClass, runs.Start Internal launchable gate, finalize
-  retention stamping, GetArtifact, chain driver Internal, mock `verify` op +
-  trimmed restore script, POST /api/restore assembler, golden-flow Beat 10
-  (happy + verify-fail halt/resume). RECOVERY session: an interrupted twin
-  (ssh reset) had written the backend prod code + SPEC-031 uncommitted and
-  never checkpointed (STATE.md still said "start fresh"). Reaped the idle twin
-  (user-authorized), verified the on-disk code compiled + matched SPEC, then
-  wrote the ENTIRE missing test layer (recipe, handler, launchable gate,
-  retention, GetArtifact, catalog, Beat 10), fixed a stale engine mock_test
-  assertion, `npm run check` green both stacks. Remaining: WU-031 UI slice.
-  Active → WU-031 (UI).
+  retention stamping, GetArtifact, chain driver Internal, mock `verify` +
+  trimmed restore, POST /api/restore assembler, golden-flow Beat 10 (happy +
+  verify-fail halt/resume). UI (6th Sonnet delegation success): RestoreDrawer
+  from MyDatabases (source = entry instance; explicit target defaulting to
+  source only when non-prod; TARGET EnvBanner + typed-name ritual;
+  unconditional safety-dump plan preview, never a checkbox; success links to
+  the first step run or /activity), api.ts fetchArtifacts/startRestore, 10
+  vitest. AC-4 grep confirmed: Internal:true only in chain/driver.go, the
+  recipe is the sole op source. Gate green both stacks (vitest 116/116). NOTE:
+  no live browser drive (demo still on b10b960/0010) — seam covered by e2e
+  Beat 10 + vitest; live-verify recipe in Next action §3. Active → WU-033.
+  RECOVERY DETAIL: the twin (ssh reset) left the backend prod code + SPEC-031
+  uncommitted and never checkpointed (STATE.md said "start fresh" — stale;
+  trust the tree). Reaped the idle twin (user-authorized), verified on-disk
+  code matched SPEC, then wrote the ENTIRE missing test layer + Beat 10. KEY
+  GOTCHA: `go build ./...` was green but the TEST TREE was red — the twin added
+  interface methods (GetArtifact, Create) without stubbing them; always
+  `go test -run NONE ./...` when recovering. See [[twin-session-hazard]].
 - 2026-07-11 — WU-032 done (s16, e465bab + b10b960): chain engine —
   SPEC-032 (7 mini-ADRs), migration 0010, chain Service+driver+boot sweep,
   StepRunFilter halt-mail exactly-once, resume API, golden flow Beat 9,
