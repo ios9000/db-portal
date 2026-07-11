@@ -428,17 +428,20 @@ identity in both audit rows; `npm run check` green. ALL VERIFIED LIVE 2026-07-10
 **Context brief:** D2/D3; SPEC-012 §audit + SPEC-015 deferrals; internal/runs/service.go
 (actor constant); server router; WU-020's session context.
 
-### WU-022 · Portal-owned scheduler (ADR-003) — M · `pending`
+### WU-022 · Portal-owned scheduler (ADR-003) — M · `done (2026-07-10, commits e316515 spec + 0579a58 backend + a5c2867 UI via 4th Sonnet delegation)`
 Schedule CRUD (table + API + the stub /schedules screen) for scheduled dumps (D4);
-executor = robfig/cron/v3 (ADR-010 table) in-process, jittered start, firing through
-runs.Service.Start — the SAME guardrail/audit path as run-now, actor =
-`schedule:<owner>`. Misfire policy (portal down at fire time), overlap policy (previous
-run still live), and enable/disable are spec decisions — mini-ADR each. Size check: if
-heavy, land schedule table + executor + audit attribution first, checkpoint, UI second.
+executor = robfig/cron/v3 (SPEC-022 mini-ADR 1 narrowed this to parser-only — the
+runner is a DB tick loop over a persisted next_fire_at, which makes misfire catch-up
+and restart safety structural), jittered start, firing through runs.Service.Start —
+the SAME guardrail/audit path as run-now, actor = `schedule:<owner>`. Misfire policy
+(coalesced catch-up), overlap policy (skip visibly), enable/disable (freeze; re-enable
+computes from now) each got their mini-ADR. Split as sized: backend slice first
+(checkpoint 0579a58), UI second.
 **Verify:** a schedule on a test instance fires within jitter bounds with full audit
 attribution (`schedule:<owner>` in both rows — ROADMAP M2 exit); disabled schedule never
 fires; portal restart neither double-fires nor silently drops a due schedule (per the
-spec'd misfire policy); `npm run check` green.
+spec'd misfire policy); `npm run check` green. ALL VERIFIED LIVE 2026-07-10 (incl. a
+real stop/start across two missed fire times → ONE coalesced catch-up).
 **Context brief:** ADR-003; D4; internal/runs/service.go (Start seam); frontend
 /schedules stub route (App.tsx); WU-021 actor conventions.
 
