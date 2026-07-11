@@ -117,6 +117,11 @@ func patchSchedule(log *slog.Logger, ss ScheduleService) http.HandlerFunc {
 			Enabled *bool `json:"enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
 			writeJSONError(w, http.StatusBadRequest, "bad JSON body")
 			return
 		}

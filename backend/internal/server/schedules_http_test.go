@@ -188,3 +188,14 @@ func TestDeleteSchedule(t *testing.T) {
 	resp = doJSON(t, http.MethodDelete, ts404.URL+"/api/schedules/99", "", &errBody)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
+
+// M2-gate finding 11: the PATCH body cap answers 413 like its siblings.
+func TestPatchScheduleBodyCap(t *testing.T) {
+	ts := schedulesServer(t, stubSchedules{sched: sampleSchedule()})
+
+	var body map[string]string
+	huge := `{"enabled":true,"x":"` + strings.Repeat("y", 5<<10) + `"}`
+	resp := doJSON(t, http.MethodPatch, ts.URL+"/api/schedules/3", huge, &body)
+	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	require.Contains(t, body["error"], "too large")
+}

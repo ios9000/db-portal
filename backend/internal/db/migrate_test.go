@@ -58,9 +58,15 @@ func TestMigrateUpDown(t *testing.T) {
 		WHERE ur.username = 'break-glass' AND r.name = 'dba')`).Scan(&seeded))
 	require.True(t, seeded, "0006 up must seed the break-glass dba grant")
 	require.True(t, tableExists(t, pool, "schedule"), "0007 up must create the schedule table")
+	require.True(t, columnExists(t, pool, "schedule", "confirm"),
+		"0008 up must add the stored ritual evidence (M2-gate finding 1)")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, columnExists(t, pool, "schedule", "confirm"), "0008 down must remove the column")
+	require.True(t, tableExists(t, pool, "schedule"), "0007 must survive 0008 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "schedule"), "0007 down must remove the schedule table")
 	require.True(t, tableExists(t, pool, "role"), "0006 must survive 0007 down")

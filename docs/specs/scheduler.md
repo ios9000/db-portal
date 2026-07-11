@@ -40,15 +40,19 @@
    trail — exactly the D1 incident. Normal restarts double-fire nothing:
    after a clean fire `next_fire_at` is in the future.
 
-4. **Overlap policy: skip, visibly.** If the schedule's previous run
-   (`last_run_id`) is still queued/running at fire time, this fire is
-   skipped: `last_fire_status = 'skipped_overlap'`, `next_fire_at` advances,
-   no run row. Overlapping dumps of the same instance are a load hazard, and
-   queueing behind a stuck run builds an invisible backlog. The skip is not
-   an audit event (audit_event is run-centric and there is no run; a skip is
-   the guardrail working, not an actor acting — same reasoning as SPEC-021's
-   unconfirmed-ritual 400) but it is never silent: schedule row status + one
-   slog Warn.
+4. **Overlap policy: skip, visibly.** *(Amended 2026-07-10, M2-gate finding
+   3: the probe is now per-INSTANCE — any queued/running run on the
+   schedule's instance skips the fire, whoever launched it. The original
+   per-schedule probe contradicted this mini-ADR's own rationale: the
+   hazard is two dumps loading one database, and sibling schedules — which
+   this spec explicitly permits — or a live button-press run are the same
+   load. Cross-resource locking beyond one instance stays M4.)* A skipped
+   fire stamps `last_fire_status = 'skipped_overlap'`, `next_fire_at`
+   advances, no run row. Queueing behind a stuck run would build an
+   invisible backlog. The skip is not an audit event (audit_event is
+   run-centric and there is no run; a skip is the guardrail working, not an
+   actor acting — same reasoning as SPEC-021's unconfirmed-ritual 400) but
+   it is never silent: schedule row status + one slog Warn.
 
 5. **Enable/disable: disabled means the human said stop.** `enabled = false`
    freezes the schedule: `next_fire_at` goes NULL (the partial index and the
@@ -71,13 +75,22 @@
    the parser honors it, but per-schedule timezone UI is deferred — one
    clock for MVP, same clock WU-023's windows will assume.
 
-8. **Prod ritual at creation; the executor confirms programmatically.**
-   POST /api/schedules carries `confirm`; a schedule on a prod instance is
-   refused (400, same message and predicate as SPEC-021 mini-ADR 6) unless
-   `confirm` equals the instance name exactly. The executor then fires with
-   `Confirm: <instance>` — the human meant it once, at creation, for every
-   future fire. Schedule mutations (create/toggle/delete) sit behind
-   `requireRole(dba)` like every other mutation; list stays session-gated.
+8. **Prod ritual at creation; the executor replays the STORED evidence.**
+   *(Amended 2026-07-10, M2-gate finding 1 — the gate's one HIGH. The
+   executor originally fired with `Confirm: <instance>`, true by
+   construction, so a schedule created unconfirmed on a test instance kept
+   auto-passing the ritual after inventory re-import promoted the instance
+   to prod.)* POST /api/schedules carries `confirm`; a schedule on a prod
+   instance is refused (400, same message and predicate as SPEC-021
+   mini-ADR 6) unless `confirm` equals the instance name exactly. The
+   typed string is PERSISTED on the row (migration 0008) and the executor
+   fires with it verbatim — the human meant it once, at creation, and the
+   evidence outlives env changes: an instance promoted to prod after an
+   unconfirmed creation fails the ritual in Start and stamps a visible
+   `'error'`, never a silent prod dump, until a human re-creates the
+   schedule through the ritual. Schedule mutations (create/toggle/delete)
+   sit behind `requireRole(dba)` like every other mutation; list stays
+   session-gated.
 
 9. **Fired runs are attributed `schedule:<owner>`; owner = creator.**
    `StartRequest.Actor = "schedule:" + created_by` (ADR-003's shape). Actor
@@ -119,7 +132,13 @@ CREATE INDEX schedule_due_idx ON schedule (next_fire_at) WHERE enabled;
 - `ON DELETE CASCADE`: a schedule cannot outlive its instance (fired runs
   and their audit rows survive independently — run has its own columns).
 - No uniqueness across (instance, operation, spec): duplicates are harmless
-  and legitimate (e.g. staggered pairs).
+  and legitimate (e.g. staggered pairs) — the per-instance overlap probe
+  (mini-ADR 4, amended) keeps them from ever running concurrently.
+- Migration 0008 (WU-024, M2-gate finding 1) adds
+  `confirm text NOT NULL DEFAULT ''` — the stored ritual evidence
+  (mini-ADR 8, amended); prod rows existing at migration time are
+  backfilled with their instance name (they were created through the
+  ritual).
 
 ## Interfaces
 

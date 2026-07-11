@@ -352,3 +352,222 @@ func TestRunLoopFires(t *testing.T) {
 		t.Fatal("Run must return when its context is canceled")
 	}
 }
+
+// blockingStarter parks every Start call until released, returning a
+// pre-inserted real run id (the stamp's last_run_id FK needs one).
+type blockingStarter struct {
+	runID   int64
+	started chan string // receives the instance name of each call
+	release chan struct{}
+}
+
+func (b *blockingStarter) Start(ctx context.Context, req runs.StartRequest) (runs.Run, error) {
+	b.started <- req.Instance
+	select {
+	case <-b.release:
+		return runs.Run{ID: b.runID}, nil
+	case <-ctx.Done():
+		return runs.Run{}, ctx.Err()
+	}
+}
+
+// seedRun hand-inserts a terminal run row so fakes can hand out a real id.
+func seedRun(t *testing.T, pool *pgxpool.Pool, instance, state string) int64 {
+	t.Helper()
+	var id int64
+	require.NoError(t, pool.QueryRow(context.Background(), `
+		INSERT INTO run (instance_id, operation, environment, engine_class, playbook_tag, state)
+		SELECT id, 'dump', env, 'nonprod', 'dump', $2 FROM instance WHERE name = $1
+		RETURNING id`, instance, state).Scan(&id))
+	return id
+}
+
+func newFakeExecutor(t *testing.T, starter schedule.Starter) (*schedule.Service, *pgxpool.Pool) {
+	t.Helper()
+	pool := testutil.MigratedDB(t)
+	f, err := os.Open("../../../infra/fixtures/instances.csv")
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	_, err = inventory.Import(context.Background(), pool, "instances.csv", f)
+	require.NoError(t, err)
+	svc := schedule.New(pool, starter, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Jitter = 0
+	return svc, pool
+}
+
+// M2-gate finding 1 (the HIGH): an instance promoted to prod AFTER an
+// unconfirmed schedule creation must fail the ritual visibly at fire time —
+// never silently dump prod.
+func TestPromotedInstanceFailsRitual(t *testing.T) {
+	svc, _, pool := newExecutor(t, time.Millisecond)
+	ctx := context.Background()
+
+	// Created on a TEST instance the honest way: no confirm typed.
+	sc, err := svc.Create(ctx, schedule.CreateRequest{
+		Instance: "billing-test", Operation: "dump", CronSpec: "@daily", CreatedBy: testOwner,
+	})
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `UPDATE instance SET env = 'prod' WHERE name = 'billing-test'`)
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+
+	svc.FireDue(ctx)
+	require.Zero(t, runCount(t, pool), "an unconfirmed schedule must NEVER fire on a promoted instance")
+	after := getSchedule(t, svc, sc.ID)
+	require.NotNil(t, after.LastFireStatus)
+	require.Equal(t, "error", *after.LastFireStatus, "the refusal is visible, not silent")
+	require.True(t, after.NextFireAt.After(time.Now()), "the loop moves on (mini-ADR 10)")
+
+	svc.FireDue(ctx)
+	require.Zero(t, runCount(t, pool), "still refused on later fires")
+}
+
+// The counterpart: a schedule whose creator DID perform the ritual keeps
+// firing after promotion — the stored evidence stays valid.
+func TestConfirmedScheduleSurvivesPromotion(t *testing.T) {
+	svc, runSvc, pool := newExecutor(t, time.Millisecond)
+	ctx := context.Background()
+
+	sc, err := svc.Create(ctx, createReq("billing-prod", "@daily")) // confirm = instance name
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+	svc.FireDue(ctx)
+
+	after := getSchedule(t, svc, sc.ID)
+	require.NotNil(t, after.LastRunID)
+	run := waitTerminal(t, runSvc, *after.LastRunID)
+	require.Equal(t, "success", run.State)
+}
+
+// M2-gate finding 2: a disable landing while the fire is in flight keeps
+// next_fire_at frozen (NULL) — the outcome is recorded, the clock is not
+// resurrected.
+func TestDisableDuringFireKeepsNextFireNull(t *testing.T) {
+	starter := &blockingStarter{started: make(chan string), release: make(chan struct{})}
+	svc, pool := newFakeExecutor(t, starter)
+	ctx := context.Background()
+	starter.runID = seedRun(t, pool, "billing-test", "success")
+
+	sc, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+
+	done := make(chan struct{})
+	go func() { svc.FireDue(ctx); close(done) }()
+	require.Equal(t, "billing-test", <-starter.started)
+	_, err = svc.SetEnabled(ctx, sc.ID, false) // next_fire_at -> NULL
+	require.NoError(t, err)
+	close(starter.release)
+	<-done
+
+	after := getSchedule(t, svc, sc.ID)
+	require.False(t, after.Enabled)
+	require.Nil(t, after.NextFireAt, "the stamp must not overwrite a concurrent disable's NULL")
+	require.NotNil(t, after.LastFireStatus)
+	require.Equal(t, "fired", *after.LastFireStatus, "the fire that DID happen is recorded honestly")
+	require.NotNil(t, after.LastRunID)
+
+	// And it stays silent for good: nothing is due anymore.
+	svc.FireDue(ctx)
+	require.Nil(t, getSchedule(t, svc, sc.ID).NextFireAt)
+}
+
+// M2-gate finding 2 (entry half): a schedule disabled after the due
+// snapshot but before its turn in the tick never starts a run at all.
+func TestDisableBetweenSnapshotAndFireSkips(t *testing.T) {
+	starter := &blockingStarter{started: make(chan string), release: make(chan struct{})}
+	svc, pool := newFakeExecutor(t, starter)
+	ctx := context.Background()
+	starter.runID = seedRun(t, pool, "billing-test", "success")
+
+	first, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+	second, err := svc.Create(ctx, createReq("crm-test", "@daily"))
+	require.NoError(t, err)
+	backdate(t, pool, first.ID, 2) // fires first (ORDER BY next_fire_at)
+	backdate(t, pool, second.ID, 1)
+
+	done := make(chan struct{})
+	go func() { svc.FireDue(ctx); close(done) }()
+	require.Equal(t, "billing-test", <-starter.started)
+	_, err = svc.SetEnabled(ctx, second.ID, false) // while the first fire is in flight
+	require.NoError(t, err)
+	close(starter.release)
+	<-done
+
+	select {
+	case got := <-starter.started:
+		t.Fatalf("disabled schedule fired anyway (instance %s)", got)
+	default:
+	}
+	after := getSchedule(t, svc, second.ID)
+	require.Nil(t, after.LastFireStatus, "never attempted — the re-check caught the disable")
+}
+
+// M2-gate finding 3 (amended mini-ADR 4): overlap is an instance property —
+// sibling schedules never dump one instance concurrently.
+func TestSiblingSchedulesDontOverlap(t *testing.T) {
+	svc, _, pool := newExecutor(t, 300*time.Millisecond)
+	ctx := context.Background()
+
+	a, err := svc.Create(ctx, createReq("billing-test", "* * * * *"))
+	require.NoError(t, err)
+	b, err := svc.Create(ctx, createReq("billing-test", "*/2 * * * *"))
+	require.NoError(t, err)
+	backdate(t, pool, a.ID, 2)
+	backdate(t, pool, b.ID, 1)
+
+	svc.FireDue(ctx)
+	require.Equal(t, 1, runCount(t, pool), "one dump per instance at a time")
+	require.Equal(t, "fired", *getSchedule(t, svc, a.ID).LastFireStatus)
+	require.Equal(t, "skipped_overlap", *getSchedule(t, svc, b.ID).LastFireStatus)
+}
+
+// Same probe, other launcher: a live button-press run blocks a scheduled
+// fire too — the scheduler never piles onto a busy instance.
+func TestManualRunBlocksScheduledFire(t *testing.T) {
+	svc, runSvc, pool := newExecutor(t, 300*time.Millisecond)
+	ctx := context.Background()
+
+	_, err := runSvc.Start(ctx, runs.StartRequest{
+		Actor: "dba-test", Instance: "billing-test", Operation: "dump", Confirm: "billing-test",
+	})
+	require.NoError(t, err)
+
+	sc, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+	svc.FireDue(ctx)
+
+	require.Equal(t, 1, runCount(t, pool), "no scheduled pile-on while a manual run is live")
+	require.Equal(t, "skipped_overlap", *getSchedule(t, svc, sc.ID).LastFireStatus)
+}
+
+// M2-gate finding 5: a hung fire is bounded by FireTimeout — the loop
+// records 'error' and moves on instead of wedging forever.
+type stuckStarter struct{}
+
+func (stuckStarter) Start(ctx context.Context, _ runs.StartRequest) (runs.Run, error) {
+	<-ctx.Done()
+	return runs.Run{}, ctx.Err()
+}
+
+func TestStuckFireIsBounded(t *testing.T) {
+	svc, pool := newFakeExecutor(t, stuckStarter{})
+	svc.FireTimeout = 30 * time.Millisecond
+	ctx := context.Background()
+
+	sc, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+
+	start := time.Now()
+	svc.FireDue(ctx)
+	require.Less(t, time.Since(start), 5*time.Second, "the loop must not wedge on a stuck fire")
+
+	after := getSchedule(t, svc, sc.ID)
+	require.NotNil(t, after.LastFireStatus)
+	require.Equal(t, "error", *after.LastFireStatus)
+	require.True(t, after.NextFireAt.After(time.Now()), "the stamp survives the burned fire deadline")
+}

@@ -178,3 +178,26 @@ func TestDelete(t *testing.T) {
 	require.ErrorIs(t, svc.Delete(ctx, sc.ID), schedule.ErrNotFound,
 		"instance deletion cascades to its schedules")
 }
+
+// M2-gate finding 8: a redundant toggle is a true no-op — no jitter
+// re-roll, no next_fire_at drift.
+func TestRedundantToggleIsNoOp(t *testing.T) {
+	svc, _ := newStore(t)
+	svc.Jitter = time.Hour // any recompute would (almost surely) move the time
+	ctx := context.Background()
+
+	sc, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+
+	again, err := svc.SetEnabled(ctx, sc.ID, true)
+	require.NoError(t, err)
+	require.Equal(t, *sc.NextFireAt, *again.NextFireAt,
+		"enabling an enabled schedule must not touch next_fire_at")
+
+	off, err := svc.SetEnabled(ctx, sc.ID, false)
+	require.NoError(t, err)
+	offAgain, err := svc.SetEnabled(ctx, sc.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, off.Enabled, offAgain.Enabled)
+	require.Nil(t, offAgain.NextFireAt)
+}

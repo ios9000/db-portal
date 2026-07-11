@@ -88,12 +88,17 @@ type Service struct {
 	// "daily at 02:00" dumps don't hit the estate in the same second.
 	// Zero means exact cron times (tests).
 	Jitter time.Duration
+	// FireTimeout bounds one fire attempt (M2-gate finding 5): a hung DB
+	// call or engine adapter must not wedge every other schedule and the
+	// loop's own shutdown. Start's stranded-job repair already handles a
+	// deadline landing mid-launch.
+	FireTimeout time.Duration
 }
 
 func New(pool *pgxpool.Pool, starter Starter, log *slog.Logger) *Service {
 	return &Service{
 		pool: pool, starter: starter, log: log,
-		Tick: 10 * time.Second, Jitter: time.Minute,
+		Tick: 10 * time.Second, Jitter: time.Minute, FireTimeout: 30 * time.Second,
 	}
 }
 
@@ -139,12 +144,16 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Schedule, erro
 		return Schedule{}, runs.ErrProdUnconfirmed
 	}
 
+	// The typed confirm is PERSISTED, not just checked: the executor fires
+	// with this exact string, so an instance promoted to prod after an
+	// unconfirmed (non-prod) creation fails the ritual visibly at fire
+	// time instead of auto-passing it (M2-gate finding 1).
 	var id int64
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO schedule (instance_id, operation, cron_spec, reason, created_by, next_fire_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
+		INSERT INTO schedule (instance_id, operation, cron_spec, reason, created_by, confirm, next_fire_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7)
 		RETURNING id`,
-		instanceID, req.Operation, req.CronSpec, req.Reason, req.CreatedBy,
+		instanceID, req.Operation, req.CronSpec, req.Reason, req.CreatedBy, req.Confirm,
 		s.nextFire(spec, time.Now())).Scan(&id)
 	if err != nil {
 		return Schedule{}, fmt.Errorf("schedule: insert: %w", err)
@@ -190,12 +199,20 @@ func (s *Service) get(ctx context.Context, id int64) (Schedule, error) {
 // is for promises the portal broke, not promises a human revoked).
 func (s *Service) SetEnabled(ctx context.Context, id int64, enabled bool) (Schedule, error) {
 	var raw string
-	err := s.pool.QueryRow(ctx, `SELECT cron_spec FROM schedule WHERE id = $1`, id).Scan(&raw)
+	var current bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT cron_spec, enabled FROM schedule WHERE id = $1`, id).Scan(&raw, &current)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Schedule{}, ErrNotFound
 	case err != nil:
 		return Schedule{}, fmt.Errorf("schedule: get spec: %w", err)
+	}
+	// A redundant toggle is a true no-op (M2-gate finding 8): recomputing
+	// would re-roll the jitter — and push a due-but-not-yet-fired schedule
+	// a whole cron period out.
+	if enabled == current {
+		return s.get(ctx, id)
 	}
 	var next *time.Time
 	if enabled {
