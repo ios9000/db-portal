@@ -299,6 +299,49 @@ export async function cancelRun(id: number): Promise<void> {
   await postJSON<{ status: string }>(`/api/runs/${id}/cancel`, {});
 }
 
+export type ChainState = 'running' | 'halted' | 'success';
+
+/** One chain step (SPEC-032 mini-ADR 4): status is derived server-side —
+ * `pending` while `run_id` is null, else the linked run's own state. */
+export interface ChainStep {
+  seq: number;
+  operation: string;
+  run_id: number | null;
+  status: 'pending' | RunState;
+}
+
+/** A chain as served by GET /api/runs/{id}/chain and POST
+ * /api/chains/{id}/resume (WU-032). Steps arrive ordered by seq. */
+export interface Chain {
+  id: number;
+  kind: string;
+  instance: string;
+  env: InstanceEnv;
+  state: ChainState;
+  created_by: string;
+  reason: string | null;
+  created_at: string;
+  halted_at: string | null;
+  finished_at: string | null;
+  steps: ChainStep[];
+}
+
+/** The chain a run is a step of, for the RunDetail strip. 404 (`ApiError`
+ * status 404) for both an unknown run and a run that isn't a chain step —
+ * either way there's no strip to show (SPEC-032). */
+export async function fetchRunChain(id: number): Promise<Chain> {
+  return getJSON<Chain>(`/api/runs/${id}/chain`);
+}
+
+/**
+ * Resume a halted chain (dba-gated, no body). The failed step re-fires as a
+ * new run attributed to the resumer (SPEC-032 mini-ADR 1). 409 = the chain
+ * isn't halted (single-flight resume).
+ */
+export async function resumeChain(id: number): Promise<Chain> {
+  return postJSON<Chain>(`/api/chains/${id}/resume`, {});
+}
+
 /** One `log` event from GET /api/runs/{id}/logs (SSE, WU-013). */
 export interface RunLogLine {
   ts: string;

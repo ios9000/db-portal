@@ -785,6 +785,80 @@ tr.prod-edge td:first-child {
   font-size: 14px;
 }
 
+/* ---- chain strip (WU-032): sequential step progress on RunDetail ---- */
+
+.chain-strip {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  margin-bottom: var(--space-2);
+  font-size: 14px;
+}
+
+.chain-strip-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+
+.chain-strip-kind {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chain-strip-counter {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chain-strip-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chain-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chain-step-arrow {
+  color: var(--text-muted);
+  margin-right: var(--space-1);
+}
+
+.chain-step-label {
+  color: var(--text);
+}
+
+.chain-step-current .chain-step-label {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chain-step-pending {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chain-strip-note {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.chain-strip-actions {
+  margin-top: var(--space-1);
+}
+
 /* single-stage adaptation of the brief's pipeline nodes (chains: WU-032) */
 .stage-panel {
   display: flex;

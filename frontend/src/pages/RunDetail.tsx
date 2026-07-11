@@ -8,7 +8,10 @@ import {
   cancelRun,
   fetchOperations,
   fetchRun,
+  fetchRunChain,
   openRunLogStream,
+  resumeChain,
+  type Chain,
   type Operation,
   type Run,
   type RunLogLine,
@@ -25,6 +28,15 @@ const POLL_MS = 3_000;
 
 function isTerminal(r: Run): boolean {
   return r.state === 'success' || r.state === 'failed' || r.state === 'canceled';
+}
+
+/** Resume failures render the server's own message (SPEC-021 idiom, mirrors
+ * describeActionError in Schedules.tsx) — kept local per WU-032's brief. */
+function describeChainError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.status === 0 ? 'API unreachable — is the backend running?' : err.detail;
+  }
+  return 'Could not resume the chain.';
 }
 
 /**
@@ -49,6 +61,24 @@ export function RunDetail() {
   // the final state immediately instead of waiting out the interval.
   const [pollEpoch, setPollEpoch] = useState(0);
   const paneRef = useRef<HTMLDivElement>(null);
+
+  // Chain strip state (WU-032). chainRef mirrors `chain` so a later poll
+  // failure can tell "never had a chain" (404 is the normal standalone-run
+  // case) apart from "had one, then it 404'd" (this attempt was superseded
+  // by a resume — SPEC-032 mini-ADR 2), without depending on stale closures.
+  const [chain, setChain] = useState<Chain | null>(null);
+  const [chainSuperseded, setChainSuperseded] = useState(false);
+  // Bumped after a successful resume so the poll effect restarts even
+  // though runId/run.state didn't change — the new chain is `running`, so
+  // polling then continues on its own.
+  const [chainPollEpoch, setChainPollEpoch] = useState(0);
+  const chainRef = useRef<Chain | null>(null);
+
+  useEffect(() => {
+    chainRef.current = null;
+    setChain(null);
+    setChainSuperseded(false);
+  }, [runId]);
 
   useEffect(() => {
     if (!Number.isInteger(runId)) {
@@ -99,6 +129,47 @@ export function RunDetail() {
       onUnavailable: () => setLogsGone(true),
     });
   }, [runId, hasRun]);
+
+  // The chain strip (WU-032): fetched once the run has loaded, and again
+  // whenever run.state changes (a step finishing means the chain may have
+  // advanced). 404 — unknown run, or a run that isn't a chain step — is the
+  // NORMAL case for a standalone run, not an error; any other failure also
+  // just means no strip (auxiliary data must never block the page). While
+  // the chain is `running`, keep polling on the page's own cadence so
+  // sibling-step progress appears; stop once halted/success. A poll that
+  // 404s after we'd already shown a chain means this attempt was superseded
+  // by a resume — keep the last-known steps and note it, rather than
+  // clearing the strip.
+  useEffect(() => {
+    if (!hasRun) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        const c = await fetchRunChain(runId);
+        if (cancelled) return;
+        chainRef.current = c;
+        setChain(c);
+        setChainSuperseded(false);
+        if (c.state === 'running') timer = setTimeout(() => void poll(), POLL_MS);
+      } catch (err) {
+        if (cancelled) return;
+        // Only a 404 after a chain was shown means superseded (SPEC-032
+        // mini-ADR 2) — a network blip must not fake that note. Any other
+        // failure just stops polling, keeping the last-known strip.
+        if (err instanceof ApiError && err.status === 404 && chainRef.current !== null) {
+          setChainSuperseded(true);
+        }
+      }
+    };
+    void poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [runId, hasRun, run?.state, chainPollEpoch]);
 
   const live = run !== null && !isTerminal(run);
   useEffect(() => {
@@ -187,6 +258,21 @@ export function RunDetail() {
         </p>
       )}
 
+      {chain !== null && (
+        <ChainStrip
+          chain={chain}
+          superseded={chainSuperseded}
+          runId={runId}
+          operations={operations}
+          onResumed={(updated) => {
+            chainRef.current = updated;
+            setChain(updated);
+            setChainSuperseded(false);
+            setChainPollEpoch((e) => e + 1);
+          }}
+        />
+      )}
+
       <section className="stage-panel" aria-label="Stage">
         <span className="stage-icon" aria-hidden="true">
           {op?.icon ?? '⚙'}
@@ -248,5 +334,107 @@ export function RunDetail() {
         )}
       </section>
     </>
+  );
+}
+
+interface ChainStripProps {
+  chain: Chain;
+  superseded: boolean;
+  runId: number;
+  operations: Operation[];
+  onResumed: (updated: Chain) => void;
+}
+
+/**
+ * Chain progress strip (WU-032, SPEC-032): the ordered steps of the chain
+ * this run belongs to. Sibling steps (a different run than the one this
+ * page is showing) link off to their own run pages; the current step and
+ * still-pending steps are plain text. Local to this page, same pattern as
+ * NewScheduleForm in Schedules.tsx.
+ */
+function ChainStrip({ chain, superseded, runId, operations, onResumed }: ChainStripProps) {
+  const [resuming, setResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  const currentStep = chain.steps.find((s) => s.run_id === runId);
+
+  const resume = async () => {
+    setResuming(true);
+    setResumeError(null);
+    try {
+      const updated = await resumeChain(chain.id);
+      onResumed(updated);
+    } catch (err) {
+      setResumeError(describeChainError(err));
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  return (
+    <section className="chain-strip" aria-label="Chain">
+      <div className="chain-strip-header">
+        <span className="chain-strip-kind">{chain.kind}</span>
+        {currentStep !== undefined && !superseded && (
+          <span className="chain-strip-counter">
+            Step {currentStep.seq} of {chain.steps.length}
+          </span>
+        )}
+      </div>
+      <ol className="chain-strip-steps">
+        {chain.steps.map((step, i) => {
+          const isCurrent = step.run_id === runId;
+          const op = operations.find((o) => o.id === step.operation);
+          const label = op?.label ?? step.operation;
+          return (
+            <li
+              key={step.seq}
+              className={isCurrent ? 'chain-step chain-step-current' : 'chain-step'}
+            >
+              {i > 0 && (
+                <span className="chain-step-arrow" aria-hidden="true">
+                  →
+                </span>
+              )}
+              <span className="chain-step-label">
+                {step.seq}.{' '}
+                {step.run_id !== null && !isCurrent ? (
+                  <Link to={`/runs/${step.run_id}`}>{label}</Link>
+                ) : (
+                  label
+                )}
+              </span>{' '}
+              {step.status === 'pending' ? (
+                <span className="chain-step-pending">Pending</span>
+              ) : (
+                <RunStatus status={step.status} />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {superseded && (
+        <p className="chain-strip-note">
+          This chain was resumed — this attempt was superseded by a new run.
+        </p>
+      )}
+      {chain.state === 'halted' && (
+        <div className="chain-strip-actions">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void resume()}
+            disabled={resuming}
+          >
+            {resuming ? 'Resuming…' : 'Resume'}
+          </button>
+          {resumeError !== null && (
+            <p className="drawer-error" role="alert">
+              {resumeError}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

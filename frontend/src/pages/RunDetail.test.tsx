@@ -1,9 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import type { Operation, Run } from '../lib/api';
+import type { Chain, Operation, Run } from '../lib/api';
 import { RunDetail } from './RunDetail';
 
 const OPS: Operation[] = [
@@ -13,6 +13,22 @@ const OPS: Operation[] = [
     icon: '💾',
     description: 'Full backup (pg_dump), verified after completion.',
     duration_hint: '~25 min',
+    online_hint: 'Database stays online',
+  },
+  {
+    id: 'restore',
+    label: 'Restore',
+    icon: '♻',
+    description: 'Restore from a stored artifact.',
+    duration_hint: '~15 min',
+    online_hint: 'Database stays online',
+  },
+  {
+    id: 'verify',
+    label: 'Verify',
+    icon: '✓',
+    description: 'Verify a restored database.',
+    duration_hint: '~5 min',
     online_hint: 'Database stays online',
   },
 ];
@@ -80,16 +96,84 @@ class FakeEventSource {
   }
 }
 
-function stubApi(run: Run): ReturnType<typeof vi.fn> {
+/** WU-032 chain fixture: three sequential dump/restore/verify steps, seq 2
+ * (this run) mid-chain — run_id 6 for the sibling before it, null (pending)
+ * for the one after. */
+function makeChain(overrides: Partial<Chain> = {}): Chain {
+  return {
+    id: 1,
+    kind: 'test-chain',
+    instance: 'billing-test',
+    env: 'test',
+    state: 'running',
+    created_by: 'dba1',
+    reason: null,
+    created_at: '2026-07-07T12:30:00Z',
+    halted_at: null,
+    finished_at: null,
+    steps: [
+      { seq: 1, operation: 'dump', run_id: 6, status: 'success' },
+      { seq: 2, operation: 'restore', run_id: 7, status: 'running' },
+      { seq: 3, operation: 'verify', run_id: null, status: 'pending' },
+    ],
+    ...overrides,
+  };
+}
+
+/** A chain halted on this run's own (failed) step. */
+function makeHaltedChain(): Chain {
+  return makeChain({
+    state: 'halted',
+    halted_at: '2026-07-07T12:32:00Z',
+    steps: [
+      { seq: 1, operation: 'dump', run_id: 6, status: 'success' },
+      { seq: 2, operation: 'restore', run_id: 7, status: 'failed' },
+      { seq: 3, operation: 'verify', run_id: null, status: 'pending' },
+    ],
+  });
+}
+
+type ResumeResult = Chain | { status: number; error: string };
+
+/**
+ * Extends the run/log fixture with the two WU-032 chain endpoints.
+ * `chain` is called on every GET .../chain — a function (not a static
+ * value) so a test can change its answer between polls (e.g. superseded:
+ * running, then 404). Omitted/null means "not a chain step" (404), which
+ * is also the default every pre-WU-032 test relies on.
+ */
+function stubApi(
+  run: Run,
+  opts: { chain?: () => Chain | null; resume?: () => ResumeResult } = {},
+): ReturnType<typeof vi.fn> {
   const mock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const method = init?.method ?? 'GET';
     if (url.endsWith('/api/operations')) {
       return Promise.resolve(new Response(JSON.stringify({ operations: OPS })));
     }
-    if (init?.method === 'POST') {
+    if (method === 'POST' && /\/api\/chains\/\d+\/resume$/.test(url)) {
+      const result = opts.resume?.() ?? { status: 404, error: 'no such chain' };
+      if ('status' in result) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: result.error }), { status: result.status }),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify(result)));
+    }
+    if (method === 'POST') {
       return Promise.resolve(
         new Response(JSON.stringify({ status: 'canceling' }), { status: 202 }),
       );
+    }
+    if (url.endsWith(`/api/runs/${run.id}/chain`)) {
+      const c = opts.chain?.() ?? null;
+      if (c === null) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'run is not part of a chain' }), { status: 404 }),
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify(c)));
     }
     if (url.endsWith(`/api/runs/${run.id}`)) {
       return Promise.resolve(new Response(JSON.stringify(run)));
@@ -336,4 +420,152 @@ test('unknown run renders the not-found state without retry loops', async () => 
 
   expect(await screen.findByText('No such run.')).toBeInTheDocument();
   expect(FakeEventSource.instances).toHaveLength(0);
+});
+
+// ---- WU-032: chain strip ----
+
+test('a run that is not a chain step renders normally with no chain strip', async () => {
+  stubApi(makeRun({}));
+  renderRun(7);
+
+  expect(
+    await screen.findByRole('heading', { name: /RUN-7 · Backup · billing-test/ }),
+  ).toBeInTheDocument();
+  expect(await screen.findByText('Running')).toBeInTheDocument(); // the page renders normally
+  expect(screen.queryByRole('region', { name: 'Chain' })).not.toBeInTheDocument();
+});
+
+test('a chain step run shows the strip: all steps, sibling link, counter', async () => {
+  stubApi(makeRun({ operation: 'restore', state: 'running' }), { chain: () => makeChain() });
+  renderRun(7);
+
+  const strip = await screen.findByRole('region', { name: 'Chain' });
+  expect(within(strip).getByText('Step 2 of 3')).toBeInTheDocument();
+
+  // seq 1 (run 6, not this page's run 7): a link off to its own run page.
+  const sibling = within(strip).getByRole('link', { name: 'Backup' });
+  expect(sibling).toHaveAttribute('href', '/runs/6');
+
+  // seq 2 (run 7, this page's run): the current step, plain text — not a link.
+  expect(within(strip).queryByRole('link', { name: 'Restore' })).not.toBeInTheDocument();
+  expect(within(strip).getByText(/Restore/)).toBeInTheDocument();
+
+  // seq 3 (no run yet): pending, plain text — not a link.
+  expect(within(strip).queryByRole('link', { name: 'Verify' })).not.toBeInTheDocument();
+  expect(within(strip).getByText(/Verify/)).toBeInTheDocument();
+
+  // Run-backed steps carry the RunStatus chip; the unfired one is Pending.
+  expect(within(strip).getByText('Success')).toBeInTheDocument();
+  expect(within(strip).getByText('Running')).toBeInTheDocument();
+  expect(within(strip).getByText('Pending')).toBeInTheDocument();
+});
+
+test('halted chain: Resume calls resumeChain and applies the returned (running) chain', async () => {
+  const halted = makeHaltedChain();
+  const resumed = makeChain({ state: 'running', halted_at: null });
+  let didResume = false;
+  const mock = stubApi(
+    makeRun({
+      operation: 'restore',
+      state: 'failed',
+      error: 'boom',
+      finished_at: '2026-07-07T12:32:00Z',
+    }),
+    {
+      chain: () => (didResume ? resumed : halted),
+      resume: () => {
+        didResume = true;
+        return resumed;
+      },
+    },
+  );
+  const user = userEvent.setup();
+  renderRun(7);
+
+  const strip = await screen.findByRole('region', { name: 'Chain' });
+  await user.click(within(strip).getByRole('button', { name: 'Resume' }));
+
+  await vi.waitFor(() => {
+    expect(within(strip).queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument();
+  });
+
+  const post = mock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST');
+  expect(post).toBeDefined();
+  expect(String(post![0])).toBe('/api/chains/1/resume');
+});
+
+test('resume failure (409) shows the server detail as an alert and keeps the halted chain', async () => {
+  const halted = makeHaltedChain();
+  stubApi(
+    makeRun({
+      operation: 'restore',
+      state: 'failed',
+      error: 'boom',
+      finished_at: '2026-07-07T12:32:00Z',
+    }),
+    { chain: () => halted, resume: () => ({ status: 409, error: 'chain is not halted' }) },
+  );
+  const user = userEvent.setup();
+  renderRun(7);
+
+  const strip = await screen.findByRole('region', { name: 'Chain' });
+  await user.click(within(strip).getByRole('button', { name: 'Resume' }));
+
+  expect(await within(strip).findByRole('alert')).toHaveTextContent('chain is not halted');
+  expect(within(strip).getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+});
+
+test('a running chain that 404s on a later poll shows the superseded note and stops polling', async () => {
+  let polls = 0;
+  stubApi(makeRun({ operation: 'restore', state: 'running' }), {
+    chain: () => {
+      polls += 1;
+      return polls === 1 ? makeChain({ state: 'running' }) : null;
+    },
+  });
+
+  vi.useFakeTimers();
+  try {
+    renderRun(7);
+
+    const strip = await vi.waitFor(() => {
+      const el = screen.getByRole('region', { name: 'Chain' });
+      expect(within(el).getByText('Step 2 of 3')).toBeInTheDocument();
+      return el;
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000); // the page's POLL_MS cadence
+    });
+
+    expect(
+      within(strip).getByText('This chain was resumed — this attempt was superseded by a new run.'),
+    ).toBeInTheDocument();
+    expect(within(strip).queryByText('Step 2 of 3')).not.toBeInTheDocument();
+    expect(polls).toBe(2); // no further poll went out once superseded
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('a non-halted (success) chain shows no Resume button', async () => {
+  stubApi(
+    makeRun({ operation: 'restore', state: 'success', finished_at: '2026-07-07T12:33:00Z' }),
+    {
+      chain: () =>
+        makeChain({
+          state: 'success',
+          finished_at: '2026-07-07T12:33:05Z',
+          steps: [
+            { seq: 1, operation: 'dump', run_id: 6, status: 'success' },
+            { seq: 2, operation: 'restore', run_id: 7, status: 'success' },
+            { seq: 3, operation: 'verify', run_id: 8, status: 'success' },
+          ],
+        }),
+    },
+  );
+  renderRun(7);
+
+  const strip = await screen.findByRole('region', { name: 'Chain' });
+  expect(within(strip).queryByRole('button', { name: /Resume/ })).not.toBeInTheDocument();
 });
