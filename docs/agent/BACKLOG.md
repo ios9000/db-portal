@@ -473,7 +473,7 @@ LaunchDrawer (frontend) + runs.Service.Start (stamp point); WU-022 executor path
 > no criticals — full scenarios + fix sketches: `docs/agent/reviews/m2-gate.md`.
 > Order 024 → 025 (024 carries the one HIGH).
 
-### WU-024 · M2-gate fix: scheduler hardening — M · `pending`
+### WU-024 · M2-gate fix: scheduler hardening — M · `done (2026-07-11, commit 54db393 — architect-implemented; all verify criteria race-tested + promotion path live-verified)`
 Gate items 1-3, 5, 8, 11 (docs/agent/reviews/m2-gate.md): (1) persist the
 creation-time `confirm` string on the schedule row (migration 0008) and fire with
 it verbatim — an instance promoted to prod after schedule creation then fails the

@@ -5,18 +5,20 @@
 
 ## Now
 
-- **Active:** WU-024 (M2-gate fix: scheduler hardening, M) — **not
-  started, fresh session**. M2 GATE REVIEW DONE 2026-07-10 (s12, workflow
-  wf_7ee53a3d-c48): 5 Sonnet reviewers, architect-verified inline — 11
-  findings, 11 confirmed, 0 refuted, NO criticals. **GATE PASSES with fix
-  WUs** (M1 protocol): WU-024 (scheduler: stored confirm vs env
-  promotion [the one HIGH], stamp-vs-disable guard, per-instance overlap,
-  per-fire timeout, SetEnabled idempotency, PATCH 413) then WU-025
-  (identity/session: username case canonicalization, bootstrap error
-  state, honest sign-out, New-schedule gating, cookie-secure boot warn)
-  land BEFORE any Phase-3 WU. Full record:
-  docs/agent/reviews/m2-gate.md. Phase 2 itself COMPLETE (WU-020…023
-  live-verified, JOURNAL s10-s12).
+- **Active:** WU-025 (M2-gate fix: identity & session honesty, S) —
+  **not started, fresh session**. WU-024 DONE 2026-07-11 (s13, commit
+  54db393): the gate's one HIGH is closed — schedule.confirm (migration
+  0008) persists the creation-time ritual evidence, executor fires with
+  it verbatim; promotion of an unconfirmed schedule's instance to prod
+  now stamps a visible 'error' (live-verified on the demo portal, zero
+  runs). Plus: fire() live-row re-check + stamp enabled-guard
+  (::timestamptz cast REQUIRED in the CASE — bare param broke type
+  inference and failed silently), per-INSTANCE overlap (mini-ADR 4
+  amended — manual runs block scheduled fires too), per-fire FireTimeout
+  30s w/ stamp on WithoutCancel context, SetEnabled redundant-toggle
+  no-op, PATCH 413. M2 gate itself: PASSED 2026-07-10 (11/11 confirmed,
+  0 refuted, record: docs/agent/reviews/m2-gate.md). WU-025 is the LAST
+  item before M2 closes and Phase-3 grooming starts.
 - **Status:** WU-023 closed per SPEC-023 (docs/specs/windows.md, 6
   mini-ADRs). internal/window (pure): `Day HH:MM-HH:MM` weekly grammar,
   wrap-capable (fixture ships `Sat 22:00-02:00`), end==start rejected.
@@ -43,18 +45,17 @@
 
 ## Next action (be exact)
 
-1. **WU-024 (M2-gate fix: scheduler hardening) in a FRESH session.** No
-   new spec — the gate record IS the brief: docs/agent/reviews/m2-gate.md
-   items 1-3, 5, 8, 11. Carries the gate's one HIGH (item 1: persist the
-   creation-time confirm on the schedule row, migration 0008; env
-   promotion then fails the ritual visibly). Includes the SPEC-022
-   mini-ADR 4 amendment (per-instance overlap). Concurrency-sensitive →
-   architect-implemented per the delegation model.
-2. **WU-025 (M2-gate fix: identity & session honesty)** — items 4, 6, 7,
-   9, 10. Mixed backend seam + 3 small frontend fixes; delegation call at
-   session time (likely architect: authn seam is security-sensitive and
-   the UI diffs are tiny).
-3. **Then groom Phase 3** (WU-030…035) ACs + context briefs — that is M2
+1. **WU-025 (M2-gate fix: identity & session honesty) in a FRESH
+   session.** The gate record IS the brief: docs/agent/reviews/m2-gate.md
+   items 4, 6, 7, 9, 10 — (4) lowercase the username ONCE at the authn
+   seam (session/audit/authz all key off it; AD binds are
+   case-insensitive), (6) App bootstrap 401→login vs everything-else→
+   retry state, (7) sign-out proceeds locally only on 401 (httpOnly
+   cookie can't be cleared client-side), (9) gate New-schedule on the
+   list having loaded, (10) boot Warn for ldap-mode + CookieSecure=false.
+   Authn seam is security-sensitive → likely architect end-to-end (the
+   UI diffs are tiny; delegation overhead > diff).
+2. **Then groom Phase 3** (WU-030…035) ACs + context briefs — that is M2
    close. Icebox reminders while grooming: session GC sweep, denial-rate
    alarm, break-glass mail alarm, role admin CLI, cron×window schedule
    hint, window_warned on run read model.
@@ -63,7 +64,7 @@
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of 97de1ab, migrations at 0007 — 0008 was never needed)
+  :8080 (binary of 54db393, migrations at 0008 = schedule.confirm)
   with `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password
   "demo-glass", hash only in the unit env — recover via `systemctl show
   dbportal-demo -p Environment`). Sign in dba1/dba1. Schedules list is
