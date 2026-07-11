@@ -104,6 +104,18 @@ Talking point: D2 — one pane of glass for prod + non-prod WITH engineered
 mix-up safeguards: banner (see it), ritual (mean it), credentials (contain it),
 audit env stamp (prove it).
 
+### 8 · Set it on a rhythm — schedules (M2 preview, optional +90 s)
+
+**Schedules** → **New schedule**: pick **crm-test**, cron spec `* * * * *`,
+reason "demo heartbeat". The row shows the server-computed **next fire**
+(jittered up to 60 s so a fleet of 02:00 dumps never stampedes). Within
+~2 minutes the run appears in **Activity** with requester
+**schedule:dba1** — the same audit path as the button, attributed to the
+schedule's owner (ADR-003). Toggle it disabled and the next fire goes
+blank; nothing fires until re-enabled. A schedule on a prod instance
+demands the same typed-name ritual — once, at creation, covering every
+future fire. (Delete the heartbeat schedule before moving on.)
+
 ## Reset between demos
 
 ```sh

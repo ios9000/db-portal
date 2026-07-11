@@ -134,6 +134,43 @@ async function postVoid(path: string, body: unknown, opts?: FetchOpts): Promise<
   }
 }
 
+/** PATCH with a JSON body, expecting a JSON response (WU-022: schedule toggle). */
+async function patchJSON<T>(path: string, body: unknown, opts?: FetchOpts): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : String(err));
+  }
+  if (!res.ok) {
+    signalIfUnauthorized(res.status, opts);
+    throw new ApiError(res.status, await errorDetail(res));
+  }
+  return parseJSON<T>(res);
+}
+
+/**
+ * DELETE expecting no meaningful response body (204, WU-022: schedule
+ * delete). No request body and no Content-Type header — there's nothing
+ * to encode.
+ */
+async function deleteVoid(path: string, opts?: FetchOpts): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(path, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : String(err));
+  }
+  if (!res.ok) {
+    signalIfUnauthorized(res.status, opts);
+    throw new ApiError(res.status, await errorDetail(res));
+  }
+}
+
 /** Signed-in user (SPEC-020). The cookie is httpOnly — this is the only
  * shape the SPA ever learns identity in, via login/me. */
 export interface Identity {
@@ -359,6 +396,60 @@ export async function startRun(
     reason,
     ...(confirm ? { confirm } : {}),
   });
+}
+
+export type ScheduleFireStatus = 'fired' | 'skipped_overlap' | 'error';
+
+/** One recurring schedule as served by GET /api/schedules (WU-022). Times
+ * are RFC 3339; `next_fire_at` is already jittered server-side — display
+ * it, never recompute it client-side. */
+export interface Schedule {
+  id: number;
+  instance: string;
+  env: InstanceEnv;
+  operation: string;
+  cron_spec: string;
+  reason: string | null;
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  next_fire_at: string | null;
+  last_fired_at: string | null;
+  last_run_id: number | null;
+  last_fire_status: ScheduleFireStatus | null;
+}
+
+export async function fetchSchedules(): Promise<Schedule[]> {
+  return (await getJSON<{ schedules: Schedule[] }>('/api/schedules')).schedules;
+}
+
+/**
+ * Create a recurring schedule. `confirm` carries the prod typed-name ritual
+ * (same as startRun) — the server ignores it on non-prod, so it's omitted
+ * from the body rather than sent empty.
+ */
+export async function createSchedule(
+  instance: string,
+  operation: string,
+  cronSpec: string,
+  reason: string,
+  confirm?: string,
+): Promise<Schedule> {
+  return postJSON<Schedule>('/api/schedules', {
+    instance,
+    operation,
+    cron_spec: cronSpec,
+    reason,
+    ...(confirm ? { confirm } : {}),
+  });
+}
+
+export async function setScheduleEnabled(id: number, enabled: boolean): Promise<Schedule> {
+  return patchJSON<Schedule>(`/api/schedules/${id}`, { enabled });
+}
+
+export async function deleteSchedule(id: number): Promise<void> {
+  await deleteVoid(`/api/schedules/${id}`);
 }
 
 export interface Healthz {

@@ -615,12 +615,19 @@ tr.prod-edge td:first-child {
   font-weight: 400;
 }
 
-.drawer-field input {
+.drawer-field input,
+.drawer-field select {
   font: inherit;
   font-weight: 400;
   padding: var(--space-05) var(--space-1);
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+
+.field-hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .drawer-error {
@@ -711,6 +718,18 @@ tr.prod-edge td:first-child {
   100% {
     transform: translateX(250%);
   }
+}
+
+/* ---- Schedules (WU-022): cron spec chip ---- */
+
+.cron-spec {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
 }
 
 /* ---- run detail (design brief Screen 5, WU-013) ---- */
