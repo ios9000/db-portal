@@ -26,6 +26,7 @@ type Deps struct {
 	DB        Pinger
 	Instances InstanceReader
 	Runs      RunService
+	Schedules ScheduleService
 	Auth      Authenticator
 	Roles     RoleGuard
 	// SecureCookies marks the session cookie Secure (PORTAL_COOKIE_SECURE;
@@ -53,6 +54,7 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 			r.Get("/runs", listRuns(log, d.Runs))
 			r.Get("/runs/{id}", getRun(log, d.Runs))
 			r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
+			r.Get("/schedules", listSchedules(log, d.Schedules))
 			// Mutations need the dba role; reads stay session-gated
 			// (SPEC-021 mini-ADR 2). Logout stays role-free above — any
 			// session may end itself.
@@ -60,6 +62,9 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 				r.Use(requireRole(log, d.Roles, authz.RoleDBA))
 				r.Post("/runs", startRun(log, d.Runs))
 				r.Post("/runs/{id}/cancel", cancelRun(log, d.Runs))
+				r.Post("/schedules", createSchedule(log, d.Schedules))
+				r.Patch("/schedules/{id}", patchSchedule(log, d.Schedules))
+				r.Delete("/schedules/{id}", deleteSchedule(log, d.Schedules))
 			})
 		})
 	})

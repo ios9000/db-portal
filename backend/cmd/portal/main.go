@@ -26,6 +26,7 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
 	"github.com/ios9000/db-portal/backend/internal/runs"
+	"github.com/ios9000/db-portal/backend/internal/schedule"
 	"github.com/ios9000/db-portal/backend/internal/server"
 	"github.com/ios9000/db-portal/backend/internal/version"
 )
@@ -118,11 +119,19 @@ func run(log *slog.Logger, args []string) error {
 		}
 	}
 
+	// The scheduler executor (ADR-003, SPEC-022) fires due schedules
+	// through runSvc.Start — the identical guardrail + audit path as the
+	// launch button. Started after the orphan sweep so a misfire catch-up
+	// never races the repair of its own half-fired predecessor.
+	sched := schedule.New(pool, runSvc, log)
+	go sched.Run(ctx)
+
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
 		DB:            pool,
 		Instances:     inventory.NewStore(pool),
 		Runs:          runSvc,
+		Schedules:     sched,
 		Auth:          auth,
 		Roles:         roles,
 		SecureCookies: cfg.CookieSecure,

@@ -32,6 +32,7 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
 	"github.com/ios9000/db-portal/backend/internal/runs"
+	"github.com/ios9000/db-portal/backend/internal/schedule"
 	"github.com/ios9000/db-portal/backend/internal/server"
 	"github.com/ios9000/db-portal/backend/internal/testutil"
 )
@@ -66,10 +67,20 @@ func TestGoldenFlow(t *testing.T) {
 	roles := authz.NewStore(pool, log)
 	require.NoError(t, roles.Grant(ctx, authz.RoleDBA, "dba1", "dba2"))
 
+	// The scheduler executor, live like main.go runs it (SPEC-022) — a fast
+	// tick so the schedule beat observes a fire without waiting a minute.
+	sched := schedule.New(pool, svc, log)
+	sched.Tick = 5 * time.Millisecond
+	sched.Jitter = 0
+	schedCtx, stopSched := context.WithCancel(ctx)
+	t.Cleanup(stopSched)
+	go sched.Run(schedCtx)
+
 	ts := httptest.NewServer(server.NewRouter(log, server.Deps{
 		DB: pool, Instances: inventory.NewStore(pool), Runs: svc,
-		Auth:  authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
-		Roles: roles,
+		Schedules: sched,
+		Auth:      authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
+		Roles:     roles,
 	}))
 	t.Cleanup(ts.Close)
 
@@ -110,7 +121,7 @@ func TestGoldenFlow(t *testing.T) {
 	require.True(t, strings.HasPrefix(*run.JobID, "mock-nonprod-"), "job %q not on nonprod engine", *run.JobID)
 	require.NotNil(t, run.Artifact)
 	require.NotEmpty(t, run.Artifact.Checksum)
-	requireAudit(t, ctx, pool, run.ID, "test", "success")
+	requireAudit(t, ctx, pool, run.ID, "dba1", "test", "success")
 
 	// The fleet view reflects the backup (WU-011R): billing-test now carries
 	// last_backup_at; untouched instances stay null.
@@ -146,7 +157,7 @@ func TestGoldenFlow(t *testing.T) {
 	require.NoError(t, err)
 	failRun = waitTerminal(t, c, failRun.ID)
 	require.Equal(t, "failed", failRun.State)
-	requireAudit(t, ctx, pool, failRun.ID, "test", "failed")
+	requireAudit(t, ctx, pool, failRun.ID, "dba1", "test", "failed")
 
 	var msg testutil.SMTPCapture
 	select {
@@ -175,12 +186,51 @@ func TestGoldenFlow(t *testing.T) {
 	require.NotNil(t, prodRun.JobID)
 	require.True(t, strings.HasPrefix(*prodRun.JobID, "mock-prod-"), "job %q not on prod engine", *prodRun.JobID)
 	require.Equal(t, "dba1", prodRun.RequestedBy, "the run carries the AD identity that launched it")
-	requireAudit(t, ctx, pool, prodRun.ID, "prod", "success")
+	requireAudit(t, ctx, pool, prodRun.ID, "dba1", "prod", "success")
 
 	// Beat 7 — the trail answers "who": the requester filter finds dba1's
 	// runs and an unknown username matches nothing (SPEC-021).
 	require.NotEmpty(t, listRuns(t, c, "?requested_by=dba1"))
 	require.Empty(t, listRuns(t, c, "?requested_by=nobody"))
+
+	// Beat 8 — the scheduler (SPEC-022, M2 exit): a prod schedule demands
+	// the same typed-name ritual at creation; a created schedule, once due,
+	// is fired by the live executor loop through the identical audit path,
+	// attributed schedule:dba1.
+	refusedSched, err := c.post("/api/schedules",
+		`{"instance": "billing-prod", "operation": "dump", "cron_spec": "@daily"}`)
+	require.NoError(t, err)
+	require.NoError(t, refusedSched.Body.Close())
+	require.Equal(t, http.StatusBadRequest, refusedSched.StatusCode,
+		"prod schedule without the typed-name confirm must be refused")
+
+	createdResp, err := c.post("/api/schedules",
+		`{"instance": "billing-test", "operation": "dump", "cron_spec": "@daily", "reason": "nightly"}`)
+	require.NoError(t, err)
+	var created schedule.Schedule
+	require.NoError(t, json.NewDecoder(createdResp.Body).Decode(&created))
+	require.NoError(t, createdResp.Body.Close())
+	require.Equal(t, http.StatusCreated, createdResp.StatusCode)
+	require.Equal(t, "dba1", created.CreatedBy, "the creator owns the schedule")
+	require.NotNil(t, created.NextFireAt)
+
+	// Make it due (the misfire shape) and let the loop catch up.
+	_, err = pool.Exec(ctx,
+		`UPDATE schedule SET next_fire_at = now() - interval '1 hour' WHERE id = $1`, created.ID)
+	require.NoError(t, err)
+	var schedRun runs.Run
+	require.Eventually(t, func() bool {
+		fired := listRuns(t, c, "?requested_by=schedule:dba1")
+		if len(fired) != 1 {
+			return false
+		}
+		schedRun = fired[0]
+		return true
+	}, 10*time.Second, 10*time.Millisecond, "the executor must fire the due schedule")
+	schedRun = waitTerminal(t, c, schedRun.ID)
+	require.Equal(t, "success", schedRun.State)
+	require.Equal(t, "schedule:dba1", schedRun.RequestedBy)
+	requireAudit(t, ctx, pool, schedRun.ID, "schedule:dba1", "test", "success")
 }
 
 // apiClient is the authenticated client every HTTP beat runs through: a
@@ -288,7 +338,7 @@ func readLogStream(t *testing.T, c *apiClient, id int64) string {
 // requireAudit pins guardrail layer 4 (SPEC-015): exactly one submitted +
 // one finished audit event per run, environment stamped on both — and,
 // since WU-021, the requesting identity as actor on both (SPEC-021).
-func requireAudit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID int64, env, finalStatus string) {
+func requireAudit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID int64, actor, env, finalStatus string) {
 	t.Helper()
 	rows, err := pool.Query(ctx, `
 		SELECT actor, action, environment, COALESCE(final_status, ''), COALESCE(job_id, '')
@@ -308,8 +358,8 @@ func requireAudit(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID i
 	}
 	require.NoError(t, rows.Err())
 	require.Equal(t, []event{
-		{"dba1", "run.submitted", env, ""},
-		{"dba1", "run.finished", env, finalStatus},
+		{actor, "run.submitted", env, ""},
+		{actor, "run.finished", env, finalStatus},
 	}, events)
 	// job_id (0004): NULL at submit — the engine id doesn't exist yet — and
 	// stamped on finished, anchoring the run<->engine-job linkage immutably.
