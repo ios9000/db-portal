@@ -79,11 +79,17 @@ func run(log *slog.Logger, args []string) error {
 	defer pool.Close()
 
 	// Composition root for the engine seam (ADR-002): one adapter instance
-	// per env class, never shared (guardrail layer 3). MockEngine until
-	// WU-033 wires Semaphore.
+	// per env class, never shared (guardrail layer 3). Prod stays MockEngine
+	// in dev; the non-prod class is opt-in (SPEC-033 mini-ADR 6) — mock by
+	// default, real Semaphore when PORTAL_ENGINE_NONPROD=semaphore. Disjoint
+	// config per class; an unknown value fails closed here, before serving.
+	nonprod, err := nonProdAdapter(cfg, log)
+	if err != nil {
+		return err
+	}
 	registry := engine.NewRegistry()
 	registry.Register(engine.ClassProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-prod"}))
-	registry.Register(engine.ClassNonProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}))
+	registry.Register(engine.ClassNonProd, nonprod)
 
 	runSvc := runs.NewService(pool, registry, log)
 	chainSvc := chain.New(pool, runSvc, log)
@@ -155,6 +161,33 @@ func run(log *slog.Logger, args []string) error {
 
 // devGrants names the principals each non-ldap auth mode must be able to
 // act as, so dev and demo work out of the box.
+// nonProdAdapter builds the non-prod engine class adapter from config
+// (SPEC-033 mini-ADR 6): mock by default, real Semaphore when opt-in.
+// A disjoint SemaphoreConfig keeps prod/nonprod credentials apart (guardrail
+// 3); an unknown mode or a malformed template map fails closed.
+func nonProdAdapter(cfg config.Config, log *slog.Logger) (engine.Adapter, error) {
+	switch cfg.EngineNonProd {
+	case "mock":
+		return engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}), nil
+	case "semaphore":
+		templates, err := cfg.SemaphoreTemplateMap()
+		if err != nil {
+			return nil, err
+		}
+		log.Info("non-prod engine: Semaphore",
+			"url", cfg.SemaphoreURL, "project", cfg.SemaphoreProjectID, "templates", templates)
+		return engine.NewSemaphoreAdapter(engine.SemaphoreConfig{
+			BaseURL:      cfg.SemaphoreURL,
+			APIToken:     cfg.SemaphoreAPIToken,
+			ProjectID:    cfg.SemaphoreProjectID,
+			Templates:    templates,
+			PollInterval: cfg.SemaphorePollInterval,
+		}, log), nil
+	default:
+		return nil, fmt.Errorf("PORTAL_ENGINE_NONPROD=%q: want %q or %q", cfg.EngineNonProd, "mock", "semaphore")
+	}
+}
+
 func devGrants(mode string) []string {
 	switch mode {
 	case "fake":

@@ -45,6 +45,43 @@ type Config struct {
 	BreakglassHash   string        `env:"PORTAL_BREAKGLASS_HASH"`
 	SessionTTL       time.Duration `env:"PORTAL_SESSION_TTL"        envDefault:"12h"`
 	CookieSecure     bool          `env:"PORTAL_COOKIE_SECURE"      envDefault:"false"`
+
+	// Engine (SPEC-033). EngineNonProd picks the NON-PROD class adapter:
+	// mock (default, forever per ADR-002) | semaphore (opt-in real engine).
+	// Prod stays mock in dev. An unknown value fails at wiring (main), not
+	// here. The Semaphore* fields are a disjoint config object (guardrail 3);
+	// secrets live in .env only (ADR-004). ProjectID scopes the task API
+	// (paths are /api/project/{id}/tasks).
+	EngineNonProd          string        `env:"PORTAL_ENGINE_NONPROD"          envDefault:"mock"`
+	SemaphoreURL           string        `env:"PORTAL_SEMAPHORE_URL"           envDefault:"http://127.0.0.1:3000"`
+	SemaphoreAPIToken      string        `env:"PORTAL_SEMAPHORE_API_TOKEN"`
+	SemaphoreProjectID     int           `env:"PORTAL_SEMAPHORE_PROJECT_ID"    envDefault:"1"`
+	SemaphoreWebhookSecret string        `env:"PORTAL_SEMAPHORE_WEBHOOK_SECRET"`
+	SemaphoreTemplates     string        `env:"PORTAL_SEMAPHORE_TEMPLATES"`
+	SemaphorePollInterval  time.Duration `env:"PORTAL_SEMAPHORE_POLL_INTERVAL" envDefault:"3s"`
+}
+
+// SemaphoreTemplateMap parses PORTAL_SEMAPHORE_TEMPLATES ("tag:id,tag:id")
+// into a playbook-tag → Semaphore-template-id map (SPEC-033 mini-ADR 3). An
+// empty value yields an empty map — fail-closed then happens per-StartJob on
+// an unmapped tag; a malformed entry is an error so a typo fails at boot, not
+// at run time.
+func (c Config) SemaphoreTemplateMap() (map[string]int, error) {
+	out := map[string]int{}
+	for _, part := range strings.Split(c.SemaphoreTemplates, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		tag, idStr, ok := strings.Cut(part, ":")
+		tag = strings.TrimSpace(tag)
+		id, err := strconv.Atoi(strings.TrimSpace(idStr))
+		if !ok || tag == "" || err != nil {
+			return nil, fmt.Errorf("config: bad PORTAL_SEMAPHORE_TEMPLATES entry %q (want tag:id)", part)
+		}
+		out[tag] = id
+	}
+	return out, nil
 }
 
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv

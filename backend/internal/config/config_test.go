@@ -83,3 +83,26 @@ func TestDSN(t *testing.T) {
 	}
 	require.Equal(t, "postgres://portal:p%40ss%2Fword@127.0.0.1:5432/portal", cfg.DSN())
 }
+
+func TestSemaphoreTemplateMap(t *testing.T) {
+	m, err := config.Config{SemaphoreTemplates: "smoke:1, dump:3"}.SemaphoreTemplateMap()
+	require.NoError(t, err)
+	require.Equal(t, map[string]int{"smoke": 1, "dump": 3}, m)
+
+	empty, err := config.Config{}.SemaphoreTemplateMap()
+	require.NoError(t, err)
+	require.Empty(t, empty, "empty value = empty map; fail-closed is per-StartJob on an unmapped tag")
+
+	// A typo must fail at boot (SPEC-033 mini-ADR 3), never silently drop a mapping.
+	for _, bad := range []string{"smoke", "smoke:", ":1", "smoke:notanint"} {
+		_, err := config.Config{SemaphoreTemplates: bad}.SemaphoreTemplateMap()
+		require.Error(t, err, "malformed entry %q must error", bad)
+	}
+}
+
+func TestEngineNonProdDefaultsToMock(t *testing.T) {
+	unsetenv(t, "PORTAL_ENGINE_NONPROD")
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	require.Equal(t, "mock", cfg.EngineNonProd, "the forever-default engine (ADR-002); semaphore is opt-in")
+}
