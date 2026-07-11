@@ -229,11 +229,18 @@ func scriptFor(template string, params map[string]string) []string {
 			"dump : sha256 checksum artifact",
 			"dump : register artifact metadata",
 		}
+	case "verify":
+		// The restore chain's step 1 (SPEC-031): read-only, no artifact.
+		// mock_fail_at stands in for a real checksum mismatch until WU-036.
+		return []string{
+			"preflight : locate artifact",
+			"verify : sha256 checksum artifact",
+		}
 	case "restore":
+		// Restore-only: verify and the safety dump are their own chain steps
+		// now (SPEC-031), not folded into this job.
 		return []string{
 			"preflight : ping " + target,
-			"preflight : verify artifact checksum",
-			"safety : pre-restore dump of target",
 			"restore : run pg_restore",
 			"restore : post-restore sanity queries",
 		}

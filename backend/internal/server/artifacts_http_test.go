@@ -20,6 +20,11 @@ type stubArtifacts struct {
 	list     []runs.RegisteredArtifact
 	err      error
 	instance *string
+
+	// GetArtifact side (the restore assembler's source lookup, SPEC-031).
+	one    runs.RegisteredArtifact
+	getErr error
+	gotID  *int64
 }
 
 func (s stubArtifacts) ListArtifacts(_ context.Context, instance string) ([]runs.RegisteredArtifact, error) {
@@ -27,6 +32,13 @@ func (s stubArtifacts) ListArtifacts(_ context.Context, instance string) ([]runs
 		*s.instance = instance
 	}
 	return s.list, s.err
+}
+
+func (s stubArtifacts) GetArtifact(_ context.Context, id int64) (runs.RegisteredArtifact, error) {
+	if s.gotID != nil {
+		*s.gotID = id
+	}
+	return s.one, s.getErr
 }
 
 func artifactsServer(t *testing.T, ar server.ArtifactReader) *httptest.Server {

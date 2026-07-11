@@ -23,6 +23,7 @@ type stubChains struct {
 		id    int64
 		actor string
 	}
+	created *chain.CreateRequest // captures the assembler's ask (SPEC-031)
 }
 
 func (s stubChains) ForRun(_ context.Context, runID int64) (chain.Chain, error) {
@@ -35,6 +36,13 @@ func (s stubChains) ForRun(_ context.Context, runID int64) (chain.Chain, error) 
 func (s stubChains) Resume(_ context.Context, id int64, actor string) (chain.Chain, error) {
 	if s.resumed != nil {
 		s.resumed.id, s.resumed.actor = id, actor
+	}
+	return s.chain, s.err
+}
+
+func (s stubChains) Create(_ context.Context, req chain.CreateRequest) (chain.Chain, error) {
+	if s.created != nil {
+		*s.created = req
 	}
 	return s.chain, s.err
 }

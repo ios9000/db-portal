@@ -12,13 +12,15 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/chain"
 )
 
-// ChainService is what the chain endpoints need from internal/chain;
-// satisfied by *chain.Service, stubbed in tests. Chains have no client-
-// facing create — they are portal-assembled (SPEC-032; 031's restore POST
-// is the first assembler).
+// ChainService is what the chain + restore endpoints need from
+// internal/chain; satisfied by *chain.Service, stubbed in tests. Chains have
+// no generic client-facing create — they are portal-assembled (SPEC-032);
+// Create is reached only through the restore assembler (SPEC-031), the first
+// and only assembler in the MVP.
 type ChainService interface {
 	ForRun(ctx context.Context, runID int64) (chain.Chain, error)
 	Resume(ctx context.Context, id int64, actor string) (chain.Chain, error)
+	Create(ctx context.Context, req chain.CreateRequest) (chain.Chain, error)
 }
 
 // getRunChain answers GET /api/runs/{id}/chain (session-gated read): the

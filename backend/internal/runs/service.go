@@ -97,12 +97,16 @@ func (s *Service) Wait() { s.wg.Wait() }
 // `schedule:<owner>` through the same door. Confirm is the server side of
 // the prod ritual; non-prod ignores it. EngineParams is for tests and
 // future parameterized ops; the API passes nil (MVP accepts no client params).
+// Internal permits a non-launchable operation (a chain step — verify /
+// safety_dump / restore, SPEC-031 mini-ADR 3); ONLY the chain driver sets it,
+// so a bare restore over POST /api/runs or the scheduler is refused at the door.
 type StartRequest struct {
 	Actor        string
 	Instance     string
 	Operation    string
 	Reason       string
 	Confirm      string
+	Internal     bool
 	EngineParams map[string]string
 }
 
@@ -113,6 +117,13 @@ type StartRequest struct {
 func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 	op, ok := catalog.ByID(req.Operation)
 	if !ok {
+		return Run{}, fmt.Errorf("%w: %q", ErrUnknownOperation, req.Operation)
+	}
+	// The launchable gate (SPEC-031 mini-ADR 3): internal chain-step
+	// operations reach Start only through the chain driver (Internal set).
+	// A bare restore/verify/safety_dump over the button or scheduler looks
+	// like an unknown operation — the single choke point for AC-4.
+	if !op.Launchable && !req.Internal {
 		return Run{}, fmt.Errorf("%w: %q", ErrUnknownOperation, req.Operation)
 	}
 
@@ -327,12 +338,24 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 	// Register the artifact (SPEC-030): same tx as the guarded run UPDATE,
 	// so the registry row and the run's artifact_* columns cannot diverge
 	// and a losing finalizer (0 rows above) never reaches this INSERT.
-	// UNIQUE (run_id) backstops exactly-once at the schema layer.
+	// UNIQUE (run_id) backstops exactly-once at the schema layer. The
+	// retention class rides the run's operation (SPEC-031 mini-ADR 2): a
+	// safety_dump stamps 'safety', a plain dump 'standard' — read from the
+	// catalog, defaulting to 'standard' for any operation that omits it.
 	if state == string(engine.StateSuccess) && artifact != nil {
+		var operation string
+		if err := tx.QueryRow(ctx,
+			`SELECT operation FROM run WHERE id = $1`, runID).Scan(&operation); err != nil {
+			return fmt.Errorf("runs: read run operation: %w", err)
+		}
+		class := "standard"
+		if op, ok := catalog.ByID(operation); ok && op.RetentionClass != "" {
+			class = op.RetentionClass
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO artifact (run_id, name, size_bytes, checksum)
-			VALUES ($1, $2, $3, $4)`,
-			runID, artifact.Name, artifact.SizeBytes, artifact.Checksum); err != nil {
+			INSERT INTO artifact (run_id, name, size_bytes, checksum, retention_class)
+			VALUES ($1, $2, $3, $4, $5)`,
+			runID, artifact.Name, artifact.SizeBytes, artifact.Checksum, class); err != nil {
 			return fmt.Errorf("runs: register artifact: %w", err)
 		}
 	}

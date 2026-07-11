@@ -70,6 +70,7 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 				r.Patch("/schedules/{id}", patchSchedule(log, d.Schedules))
 				r.Delete("/schedules/{id}", deleteSchedule(log, d.Schedules))
 				r.Post("/chains/{id}/resume", resumeChain(log, d.Chains))
+				r.Post("/restore", startRestore(log, d.Artifacts, d.Chains))
 			})
 		})
 	})

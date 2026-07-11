@@ -5,33 +5,39 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-032 done 2026-07-11 (s16, e465bab core +
-  b10b960 UI)**; next WU is **WU-031 (restore workflow on MockEngine, M)**
-  in a fresh session. Execution order 030 → 032 → 031 → 033 → 034 → 035
-  → 036 (restore rides the chain engine, which now exists).
-- **Status (s16, WU-032):** chain engine live. SPEC-032 = docs/specs/chains.md
-  (7 mini-ADRs: actor `chain:<mover>` where mover = creator, then RESUMER;
-  chain_step.run_id FK → run, NULL until fired, UNIQUE, re-pointed on resume
-  — superseded runs keep run+audit rows but leave the strip; resume after
-  cancel = resume after failure, stored creation-time confirm replays
-  verbatim, NO fresh ritual; step status DERIVED from linked run, no
-  mirrored column; ONE mail per halt = the chain's, run mail suppressed by
-  StepRunFilter keyed on the `chain:` prefix — race-free, stamped at
-  submit; one async driver for create+resume; chain states
-  running|halted|success, NO terminal failure, all transitions guarded).
-  Migration 0010 (chain + chain_step). internal/chain: Service
-  (Create/Resume/Get/ForRun/SweepOrphans, guarded flips = single-flight)
-  + driver (fire → watch → advance/halt; fire-time errors halt visibly,
-  scheduler posture). Boot sweep runs AFTER runs.SweepOrphans in main.
-  notify.Mailer.ChainHalted (D7 content; links newest step run).
-  HTTP: GET /api/runs/{id}/chain (session; 404 = not a step),
-  POST /api/chains/{id}/resume (dba; 409 not halted). Golden flow Beat 9 =
-  the ROADMAP drill at the HTTP seam. RunDetail chain strip (Sonnet slice
-  b10b960): steps + sibling links + counter, polls while running,
-  superseded note on later 404, Resume on halted. testutil.FakeSMTP now
-  serves multiple sessions (was: exactly one — second mails vanished).
-  Live-verified s16: boot sweep halted a crash-shape chain (count=1),
-  halt mail in mailpit, HTTP resume drove run 24 to success as chain:dba1.
+- **Active:** PHASE 3 (M3) — **WU-031 (restore workflow on MockEngine, M) IN
+  PROGRESS**: backend landed + gate-green this session (s17); the **UI slice
+  (Restore drawer) is the remaining half** and the next action. Execution
+  order 030 → 032 → 031 → 033 → 034 → 035 → 036.
+- **Status (s17, WU-031 backend):** restore backend complete, gate green both
+  stacks. (Recovered an interrupted twin session's uncommitted backend after
+  an ssh reset — verified-don't-redo: the on-disk code compiled and matched
+  SPEC-031, so this session wrote the entire missing test layer + golden-flow
+  beat rather than restarting. See JOURNAL s17.) SPEC-031 =
+  docs/specs/restore.md (5 mini-ADRs): (1) **verify is its OWN chain step** —
+  a bad artifact halts BEFORE the safety dump, target untouched; (2) retention
+  class rides the catalog op, `finalize` stamps it — NO schema change (0009
+  already carries retention_class); (3) verify/safety_dump/restore are
+  INTERNAL (non-launchable) ops behind a SINGLE `StartRequest.Internal` choke
+  point in `runs.Start` — the chain driver is the only caller that sets it, so
+  a bare restore over POST /api/runs or the scheduler = 400 unknown op; (4)
+  restore is a client POST assembling a chain via a PURE recipe (`no skip
+  affordance` is structural, not a runtime check); (5) explicit target,
+  default non-prod, prod = typed-name ritual enforced once in `chain.Create`.
+  internal/restore.Steps = fixed `[verify, safety_dump, restore]` with
+  artifact lineage (id+checksum+name) on verify+restore only. catalog gains
+  `Launchable`+`RetentionClass` (All()=launchable only, ByID=all). runs.Start
+  launchable gate; finalize stamps retention_class from the catalog
+  ('safety' for safety_dump, else 'standard'). runs.GetArtifact +
+  ErrArtifactNotFound. chain driver sets Internal:true on every step. mock
+  gains `verify`; its restore script trimmed to restore-only (safety dump is
+  its own step now). POST /api/restore (dba, body+reason capped) → 201 chain
+  read model; 400 missing/prod-unconfirmed, 404 unknown artifact/instance.
+  Golden flow **Beat 10** = restore end to end: happy path (3 steps success,
+  ONE 'safety' artifact on the target, restore-step lineage tied,
+  last_backup_at ignores the safety dump) THEN injected verify-fail halts at
+  step 1 with ZERO safety_dump/restore runs on the target, one chain mail,
+  API resume → success.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -40,21 +46,22 @@
 
 ## Next action (be exact)
 
-1. **Start WU-031 in a fresh session** (restore workflow on MockEngine, M).
-   Ritual: read its BACKLOG entry + ONLY its context brief; write SPEC-031
-   with the named mini-ADR (verify as its own chain step vs engine-side
-   re-check — pre-O-1 MockEngine "verifies" with injectable failure).
-   Assembles the kind=restore chain via 032's chain.Service: (1) checksum
-   verify, (2) UNCONDITIONAL safety dump of the TARGET registering with
-   retention_class 'safety' (Start→finalize plumbing for 'safety' decided
-   here — SPEC-030 deferred it), (3) restore. Catalog gains `restore`;
-   POST endpoint is the first chain assembler. Prod target = typed-name
-   ritual (TARGET's name, stored on the chain — 032 provides). Verify-fail
-   halts BEFORE the safety dump: zero runs on the target. NO skip
-   affordance for the safety dump anywhere (the motivating incident).
-   Golden flow gains a restore beat. UI slice (Restore drawer from
-   instance context: pick artifact via 030 API, pick target, banner +
-   ritual) = Sonnet-brief candidate, checkpoint boundary before it.
+1. **WU-031 UI slice — Restore drawer** (the remaining half; the pre-UI
+   checkpoint boundary is already crossed — backend committed). Sonnet-brief
+   candidate (delegation model). Reached from an instance's context
+   (MyDatabases card / instance detail): pick a source artifact
+   (`GET /api/artifacts?instance=` — origin registry, newest first, with
+   checksum + size + class), pick an explicit TARGET (default a non-prod
+   instance), EnvBanner for the TARGET's env + the typed-name prod ritual
+   (reuse EnvBanner + the LaunchDrawer confirm pattern), a primary button that
+   NAMES the consequence, submit → `POST /api/restore` → the chain view
+   (RunDetail's chain strip already renders steps + Resume). The safety dump
+   shows as an unconditional, NON-optional step in the drawer preview — NEVER
+   a checkbox. `api.ts` gains `fetchArtifacts(instance)` +
+   `startRestore({artifactId, target, confirm, reason})`. vitest: artifact
+   pick, default-target rules, ritual. Then CLOSE WU-031 (all AC + Verify
+   commands pass — incl. the grep half of AC-4), mark done in BACKLOG,
+   journal, point STATE at WU-033.
 2. After WU-031: WU-033 (SemaphoreAdapter, M — compose service, webhook +
    poll fallback; ritual/authz seams stay architect-side).
 3. Housekeeping note (carried): demo-m1.md header still says "live-verified
@@ -199,6 +206,19 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-11 — WU-031 backend done + gate-green (s17, CHECKPOINT — WU still in
+  progress): restore workflow on MockEngine. internal/restore recipe, catalog
+  Launchable/RetentionClass, runs.Start Internal launchable gate, finalize
+  retention stamping, GetArtifact, chain driver Internal, mock `verify` op +
+  trimmed restore script, POST /api/restore assembler, golden-flow Beat 10
+  (happy + verify-fail halt/resume). RECOVERY session: an interrupted twin
+  (ssh reset) had written the backend prod code + SPEC-031 uncommitted and
+  never checkpointed (STATE.md still said "start fresh"). Reaped the idle twin
+  (user-authorized), verified the on-disk code compiled + matched SPEC, then
+  wrote the ENTIRE missing test layer (recipe, handler, launchable gate,
+  retention, GetArtifact, catalog, Beat 10), fixed a stale engine mock_test
+  assertion, `npm run check` green both stacks. Remaining: WU-031 UI slice.
+  Active → WU-031 (UI).
 - 2026-07-11 — WU-032 done (s16, e465bab + b10b960): chain engine —
   SPEC-032 (7 mini-ADRs), migration 0010, chain Service+driver+boot sweep,
   StepRunFilter halt-mail exactly-once, resume API, golden flow Beat 9,
@@ -214,7 +234,3 @@
   guarded terminal tx, GET /api/artifacts?instance=, golden flow asserts
   both launch paths. Architect-implemented; gate green both stacks.
   Active → WU-032 (chain engine).
-- 2026-07-11 — Phase 3 groomed (s14, docs-only): WU-030…036 full BACKLOG
-  entries; execution order 030→032→031→033→034→035→036; WU-036 (restore
-  playbook + demo-m3.md rehearsal) added — exit criterion had no covering
-  WU; ROADMAP range updated; 9 icebox items filed. Active → WU-030.

@@ -19,6 +19,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
+	"github.com/ios9000/db-portal/backend/internal/restore"
 	"github.com/ios9000/db-portal/backend/internal/runs"
 	"github.com/ios9000/db-portal/backend/internal/schedule"
 	"github.com/ios9000/db-portal/backend/internal/server"
@@ -340,6 +342,143 @@ func TestGoldenFlow(t *testing.T) {
 	}
 	require.Len(t, listRuns(t, c, "?requested_by=chain:dba1"), 4,
 		"three steps + the superseded attempt, all visible as runs")
+
+	// Beat 10 — restore (SPEC-031, D4's second catalog operation): the first
+	// production chain assembler. POST /api/restore of a registered artifact
+	// onto an explicit target assembles the fixed verify → safety_dump →
+	// restore chain (the safety dump unconditional — the incident D1 kills),
+	// drives it to success over MockEngine, and ties the artifact lineage
+	// through. A non-prod target stays one click (D2). Then the incident
+	// itself: an injected verify failure halts BEFORE the safety dump, so the
+	// target is never touched — resumable after the "fix".
+	src := listArtifacts(t, c, "billing-test")[0] // newest registered dump
+	restoreResp, err := c.post("/api/restore", fmt.Sprintf(
+		`{"artifact_id": %d, "target": "crm-test", "reason": "golden restore"}`, src.ID))
+	require.NoError(t, err)
+	var restoreChain chain.Chain
+	require.NoError(t, json.NewDecoder(restoreResp.Body).Decode(&restoreChain))
+	require.NoError(t, restoreResp.Body.Close())
+	require.Equal(t, http.StatusCreated, restoreResp.StatusCode, "non-prod restore is one click")
+	require.Equal(t, restore.Kind, restoreChain.Kind)
+	require.Equal(t, "crm-test", restoreChain.Instance)
+
+	var restored chain.Chain
+	require.Eventually(t, func() bool {
+		restored, err = chainSvc.Get(ctx, restoreChain.ID)
+		require.NoError(t, err)
+		return restored.State == "success"
+	}, 10*time.Second, 5*time.Millisecond, "the restore chain must finish")
+
+	require.Len(t, restored.Steps, 3)
+	require.Equal(t, "verify", restored.Steps[0].Operation)
+	require.Equal(t, "safety_dump", restored.Steps[1].Operation)
+	require.Equal(t, "restore", restored.Steps[2].Operation)
+	for _, st := range restored.Steps {
+		require.Equal(t, "success", st.Status)
+		requireAudit(t, ctx, pool, *st.RunID, "chain:dba1", "test", "success")
+	}
+
+	// The safety dump registered exactly ONE artifact for the target, class
+	// 'safety' (mini-ADR 2) — while verify and restore registered nothing.
+	crmArts := listArtifacts(t, c, "crm-test")
+	require.Len(t, crmArts, 1, "only the safety dump registers on the target")
+	require.Equal(t, "safety", crmArts[0].RetentionClass)
+	require.Equal(t, *restored.Steps[1].RunID, crmArts[0].RunID, "the safety_dump step's run owns it")
+
+	// The restore step's params reference the source artifact id + checksum —
+	// lineage tied, no secrets (SPEC-032).
+	var restoreParams []byte
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT params FROM chain_step WHERE chain_id = $1 AND operation = 'restore'`,
+		restoreChain.ID).Scan(&restoreParams))
+	var lineage map[string]string
+	require.NoError(t, json.Unmarshal(restoreParams, &lineage))
+	require.Equal(t, strconv.FormatInt(src.ID, 10), lineage["artifact_id"])
+	require.Equal(t, src.Checksum, lineage["checksum"])
+
+	// A safety dump is NOT the target's backup: last_backup_at (dump only)
+	// still ignores it (mini-ADR 2 consequence, behavior 6).
+	var lastBackup *time.Time
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT (SELECT max(r.finished_at) FROM run r
+		        WHERE r.instance_id = i.id AND r.operation = 'dump' AND r.state = 'success')
+		FROM instance i WHERE i.name = 'crm-test'`).Scan(&lastBackup))
+	require.Nil(t, lastBackup, "the safety dump must not count as crm-test's backup")
+
+	// The incident, institutionalized: a bad artifact fails verify (step 1),
+	// which halts the chain BEFORE the safety dump or restore run — the target
+	// is never dumped or restored. mock_fail_at stands in for the checksum
+	// mismatch until WU-036 verifies real bytes.
+	badSteps := restore.Steps(src.ID, src.Checksum, src.Name)
+	badSteps[0].Params["mock_fail_at"] = "1" // verify step fails
+	badChain, err := chainSvc.Create(ctx, chain.CreateRequest{
+		Kind: restore.Kind, Instance: "hr-test", Actor: "dba1", Reason: "bad restore",
+		Steps: badSteps,
+	})
+	require.NoError(t, err)
+
+	var haltedRestore chain.Chain
+	require.Eventually(t, func() bool {
+		haltedRestore, err = chainSvc.Get(ctx, badChain.ID)
+		require.NoError(t, err)
+		return haltedRestore.State == "halted"
+	}, 10*time.Second, 5*time.Millisecond, "the failed verify must halt the chain")
+	chainSvc.Wait() // halt-mail goroutine settles
+
+	require.Equal(t, "failed", haltedRestore.Steps[0].Status, "verify failed")
+	require.Equal(t, "pending", haltedRestore.Steps[1].Status, "the safety dump never fired")
+	require.Equal(t, "pending", haltedRestore.Steps[2].Status, "the restore never fired")
+	require.Nil(t, haltedRestore.Steps[1].RunID, "no safety_dump run exists")
+	require.Nil(t, haltedRestore.Steps[2].RunID, "no restore run exists")
+
+	// Zero runs on the target for the target-mutating steps — the whole point.
+	var targetRuns int
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT count(*) FROM run r JOIN instance i ON i.id = r.instance_id
+		WHERE i.name = 'hr-test' AND r.operation IN ('safety_dump', 'restore')`).Scan(&targetRuns))
+	require.Zero(t, targetRuns, "verify-fail leaves the target untouched: no safety_dump, no restore")
+
+	// Exactly one halt mail — the chain's (the failed verify's run mail is
+	// suppressed by the StepRunFilter).
+	select {
+	case msg = <-mail:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no restore halt mail arrived")
+	}
+	require.Contains(t, msg.Data,
+		fmt.Sprintf("Subject: [db-portal] CHAIN-%d halted — restore on hr-test (test)", badChain.ID))
+	select {
+	case extra := <-mail:
+		t.Fatalf("restore halt must mail exactly once, got a second: %.120s", extra.Data)
+	default:
+	}
+
+	// The operator fixes the artifact (drop the injected mismatch) and resumes
+	// over the API: verify re-fires and passes, and the chain completes — the
+	// safety dump and restore now run.
+	_, err = pool.Exec(ctx,
+		`UPDATE chain_step SET params = params - 'mock_fail_at' WHERE chain_id = $1 AND seq = 1`, badChain.ID)
+	require.NoError(t, err)
+	fixedResp, err := c.post(fmt.Sprintf("/api/chains/%d/resume", badChain.ID), "")
+	require.NoError(t, err)
+	require.NoError(t, fixedResp.Body.Close())
+	require.Equal(t, http.StatusOK, fixedResp.StatusCode)
+
+	var fixed chain.Chain
+	require.Eventually(t, func() bool {
+		fixed, err = chainSvc.Get(ctx, badChain.ID)
+		require.NoError(t, err)
+		return fixed.State == "success"
+	}, 10*time.Second, 5*time.Millisecond, "the resumed restore must finish")
+	for _, st := range fixed.Steps {
+		require.Equal(t, "success", st.Status)
+	}
+	// Only after the fix does the target get its safety dump — registered on
+	// the safety_dump step's own run, class 'safety'.
+	var safetyClass string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT retention_class FROM artifact WHERE run_id = $1`, *fixed.Steps[1].RunID).Scan(&safetyClass))
+	require.Equal(t, "safety", safetyClass)
 }
 
 // apiClient is the authenticated client every HTTP beat runs through: a

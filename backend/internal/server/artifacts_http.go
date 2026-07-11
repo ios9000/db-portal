@@ -9,10 +9,11 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/runs"
 )
 
-// ArtifactReader is what the artifact endpoint needs from the registry;
-// satisfied by *runs.Service, stubbed in handler tests.
+// ArtifactReader is what the artifact + restore endpoints need from the
+// registry; satisfied by *runs.Service, stubbed in handler tests.
 type ArtifactReader interface {
 	ListArtifacts(ctx context.Context, instance string) ([]runs.RegisteredArtifact, error)
+	GetArtifact(ctx context.Context, id int64) (runs.RegisteredArtifact, error)
 }
 
 // listArtifacts answers GET /api/artifacts?instance=<name> (SPEC-030).

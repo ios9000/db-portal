@@ -74,11 +74,15 @@ func (s *Service) drive(chainID int64, mover string) {
 				reasonStr = *reason
 			}
 			run, err := s.runs.Start(ctx, runs.StartRequest{
-				Actor:        "chain:" + mover,
-				Instance:     instance,
-				Operation:    step.operation,
-				Reason:       reasonStr,
-				Confirm:      confirm,
+				Actor:     "chain:" + mover,
+				Instance:  instance,
+				Operation: step.operation,
+				Reason:    reasonStr,
+				Confirm:   confirm,
+				// Chain steps may be internal operations (restore's verify /
+				// safety_dump / restore, SPEC-031 mini-ADR 3); the driver is
+				// the one caller allowed to fire them.
+				Internal:     true,
 				EngineParams: step.params,
 			})
 			if run.ID != 0 {

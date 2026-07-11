@@ -9,6 +9,30 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrArtifactNotFound is returned by GetArtifact for an unknown artifact id —
+// the restore assembler's "no such artifact" (SPEC-031 mini-ADR 4).
+var ErrArtifactNotFound = errors.New("runs: artifact not found")
+
+const artifactColumns = `
+	SELECT a.id, a.run_id, a.name, a.size_bytes, a.checksum, a.retention_class, a.created_at
+	FROM artifact a`
+
+// GetArtifact returns one registry row by id, or ErrArtifactNotFound. The
+// restore assembler (SPEC-031) reads the source artifact here to pin its
+// checksum + name into the chain's verify and restore step params.
+func (s *Service) GetArtifact(ctx context.Context, id int64) (RegisteredArtifact, error) {
+	var a RegisteredArtifact
+	err := s.pool.QueryRow(ctx, artifactColumns+` WHERE a.id = $1`, id).
+		Scan(&a.ID, &a.RunID, &a.Name, &a.SizeBytes, &a.Checksum, &a.RetentionClass, &a.CreatedAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return RegisteredArtifact{}, fmt.Errorf("%w: %d", ErrArtifactNotFound, id)
+	case err != nil:
+		return RegisteredArtifact{}, fmt.Errorf("runs: get artifact: %w", err)
+	}
+	return a, nil
+}
+
 // RegisteredArtifact is the API read model of one artifact-registry row
 // (SPEC-030) — what can be restored, keyed to its origin run. Distinct from
 // Artifact, the run read model's "what this run produced" sub-object.

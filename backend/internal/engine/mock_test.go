@@ -188,7 +188,9 @@ func TestStreamReplayAfterFinish(t *testing.T) {
 	require.NoError(t, err)
 	replay := drain(t, replayCh)
 	require.Equal(t, live, replay)
-	require.Contains(t, strings.Join(replay, "\n"), "pre-restore dump")
+	// The safety dump is its own chain step now (SPEC-031); the restore job
+	// itself is restore-only.
+	require.Contains(t, strings.Join(replay, "\n"), "run pg_restore")
 }
 
 func TestStreamStopsWhenContextCancelled(t *testing.T) {
