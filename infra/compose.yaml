@@ -51,8 +51,16 @@ services:
   # SEMAPHORE_ADMIN/_PASSWORD/_NAME/_EMAIL: only consumed on the very first
   # boot (when config.json doesn't exist yet) to create the admin user in
   # BoltDB; a fresh admin is not re-created on restart.
+  # WU-034 (SPEC-034 mini-ADR 2): build a runner image with postgresql-client
+  # baked in (the non-root runner cannot apk-add at playbook time). BoltDB
+  # state (project, templates, API token) lives in the named volumes below and
+  # survives the image swap + container recreate. `image:` gives the built
+  # image a stable local tag.
   semaphore:
-    image: semaphoreui/semaphore:v2.17.39
+    build:
+      context: .
+      dockerfile: semaphore.Dockerfile
+    image: dbportal-semaphore:v2.17.39-pg16
     environment:
       SEMAPHORE_DB_DIALECT: bolt
       SEMAPHORE_ADMIN: ${SEMAPHORE_ADMIN:-admin}
@@ -66,13 +74,39 @@ services:
       - semaphore_data:/var/lib/semaphore     # BoltDB (tasks, projects, users, …)
       - semaphore_config:/etc/semaphore       # config.json (holds the REAL, generated encryption keys)
       - ../playbooks:/playbooks               # local "repository" for Semaphore — see infra/semaphore-bootstrap.sh
+      - artifacts:/artifacts                  # WU-034: dump output volume (staging; WU-035 moves bytes to minio)
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/ping"]
       interval: 5s
       timeout: 3s
       retries: 20
 
+  # WU-034 (SPEC-034): a real Postgres for the dump playbook to back up.
+  # Reachable by the Semaphore runner on the compose network as pgtarget:5432
+  # (creds are injected engine-side into the Semaphore "pgtarget-env"
+  # Environment by infra/semaphore-bootstrap.sh — ADR-004; the portal never
+  # sees them). Seeded once on the fresh pgtargetdata volume via the init
+  # script. Host port 5433 (5432 is the portal DB) for drill-side inspection.
+  pgtarget:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${PGTARGET_DB_USER:-appuser}
+      POSTGRES_PASSWORD: ${PGTARGET_DB_PASSWORD:-change-me-dev-only}
+      POSTGRES_DB: ${PGTARGET_DB_NAME:-appdb}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgtargetdata:/var/lib/postgresql/data
+      - ./fixtures/pgtarget-init.sql:/docker-entrypoint-initdb.d/10-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGTARGET_DB_USER:-appuser} -d ${PGTARGET_DB_NAME:-appdb}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   pgdata:
   semaphore_data:
   semaphore_config:
+  artifacts:
+  pgtargetdata:

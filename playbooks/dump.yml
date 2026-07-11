@@ -1,0 +1,81 @@
+---
+# WU-034 (SPEC-034): the first REAL operation — pg_dump -Fc of a Postgres
+# target, executed by the Semaphore runner (hosts: localhost, connection:
+# local), producing a restorable artifact on the shared /artifacts volume.
+#
+# CREDENTIALS (ADR-004): this playbook names NO credential. The target
+# connection comes entirely from libpq environment variables (PGHOST/PGPORT/
+# PGUSER/PGPASSWORD/PGDATABASE) that the Semaphore "pgtarget-env" Environment
+# injects into the process — pg_dump reads them automatically. Nothing secret
+# is referenced here, so nothing secret can leak into task output.
+#
+# RESULT CONTRACT (SPEC-034 mini-ADR 4): the last task emits exactly one line
+#   DBPORTAL_RESULT=<base64 of {"name","size_bytes","sha256","location"}>
+# which the SemaphoreAdapter parses into engine.Artifact. base64 survives
+# Ansible's debug-callback quote-escaping intact.
+
+- name: db-portal dump
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    artifact_dir: /artifacts
+
+  tasks:
+    # Fail honestly (not cryptically inside pg_dump) if the Environment that
+    # carries the connection wasn't wired. PGHOST/PGDATABASE are not secrets.
+    - name: preflight — target connection is configured
+      ansible.builtin.assert:
+        that:
+          - "lookup('env', 'PGHOST') | length > 0"
+          - "lookup('env', 'PGDATABASE') | length > 0"
+        fail_msg: >-
+          target connection not configured — the Semaphore Environment
+          (PGHOST/PGDATABASE/…) is missing. See infra/semaphore-bootstrap.sh.
+        quiet: true
+
+    # Freeze the artifact name ONCE: now()/random are lazy Jinja — referenced
+    # in `vars:` they re-evaluate on every use, so pg_dump's --file and the
+    # later stat would compute DIFFERENT names. set_fact pins a static string.
+    - name: freeze artifact name
+      ansible.builtin.set_fact:
+        artifact_name: "{{ (lookup('env', 'PGDATABASE') | default('target', true)) }}-{{ now(true, '%Y%m%dT%H%M%SZ') }}-{{ 99999999 | random }}.dump"
+    - name: derive artifact path
+      ansible.builtin.set_fact:
+        artifact_path: "{{ artifact_dir }}/{{ artifact_name }}"
+
+    - name: run pg_dump (custom format, portable)
+      ansible.builtin.command:
+        argv:
+          - pg_dump
+          - --format=custom
+          - --no-owner
+          - --no-privileges
+          - --file={{ artifact_path }}
+      changed_when: true
+
+    - name: stat the dump (size + sha256)
+      ansible.builtin.stat:
+        path: "{{ artifact_path }}"
+        checksum_algorithm: sha256
+      register: dumpstat
+
+    - name: preflight — the dump is non-empty
+      ansible.builtin.assert:
+        that:
+          - dumpstat.stat.exists
+          - dumpstat.stat.size > 0
+        fail_msg: "pg_dump produced no output at {{ artifact_path }}"
+        quiet: true
+
+    - name: emit machine-readable result line
+      ansible.builtin.debug:
+        msg: >-
+          DBPORTAL_RESULT={{
+            {
+              'name': artifact_name,
+              'size_bytes': dumpstat.stat.size,
+              'sha256': dumpstat.stat.checksum,
+              'location': artifact_path
+            } | to_json | b64encode }}

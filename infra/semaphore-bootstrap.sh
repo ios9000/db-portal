@@ -35,6 +35,16 @@ ENVIRONMENT_NAME="empty-env"
 TEMPLATE_NAME="smoke"
 PLAYBOOK_FILE="smoke.yml"
 
+# WU-034 (SPEC-034): the real dump target + template. Connection creds live
+# ONLY here in Semaphore's Environment store (ADR-004) — sourced from .env,
+# never in the repo or the portal DB. PGHOST/PGPORT are fixed compose facts.
+PGTARGET_ENV_NAME="pgtarget-env"
+DUMP_TEMPLATE_NAME="dump"
+DUMP_PLAYBOOK_FILE="dump.yml"
+PGTARGET_DB_NAME="${PGTARGET_DB_NAME:-appdb}"
+PGTARGET_DB_USER="${PGTARGET_DB_USER:-appuser}"
+PGTARGET_DB_PASSWORD="${PGTARGET_DB_PASSWORD:-change-me-dev-only}"
+
 COOKIE_JAR="$(mktemp)"
 trap 'rm -f "$COOKIE_JAR"' EXIT
 
@@ -135,6 +145,37 @@ else
     log "    exists: template id=${TEMPLATE_ID}"
 fi
 
+log "==> Ensuring environment '${PGTARGET_ENV_NAME}' (pgtarget connection, engine-side creds) ..."
+# The PG* libpq vars pg_dump reads. Built with jq so the password is escaped
+# correctly and never expanded into a log line.
+PG_ENV_JSON=$(jq -nc \
+    --arg u "$PGTARGET_DB_USER" --arg pw "$PGTARGET_DB_PASSWORD" --arg db "$PGTARGET_DB_NAME" \
+    '{PGHOST:"pgtarget",PGPORT:"5432",PGUSER:$u,PGPASSWORD:$pw,PGDATABASE:$db}')
+PGTARGET_ENV_ID=$(curl_json GET "/api/project/${PROJECT_ID}/environment" | jq -r --arg n "$PGTARGET_ENV_NAME" '(. // [])[] | select(.name == $n) | .id' | head -n1)
+if [ -z "${PGTARGET_ENV_ID:-}" ]; then
+    ENV_BODY=$(jq -nc --arg n "$PGTARGET_ENV_NAME" --argjson pid "$PROJECT_ID" --arg env "$PG_ENV_JSON" \
+        '{name:$n,project_id:$pid,json:"{}",env:$env}')
+    PGTARGET_ENV_ID=$(curl_json POST "/api/project/${PROJECT_ID}/environment" "$ENV_BODY" | jq -r '.id')
+    log "    created environment id=${PGTARGET_ENV_ID}"
+else
+    # Update in place so a changed .env password re-propagates on re-run
+    # (Semaphore PUT needs the full body incl. id; returns 204, no JSON).
+    ENV_BODY=$(jq -nc --argjson id "$PGTARGET_ENV_ID" --arg n "$PGTARGET_ENV_NAME" --argjson pid "$PROJECT_ID" --arg env "$PG_ENV_JSON" \
+        '{id:$id,name:$n,project_id:$pid,json:"{}",env:$env}')
+    curl_json PUT "/api/project/${PROJECT_ID}/environment/${PGTARGET_ENV_ID}" "$ENV_BODY" >/dev/null
+    log "    exists: environment id=${PGTARGET_ENV_ID} (refreshed creds)"
+fi
+
+log "==> Ensuring template '${DUMP_TEMPLATE_NAME}' -> ${DUMP_PLAYBOOK_FILE} ..."
+DUMP_TEMPLATE_ID=$(curl_json GET "/api/project/${PROJECT_ID}/templates" | jq -r --arg n "$DUMP_TEMPLATE_NAME" '(. // [])[] | select(.name == $n) | .id' | head -n1)
+if [ -z "${DUMP_TEMPLATE_ID:-}" ]; then
+    DUMP_TEMPLATE_ID=$(curl_json POST "/api/project/${PROJECT_ID}/templates" \
+        "{\"name\":\"${DUMP_TEMPLATE_NAME}\",\"project_id\":${PROJECT_ID},\"inventory_id\":${INVENTORY_ID},\"repository_id\":${REPO_ID},\"environment_id\":${PGTARGET_ENV_ID},\"playbook\":\"${DUMP_PLAYBOOK_FILE}\",\"app\":\"ansible\"}" | jq -r '.id')
+    log "    created template id=${DUMP_TEMPLATE_ID}"
+else
+    log "    exists: template id=${DUMP_TEMPLATE_ID}"
+fi
+
 log "==> Creating an API token for the portal ..."
 # NOTE: not skip-if-exists like the objects above. GET /api/user/tokens only
 # ever returns a TRUNCATED id (Semaphore masks it, like a GitHub PAT list) —
@@ -150,6 +191,8 @@ log "=================================================================="
 log "Bootstrap complete."
 log "  Project:     ${PROJECT_NAME} (id ${PROJECT_ID})"
 log "  Template:    ${TEMPLATE_NAME} (id ${TEMPLATE_ID})   <- PORTAL_SEMAPHORE_TEMPLATES=smoke:${TEMPLATE_ID}"
+log "  Template:    ${DUMP_TEMPLATE_NAME} (id ${DUMP_TEMPLATE_ID})   <- add dump:${DUMP_TEMPLATE_ID} to PORTAL_SEMAPHORE_TEMPLATES"
 log "=================================================================="
 printf 'SEMAPHORE_TEMPLATE_ID=%s\n' "$TEMPLATE_ID"
+printf 'SEMAPHORE_DUMP_TEMPLATE_ID=%s\n' "$DUMP_TEMPLATE_ID"
 printf 'PORTAL_SEMAPHORE_API_TOKEN=%s\n' "$API_TOKEN"

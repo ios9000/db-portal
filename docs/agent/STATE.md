@@ -5,11 +5,32 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-034 (Dump playbook — real, M) is NEXT.**
-  **WU-033 (SemaphoreAdapter) DONE s18** — both slices shipped, all AC + Verify
-  met, full-portal live drill passed on the VM (real Semaphore, webhook
-  acceleration proven). WU-031 done s17, WU-032 s16. Execution order
-  030 → 032 → 031 → 033 → **034** → 035 → 036.
+- **Active:** PHASE 3 (M3) — **WU-034 (Dump playbook — real, M): slice (a) DONE
+  (s19, uncommitted→committing), slice (b) NEXT.** SPEC-034 written =
+  `docs/specs/dump-playbook.md`. Execution order 030 → 032 → 031 → 033 →
+  **034** → 035 → 036.
+- **Status (s19, WU-034 slice a):** the real pg_dump path is PROVEN at the
+  Semaphore level (no portal yet). Delivered + live-verified: compose
+  `pgtarget` (postgres:16, seeded widget/ledger/ledger_totals via
+  `infra/fixtures/pgtarget-init.sql`, host 127.0.0.1:5433); a CUSTOM Semaphore
+  runner image (`infra/semaphore.Dockerfile` = v2.17.39 + `postgresql16-client`
+  + writable `/artifacts` owned 1001:0) — compose `semaphore` now `build:`s it,
+  tag `dbportal-semaphore:v2.17.39-pg16`, BoltDB state survived the swap;
+  shared `artifacts` named volume at `/artifacts`; `playbooks/dump.yml`
+  (`pg_dump --format=custom --no-owner --no-privileges`, creds via engine-side
+  libpq env — NO secret in the playbook, ADR-004; emits ONE line
+  `DBPORTAL_RESULT=<base64 json {name,size_bytes,sha256,location}>`, base64 to
+  survive ansible's debug-callback escaping); bootstrap extended with
+  `pgtarget-env` Environment (id 3, creds from `.env`) + `dump` template
+  (**id 3**). Direct Semaphore run → success, result line decodes clean,
+  sha256 == `sha256sum` of the file, `pg_restore --list` OK, password absent
+  from task output + repo. KEY BUG FIXED mid-slice: `now()`/`random` in
+  ansible `vars:` re-evaluate lazily → pg_dump's `--file` and the later `stat`
+  computed different names; `set_fact` freezes the name once.
+  **Deviation from the brief:** pgtarget went in a NEW
+  `infra/fixtures/dev-targets.csv` (env=dev), NOT `instances.csv` — that
+  fixture is pinned to exactly 8 rows by 4 test pkgs + the golden flow
+  (`require.Len(…,8)`); a 9th row reddens the suite. Import is additive.
 - **Status (s18, WU-033 CLOSED):** slice (b) landed the webhook accelerator +
   `runs.ReconcileByJobID` + the fallback/auth tests + the live drill. The SAME
   portal now drives REAL Semaphore for the non-prod class, opt-in via
@@ -32,21 +53,31 @@
 
 ## Next action (be exact)
 
-1. **START WU-034 (Dump playbook — real).** Read its BACKLOG entry + context
-   brief: O-4 (DECISIONS §Open); SPEC-033 (adapter/template contract);
-   infra/compose.yaml (+`pgtarget` postgres:16 seeded via init script + a
-   shared artifact volume); playbooks/smoke.yml (033 scaffold to copy);
-   internal/engine/semaphore.go (the result-parsing seam) + engine.go
-   (`Artifact` gains `Location`); infra/fixtures/instances.csv (+ a `pgtarget`
-   dev row so runs have the FK); ADR-004 (target creds engine-side only).
-   Deliver `playbooks/dump.yml` (`pg_dump -Fc` → artifact volume, sha256+size,
-   ONE machine-readable JSON result line the adapter parses into
-   `engine.Artifact`) + wire the catalog `dump` op's template to a real dump
-   template. Write SPEC-034 just-in-time first (specs/ pattern). Likely split:
-   (a) compose pgtarget + fixture + playbook scaffold (Sonnet-brief candidate);
-   (b) adapter result-line parsing + Artifact.Location + live drill. Then the
-   AC live drill: portal dump on pgtarget → real .dump on the volume, registry
-   row with REAL sha256/size/location, `pg_restore --list` succeeds.
+1. **WU-034 slice (b) — adapter parse + Location + finalize + tests + drill.**
+   Read SPEC-034 (`docs/specs/dump-playbook.md`) mini-ADRs 5+6.
+   - `engine.go`: add `Location string` to `Artifact` (mock leaves it empty —
+     mock.go needs NO change, "" is the zero value).
+   - `internal/engine/semaphore.go`: on `Status` mapping to `StateSuccess`,
+     fetch `/output`, `parseResultLine` = regex `DBPORTAL_RESULT=([A-Za-z0-9+/=]+)`
+     → base64 decode → json → `Artifact{Name,SizeBytes,Checksum,Location}`.
+     No sentinel / bad b64 / bad json → nil Artifact + Warn (run still success).
+     StartJob keeps ignoring params (no extra-vars in WU-034).
+   - `internal/runs/service.go` finalize: the `INSERT INTO artifact` gains
+     `location` = `NULLIF($N,'')` from `artifact.Location`.
+   - Tests (engine-free, gate stays green): stub-HTTP result-line parse cases;
+     a finalize test asserting `artifact.location` set when the (fake) adapter
+     returns Location, NULL for mock. Golden flow unaffected (mock, location NULL).
+   - LIVE DRILL (isolated portal, per [[live-drill-isolation]]): scratch DB +
+     spare port + auth off, `PORTAL_ENGINE_NONPROD=semaphore`
+     `PORTAL_SEMAPHORE_TEMPLATES=dump:3,smoke:1`, token from `.env`. Import
+     `infra/fixtures/dev-targets.csv` (+instances.csv). POST dump on `pgtarget`
+     → success, registry row w/ REAL sha256/size/location, `pg_restore --list`
+     on the volume file OK. Failure path: temporarily point `pgtarget-env` at
+     bad creds (or stop pgtarget) → run failed, NO artifact row, notify mail.
+     grep no-secret. Tear down; leave demo :8080 untouched.
+   - Dev facts: semaphore project 1, dump template **3**, pgtarget-env 3,
+     smoke template 1; pgtarget host-port 5433; `.env` has the token +
+     `PGTARGET_*`. Persistent `.env` STAYS `PORTAL_ENGINE_NONPROD=mock`.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -54,6 +85,17 @@
 ## Blocked / needs user
 
 - Nothing.
+- HEADS-UP (WU-034 slice a, s19): compose now also runs **`pgtarget`**
+  (dbportal-dev-pgtarget-1, postgres:16, 127.0.0.1:5433, seeded appdb) and the
+  `semaphore` service is now the **BUILT** image `dbportal-semaphore:v2.17.39-pg16`
+  (postgresql16-client + `/artifacts`). New named volumes `artifacts`,
+  `pgtargetdata`. To bring the whole dev stack up from a fresh clone:
+  `docker compose -f infra/compose.yaml --env-file .env up -d --build --wait`
+  then `set -a; . ./.env; set +a; sh infra/semaphore-bootstrap.sh` (now also
+  creates `pgtarget-env` + the `dump` template; prints
+  `SEMAPHORE_DUMP_TEMPLATE_ID`). `pgtarget` creds live in `.env` as `PGTARGET_*`
+  (engine-side only, ADR-004). A leftover `.dump` from the slice-(a) proof sits
+  in the `artifacts` volume — harmless.
 - HEADS-UP (Semaphore, WU-033 DONE): the compose `semaphore` service is LEFT
   RUNNING on the VM at 127.0.0.1:3000 (`docker ps` → dbportal-dev-semaphore-1).
   The skip-gated itest depends on it PLUS the API token in gitignored `.env`
@@ -243,6 +285,16 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-11 — WU-034 slice (a) done (s19): the real pg_dump path proven at the
+  Semaphore level. compose `pgtarget` (seeded) + custom runner image
+  (`infra/semaphore.Dockerfile`, postgresql16-client + writable `/artifacts`) +
+  `artifacts` volume; `playbooks/dump.yml` (pg_dump -Fc, engine-side libpq
+  creds, `DBPORTAL_RESULT=<base64 json>` result line); bootstrap `pgtarget-env`
+  + `dump` template (id 3); `dev-targets.csv` (NOT instances.csv — 8-row test
+  coupling); SPEC-034 = docs/specs/dump-playbook.md. Direct Semaphore run →
+  success, result decodes clean, sha256 matches file, `pg_restore --list` OK,
+  no password in output/repo. Next: slice (b) — adapter parse + Artifact.Location
+  + finalize + tests + full-portal live drill. No Go changes yet.
 - 2026-07-11 — WU-033 DONE (s18, slice b): SemaphoreAdapter complete — the
   SAME portal drives REAL Semaphore for nonprod, opt-in, behind the unchanged
   engine.Adapter seam. Slice (b) shipped: `runs.ReconcileByJobID` (find run by
@@ -289,12 +341,3 @@
   GOTCHA: `go build ./...` was green but the TEST TREE was red — the twin added
   interface methods (GetArtifact, Create) without stubbing them; always
   `go test -run NONE ./...` when recovering. See [[twin-session-hazard]].
-- 2026-07-11 — WU-032 done (s16, e465bab + b10b960): chain engine —
-  SPEC-032 (7 mini-ADRs), migration 0010, chain Service+driver+boot sweep,
-  StepRunFilter halt-mail exactly-once, resume API, golden flow Beat 9,
-  RunDetail chain strip (5th Sonnet delegation success). FakeSMTP
-  multi-session fix. Live drill: boot sweep + mailpit mail + HTTP resume
-  → run 24 as chain:dba1. Session recovered mid-WU from an ssh reset —
-  tree survey found the core complete; this session added Beat 9, authz
-  route pins, 0010 walk pins, ChainHalted mail test, UI slice.
-  Active → WU-031 (restore workflow).
