@@ -528,7 +528,7 @@ pages/Schedules.tsx; cmd/portal/main.go (boot warnings).
 > Carry-over lesson (WU-024): anything that fires later on a user's behalf (chains,
 > like schedules) stores creation-time ritual EVIDENCE and fires with it verbatim.
 
-### WU-030 · Artifact registry (metadata-first) — S · `todo`
+### WU-030 · Artifact registry (metadata-first) — S · `done (2026-07-11, commit c7c6b73 — architect-implemented; SPEC-030 = docs/specs/artifacts.md)`
 Dump artifacts become first-class queryable rows — the restore workflow's source
 of truth — instead of three denormalized columns on `run`. Migration 0009:
 `artifact` (id, run_id FK origin, name, size_bytes, checksum, retention_class

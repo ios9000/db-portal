@@ -5,28 +5,23 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **grooming DONE 2026-07-11 (s14)**; next WU is
-  **WU-030 (artifact registry, S)** in a fresh session. M2 was formally
-  closed s13 (gate record docs/agent/reviews/m2-gate.md, fix WUs 024/025
-  done). Phase 3 is fully groomed in BACKLOG.md: WU-030…036 each carry
-  Goal/Deliverables/AC/Verify/Context brief.
-- **Status (s14, grooming):** docs-only session, per ROADMAP "grooming is a
-  deliverable". Key grooming decisions: (1) **execution order is 030 → 032 →
-  031 → 033 → 034 → 035 → 036**, NOT numeric — restore IS the first chain
-  (verify → safety dump → restore = the 3-step chain the M3 exit drills), so
-  the chain engine (032) lands before restore (031) rides it. (2) **WU-036
-  added** (real restore playbook + docs/demo-m3.md rehearsal) — the M3 exit
-  criterion "restore rehearsal on a compose target passes" had no covering
-  WU; ROADMAP updated to WU-030…036. (3) Storage pre-O-1 pinned: registry
-  (migration 0009, WU-030) is metadata-first with a dormant `location`
-  column (the 0003 window_warned pattern); 034 fills it with a compose
-  volume path; 035 moves bytes to minio. (4) WU-024's stored-ritual-evidence
-  lesson ported to chains: chain rows store creation-time confirm, fire
-  verbatim. (5) Safety dump is UNCONDITIONAL in the restore chain — no skip
-  affordance, client or API (the motivating incident). Icebox gained the 8
-  candidates STATE carried (session GC, denial-rate alarm, break-glass mail,
-  role CLI, cron×window hint, window_warned read model, boot-stampede,
-  schedule-change ledger) + artifact-retention enforcement.
+- **Active:** PHASE 3 (M3) — **WU-030 done 2026-07-11 (s15, c7c6b73)**; next WU
+  is **WU-032 (chain engine, M)** in a fresh session — NOT WU-031; execution
+  order is 030 → 032 → 031 → 033 → 034 → 035 → 036 (see the Phase 3 header
+  note in BACKLOG.md: restore IS the first chain, so the chain engine lands
+  before restore rides it).
+- **Status (s15, WU-030):** artifact registry live. SPEC-030 =
+  docs/specs/artifacts.md (5 mini-ADRs: dual write run-cols + registry same
+  tx; retention class stamped at registration, 'standard' only until 031;
+  UNIQUE(run_id) exactly-once backstop; ?instance required + unknown = 404;
+  registry code lives in internal/runs). Migration 0009: `artifact` table
+  (run_id FK origin UNIQUE, name/size/checksum NOT NULL, retention_class
+  CHECK standard|safety, `location` DORMANT until 034/035) + idempotent
+  backfill of historical successful dumps. finalize() inserts the registry
+  row inside the guarded terminal transition. GET /api/artifacts?instance=
+  (session-gated, newest 50, 400 missing param / 404 unknown). Golden flow
+  asserts registration on BOTH launch paths (button beat 3+4, scheduled
+  beat 8). No UI slice (031's drawer feeds from the endpoint).
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -35,14 +30,21 @@
 
 ## Next action (be exact)
 
-1. **Start WU-030 in a fresh session** (artifact registry, S — first WU of
-   Phase 3). Ritual: read its BACKLOG entry + ONLY its context brief; write
-   SPEC-030 (docs/specs/ — use SPEC-TEMPLATE.md) with the mini-ADRs the entry
-   names (dual write run-columns + registry; retention classes); then
-   migration 0009 + finalize() insert + GET /api/artifacts + tests. S-sized,
-   architect-implementable in one session; no UI slice.
-2. After WU-030: WU-032 (chain engine, M) — NOT WU-031; see the Phase 3
-   header note in BACKLOG.md for the order rationale.
+1. **Start WU-032 in a fresh session** (chain engine, M — the mechanism
+   restore rides). Ritual: read its BACKLOG entry + ONLY its context brief;
+   write SPEC-032 (SPEC-TEMPLATE.md) with the named mini-ADRs (step-run
+   actor attribution `chain:<initiator>` vs plain; chain_step.run_id FK
+   direction so `run` stays untouched; resume-after-cancel confirm).
+   Migration 0010 (chain + chain_step, stored creation-time confirm per the
+   WU-024 lesson), chain.Service through runs.Service.Start ONLY, halt+ONE
+   mail, resume re-fires failed step as NEW run, boot sweep after
+   SweepOrphans. Chain engine core = architect-implemented; the RunDetail
+   chain strip UI slice is a Sonnet-brief candidate (checkpoint boundary
+   before it).
+2. After WU-032: WU-031 (restore workflow on MockEngine, M) — assembles the
+   kind=restore chain (verify → UNCONDITIONAL safety dump w/ retention_class
+   'safety' → restore); decides the Start→finalize plumbing for 'safety'
+   (SPEC-030 deferred it there).
 3. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -51,11 +53,12 @@
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of 90aae5a, migrations at 0008)
+  :8080 (binary of 90aae5a, migrations at 0008 — one BEHIND head now; run
+  `portal migrate up` if the demo gets rebuilt on newer code)
   with `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password
   "demo-glass", hash only in the unit env — recover via `systemctl show
   dbportal-demo -p Environment`). Sign in dba1/dba1. Schedules list is
-  empty (live-verify schedules deleted; runs 14–21 remain as verify
+  empty (live-verify schedules deleted; runs 14–22 remain as verify
   history incl. schedule:dba1 rows). Fixture windows restored (only the
   4 prods have windows). Before any live check that runs its own portal:
   `systemctl stop dbportal-demo` — bind-in-use + two-portals-one-DB
@@ -74,6 +77,17 @@
   for multi-agent pipelines (gate reviews). Phase 3 delegation candidates:
   UI slices of 031/032, playbook/compose scaffolds of 033/034; chain engine
   core, SemaphoreAdapter concurrency, ritual/authz seams = architect.
+  (WU-023 + WU-030 were architect-implemented end to end: S-sized, no/thin
+  UI — delegation overhead exceeds the diff.)
+- **Artifact registry (WU-030, SPEC-030 = docs/specs/artifacts.md):**
+  `artifact` table (0009) = what can be restored; run's artifact_* columns =
+  what this run produced — same values, same finalize tx (dual write,
+  mini-ADR 1). Registration rides the WU-016 guarded terminal transition +
+  UNIQUE(run_id); only state='success' with a non-nil engine artifact
+  registers. retention_class 'standard'|'safety' stamped at registration —
+  'safety' writer + Start→finalize plumbing = WU-031. `location` dormant
+  until 034/035. GET /api/artifacts?instance= required-param read,
+  unknown 404, newest 50, `location` not exposed.
 - **Scheduler (WU-022 + WU-024 hardening, SPEC-022 = docs/specs/scheduler.md):**
   internal/schedule.Service = store + executor; tick loop (Tick 10s, Jitter
   60s defaults) fires `enabled AND next_fire_at <= now()` through
@@ -104,7 +118,8 @@
 - **Golden flow (ADR-011):** `backend/e2e/golden_flow_test.go` must stay
   green EVERY session. Beat 0 login; WU-021 beats (ritual 400, actor
   pinned, requested_by); Beat 8 (WU-022): live executor fires a due
-  schedule, schedule:dba1 attribution. WU-031 adds Beat 9 (restore chain).
+  schedule, schedule:dba1 attribution; WU-030 asserts artifact registration
+  w/ origin FK on both dump beats. WU-031 adds Beat 9 (restore chain).
   Human twin = docs/demo-m1.md (beats 1–7 + §8 schedules preview).
 - Guardrails (WU-015, SPEC-015): EnvBanner on RunDetail + LaunchDrawer +
   schedule drawer; prod ritual = typed exact instance name, client AND
@@ -127,7 +142,6 @@
   playbook_tag stamped, job_id on run.finished only. runs.Service = ONLY
   Registry caller; single-finalizer guards incl. watcher mirror (WU-016);
   SweepOrphans best-effort on boot. POST /api/runs: 400/403/404/413/502.
-  Artifact metadata currently = 3 columns on run (registry table = WU-030).
 - Run detail + logs (WU-013, SPEC-013): SSE replay→follow, ONE `end`,
   404/410; logs NOT persisted; cancel 202 async; client retry w/ backoff
   (WU-019).
@@ -136,8 +150,9 @@
   filters ANDed (state/env/operation/instance/requested_by). Activity:
   chips + `by` filter, CSV export (formula neutralization).
 - Test helpers: testutil.MigratedDB(t) scratch DB (skips w/o compose PG);
-  testutil.DB(t) dev DB; testutil.FakeSMTP(t). goose down reverts ONE
-  migration (0006 down caveat: fails if authz.denied rows exist — spec'd).
+  testutil.DB(t) dev DB; testutil.FakeSMTP(t); scratchDSN(t) in db pkg
+  tests (migration walks). goose down reverts ONE migration (0006 down
+  caveat: fails if authz.denied rows exist — spec'd).
 - Single-binary (WU-006): build:release embeds frontend/dist; degraded-mode
   healthz 503 without DB. Dev: Vite :5173 proxies /api → :8080.
 - Engine seam (WU-005): engine.Adapter; Registry.For + ClassForEnv fail
@@ -158,6 +173,12 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-11 — WU-030 done (s15, c7c6b73): artifact registry metadata-first —
+  SPEC-030 (5 mini-ADRs), migration 0009 (artifact table, UNIQUE run_id,
+  dormant location, idempotent backfill), finalize() registers inside the
+  guarded terminal tx, GET /api/artifacts?instance=, golden flow asserts
+  both launch paths. Architect-implemented; gate green both stacks.
+  Active → WU-032 (chain engine).
 - 2026-07-11 — Phase 3 groomed (s14, docs-only): WU-030…036 full BACKLOG
   entries; execution order 030→032→031→033→034→035→036; WU-036 (restore
   playbook + demo-m3.md rehearsal) added — exit criterion had no covering
@@ -167,7 +188,3 @@
   instance-wide overlap, bounded fires) + identity/session honesty
   (username case-fold, honest bootstrap/sign-out, list gating, boot warn).
   M2 FORMALLY CLOSED.
-- 2026-07-10 — WU-023 done (s12, 3de6187+97de1ab): windows warn-only —
-  SPEC-023, internal/window parser + audit stamp (0003's dormant column)
-  + window_state read model + drawer warn line; live-verified Fri-night
-  vs Sat fixture windows. PHASE 2 COMPLETE. Demo portal on 97de1ab.
