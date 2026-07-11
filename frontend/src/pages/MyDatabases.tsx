@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { EnvBadge } from '../components/EnvBadge';
 import { LaunchDrawer } from '../components/LaunchDrawer';
+import { RestoreDrawer } from '../components/RestoreDrawer';
 import {
   ApiError,
   fetchInstances,
@@ -39,6 +40,7 @@ export function MyDatabases() {
   const [error, setError] = useState<string | null>(null);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [launching, setLaunching] = useState<Instance | null>(null);
+  const [restoring, setRestoring] = useState<Instance | null>(null);
 
   // Catalog for the launch buttons/drawer. On failure the buttons simply
   // don't render — browsing the inventory must not depend on the catalog.
@@ -160,13 +162,26 @@ export function MyDatabases() {
 
       {visible.length > 0 &&
         (view === 'cards' ? (
-          <CardGrid instances={visible} dump={dumpOp} onLaunch={setLaunching} />
+          <CardGrid
+            instances={visible}
+            dump={dumpOp}
+            onLaunch={setLaunching}
+            onRestore={setRestoring}
+          />
         ) : (
-          <FleetTable instances={visible} dump={dumpOp} onLaunch={setLaunching} />
+          <FleetTable
+            instances={visible}
+            dump={dumpOp}
+            onLaunch={setLaunching}
+            onRestore={setRestoring}
+          />
         ))}
 
       {launching !== null && dumpOp !== undefined && (
         <LaunchDrawer instance={launching} operation={dumpOp} onClose={() => setLaunching(null)} />
+      )}
+      {restoring !== null && (
+        <RestoreDrawer source={restoring} onClose={() => setRestoring(null)} />
       )}
     </>
   );
@@ -188,9 +203,15 @@ function formatLastBackup(iso: string | null): string {
 interface LaunchProps {
   dump: Operation | undefined;
   onLaunch: (instance: Instance) => void;
+  onRestore: (instance: Instance) => void;
 }
 
-function CardGrid({ instances, dump, onLaunch }: { instances: Instance[] } & LaunchProps) {
+function CardGrid({
+  instances,
+  dump,
+  onLaunch,
+  onRestore,
+}: { instances: Instance[] } & LaunchProps) {
   return (
     <div className="instance-grid">
       {instances.map((i) => (
@@ -205,20 +226,28 @@ function CardGrid({ instances, dump, onLaunch }: { instances: Instance[] } & Lau
             {i.size_gb !== null && <> · {formatSize(i.size_gb)}</>}
           </p>
           <p className="instance-meta">Last backup: {formatLastBackup(i.last_backup_at)}</p>
-          {dump !== undefined && (
-            <div className="card-actions">
+          <div className="card-actions">
+            {dump !== undefined && (
               <button type="button" className="btn-secondary" onClick={() => onLaunch(i)}>
                 <span aria-hidden="true">{dump.icon}</span> {dump.label}
               </button>
-            </div>
-          )}
+            )}
+            <button type="button" className="btn-secondary" onClick={() => onRestore(i)}>
+              Restore
+            </button>
+          </div>
         </article>
       ))}
     </div>
   );
 }
 
-function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & LaunchProps) {
+function FleetTable({
+  instances,
+  dump,
+  onLaunch,
+  onRestore,
+}: { instances: Instance[] } & LaunchProps) {
   return (
     <table className="instance-table">
       <thead>
@@ -234,11 +263,9 @@ function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & L
           <th>Last backup</th>
           <th>Last vacuum</th>
           <th>Bloat %</th>
-          {dump !== undefined && (
-            <th>
-              <span className="visually-hidden">Actions</span>
-            </th>
-          )}
+          <th>
+            <span className="visually-hidden">Actions</span>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -257,8 +284,8 @@ function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & L
             <td>{formatLastBackup(i.last_backup_at)}</td>
             <td>—</td>
             <td>—</td>
-            {dump !== undefined && (
-              <td>
+            <td>
+              {dump !== undefined && (
                 <button
                   type="button"
                   className="btn-secondary btn-small"
@@ -266,8 +293,15 @@ function FleetTable({ instances, dump, onLaunch }: { instances: Instance[] } & L
                 >
                   {dump.label}
                 </button>
-              </td>
-            )}
+              )}{' '}
+              <button
+                type="button"
+                className="btn-secondary btn-small"
+                onClick={() => onRestore(i)}
+              >
+                Restore
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>

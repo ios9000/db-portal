@@ -342,6 +342,50 @@ export async function resumeChain(id: number): Promise<Chain> {
   return postJSON<Chain>(`/api/chains/${id}/resume`, {});
 }
 
+/** One registered artifact row (SPEC-030): the restore drawer's per-instance
+ * source feed. Distinct from RunArtifact, the run read model's own "what
+ * this run produced" sub-object — this one carries the registry id, its
+ * origin run, and the retention class that governs its future pruning. */
+export interface RegisteredArtifact {
+  id: number;
+  run_id: number;
+  name: string;
+  size_bytes: number;
+  checksum: string;
+  retention_class: 'standard' | 'safety';
+  created_at: string;
+}
+
+/** List an instance's registered artifacts, newest first (SPEC-030
+ * mini-ADR 4) — the restore drawer's source-artifact picker. */
+export async function fetchArtifacts(instance: string): Promise<RegisteredArtifact[]> {
+  const body = await getJSON<{ artifacts: RegisteredArtifact[] }>(
+    `/api/artifacts?instance=${encodeURIComponent(instance)}`,
+  );
+  return body.artifacts;
+}
+
+/**
+ * Assemble and start a restore chain (SPEC-031 mini-ADR 4): verify → safety
+ * dump → restore, onto an explicit target. `confirm` carries the prod
+ * typed-name ritual on the TARGET (same idiom as startRun) — the server
+ * ignores it on non-prod, so it's omitted from the body rather than sent
+ * empty. Returns the created chain, so the caller can navigate to its steps.
+ */
+export async function startRestore(args: {
+  artifactId: number;
+  target: string;
+  confirm?: string;
+  reason: string;
+}): Promise<Chain> {
+  return postJSON<Chain>('/api/restore', {
+    artifact_id: args.artifactId,
+    target: args.target,
+    reason: args.reason,
+    ...(args.confirm ? { confirm: args.confirm } : {}),
+  });
+}
+
 /** One `log` event from GET /api/runs/{id}/logs (SSE, WU-013). */
 export interface RunLogLine {
   ts: string;
