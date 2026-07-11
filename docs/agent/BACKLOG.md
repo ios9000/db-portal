@@ -509,19 +509,228 @@ login; failed logout keeps the session UI-visible; `npm run check` green.
 internal/authn/{service,ldap}.go; frontend App.tsx + components/Shell.tsx +
 pages/Schedules.tsx; cmd/portal/main.go (boot warnings).
 
-## Phase 3 — Restore, chains, real engine (M3) — groom at M2 close
+## Phase 3 — Restore, chains, real engine (M3)
 
-- WU-030 · Artifact registry: dump artifacts as first-class rows (checksum, retention class,
-  origin run) — S
-- WU-031 · Restore workflow: explicit target (defaults non-prod), checksum verify,
-  auto pre-restore safety dump, prod ritual; MockEngine first — M
-- WU-032 · Chain engine: sequential steps, halt+notify on failure, persisted chain state,
-  resume-from-failed-step — M
-- WU-033 · SemaphoreAdapter: real Semaphore in compose; task templates pinned to playbook
-  tags; webhook status callback + poll fallback; MockEngine remains the test default — M
-- WU-034 · Dump playbook (real): pg_dump -Fc via engine against a compose "target" Postgres;
-  replica-first logic deferred to a Patroni WU — M
-- WU-035 · O-1 storage: artifact upload to S3-compatible (minio in compose) — S
+> Groomed 2026-07-11 (s14, M2 close). **Execution order is NOT numeric: 030 → 032 →
+> 031 → 033 → 034 → 035 → 036.** Rationale: the restore workflow IS the first chain
+> (verify → safety dump → restore — the same 3 steps the M3 exit criterion drills), so
+> the chain engine (032) lands before restore (031) rides it; building restore ad hoc
+> then re-platforming it one WU later is churn. **WU-036 is NEW at grooming:** the M3
+> exit ("restore rehearsal on a compose target passes") needs a real restore playbook
+> no skeleton WU covered — 034 is dump-only. Specs stay just-in-time (SPEC-030… at WU
+> start). Storage story pre-O-1: mock artifacts are metadata-only forever; 034's real
+> dumps land on a compose volume (location recorded); 035 moves bytes to minio — the
+> registry schema (030) pre-provisions `location` so only semantics change later
+> (the 0003 window_warned pattern). Engine story: MockEngine stays the default for dev
+> and ALL tests (ADR-002); Semaphore is opt-in wiring, live-verified on the VM.
+> Delegation: UI slices + playbook/compose scaffolds are Sonnet-brief material; chain
+> engine core, adapter concurrency, ritual/authz seams stay architect-implemented.
+> Carry-over lesson (WU-024): anything that fires later on a user's behalf (chains,
+> like schedules) stores creation-time ritual EVIDENCE and fires with it verbatim.
+
+### WU-030 · Artifact registry (metadata-first) — S · `todo`
+Dump artifacts become first-class queryable rows — the restore workflow's source
+of truth — instead of three denormalized columns on `run`. Migration 0009:
+`artifact` (id, run_id FK origin, name, size_bytes, checksum, retention_class
+CHECK 'standard'|'safety' default 'standard', created_at, `location text NULL` —
+dormant until 034/035, comment it) + backfill from historical successful runs.
+finalize() inserts the registry row INSIDE the guarded terminal transition (same
+tx as the run UPDATE — rides the WU-016 double-finalize guard, so exactly-once
+is structural). GET /api/artifacts?instance=<name> (session-gated, newest first,
+origin run id in the payload) — 031's drawer feeds from it. Run's own
+artifact_* columns STAY (run read model + last_backup_at untouched); registry =
+what can be restored, run columns = what this run produced — same values,
+written atomically together (mini-ADR the dual write in SPEC-030). No retention
+ENFORCEMENT — class is stored classification only (job is M4/icebox).
+**AC:**
+- [ ] 0009 up+down+up walks clean; backfill registers every historical successful
+      dump exactly once (idempotent across the walk).
+- [ ] Every successful dump (button AND scheduled) registers an artifact row
+      atomically with finalize; failed/canceled/double-finalize paths never do.
+- [ ] GET /api/artifacts?instance= → rows newest-first; unknown instance 404;
+      session required; ?env-style validation consistent with /api/instances.
+**Verify:** -race tests (exactly-once incl. double-finalize path; backfill walk on
+scratch DB); golden flow asserts an artifact row w/ origin FK after its dump beat;
+`npm run check` green.
+**Context brief:** SPEC-012 (docs/specs/runs.md) §artifact; migrations
+0003 (run artifact cols) + 0008 (current head); internal/runs/service.go
+(finalize) + query.go (read model); internal/server/runs_http.go (handler
+patterns); ARCHITECTURE §3 ("artifact registered (checksum, retention class)").
+
+### WU-032 · Chain engine — M · `todo`
+Portal-level sequential step execution over runs (D5): halt + notify on failure,
+persisted state, resume from failed step — the mechanism restore (031) rides.
+Migration 0010: `chain` (id, kind, actor, target instance FK, confirm — stored
+creation-time ritual evidence per the WU-024 lesson, state, created/halted/
+finished ts) + `chain_step` (chain FK, seq, name, params, state, run_id FK NULL
+until fired — FK direction chosen so `run` is untouched). chain.Service: steps
+fire strictly sequentially through runs.Service.Start (SAME guardrail/audit
+path; step-run actor attribution — `chain:<initiator>` vs plain initiator — is
+SPEC-032 mini-ADR 1); step failure → chain `halted` + ONE notify mail (existing
+content rule: who/what/where/status + link only); POST /api/chains/{id}/resume
+re-fires the FAILED step as a NEW run (history kept) then continues; boot sweep
+mirrors SweepOrphans: chains left `running` with no live run → halted + notify
+(runs after SweepOrphans in main.go so a swept step run is seen). Cancel of a
+live step run halts the chain, resumable (confirm in spec). Env promotion of the
+target mid-chain → stored confirm fails the ritual visibly, never auto-confirms
+(the schedule.confirm behavior, ported). UI slice (checkpoint boundary): chain
+strip on RunDetail (step N of M, sibling links) + Resume on halted chains;
+Activity unchanged (steps ARE runs). Mutations DBA-gated + body-capped like
+every other endpoint.
+**AC:**
+- [ ] 3-step chain, injected failure at step 2: step 1 run+audit intact, chain
+      halted, ONE mail; resume re-runs step 2 then 3 to success (the ROADMAP
+      exit drill, as -race test at the service seam AND an HTTP-seam e2e).
+- [ ] Halted chain survives restart; boot sweep halts orphaned running chains
+      (crash mid-step) + notifies; no double-fire of a step across restart.
+- [ ] Resume while running / double-resume → 409 (single-flight per chain);
+      non-DBA resume → 403 with authz.denied trail.
+- [ ] Step runs carry full audit attribution through runs.Start — zero Registry
+      or audit bypass (grep-level: chain pkg never touches engine directly).
+**Verify:** the -race + e2e tests above; `npm run check` green.
+**Context brief:** D5; ARCHITECTURE §3 (chains); docs/agent/reviews/m2-gate.md
+item 1 (the stored-evidence pattern); internal/runs/service.go (Start seam,
+finalize/SweepOrphans patterns to mirror); internal/schedule/executor.go
+(fire-with-stored-confirm precedent); internal/notify/notify.go;
+internal/server/schedules_http.go (guarded-CRUD handler pattern);
+frontend/src/pages/RunDetail.tsx.
+
+### WU-031 · Restore workflow (MockEngine) — M · `todo`
+D4's second catalog operation: restore a registered artifact to an EXPLICIT
+target, with the incident-killing automatic pre-restore safety dump —
+MockEngine first (real playbook = 036). Catalog gains `restore`; POST assembles
+a kind=restore chain via 032: (1) checksum verify, (2) safety dump of the
+TARGET (registers with retention_class 'safety'), (3) restore. SPEC-031
+mini-ADR: verify as its own chain step vs a param the restore job re-checks
+engine-side — pre-O-1 there are no portal-readable bytes, so MockEngine
+"verifies" with injectable failure; real bytes are verified in 036's playbook
+regardless (defense in depth). Target selection explicit, defaults non-prod;
+prod target = full typed-name ritual (server-side, TARGET's name, stored on the
+chain — 032 provides). Window warn stamps per step via runs.Start already —
+zero new code, assert it. **The safety dump is unconditional — no skip
+affordance anywhere, client or API** (the motivating incident,
+institutionalized). Verify-fail halts BEFORE the safety dump: garbage artifact
+= zero runs on the target. UI slice (checkpoint boundary): Restore drawer from
+instance context — pick artifact (030 API), pick target, env banner + ritual,
+launch → chain view.
+**AC:**
+- [ ] Golden flow gains Beat 9: restore on MockEngine end to end — safety-dump
+      run + restore run both fully audited, 'safety' artifact registered,
+      lineage tied (restore step params reference the artifact/checksum).
+- [ ] Prod-target restore without the exact typed TARGET name → 400, no chain
+      row created; non-prod stays one click (D2 holds on the new path).
+- [ ] Injected verify failure → chain halts at step 1, zero runs on the target,
+      notify mail sent, resumable after "fix".
+- [ ] No API shape permits restore-without-safety-dump (handler test + grep).
+**Verify:** e2e Beat 9; -race chain-assembly tests; vitest drawer tests
+(artifact pick, default-target rules, ritual); `npm run check` green.
+**Context brief:** ARCHITECTURE §3 (restore); D4/D5; SPEC-030 + SPEC-032 (exist
+by then); internal/catalog/catalog.go; internal/server/runs_http.go;
+frontend/src/components/LaunchDrawer.tsx (ritual pattern) +
+pages/MyDatabases.tsx (entry point); docs/specs/guardrails.md.
+
+### WU-033 · SemaphoreAdapter — M · `todo`
+ADR-002's payoff: the same portal drives a REAL engine. Compose `semaphore`
+service (BoltDB dialect for dev simplicity — mini-ADR; admin creds in .env only,
+ADR-004); playbooks/ becomes a Semaphore-servable repo layout + `smoke.yml`
+(echo/sleep — proves the adapter without 034); internal/engine/semaphore.go
+implements Adapter: StartJob = create task on a template pinned to the playbook
+tag (mapping via config), Status/StreamLogs = poll + incremental task output
+(cadence config), webhook receiver for terminal-status acceleration with POLL
+AS THE FALLBACK TRUTH (ADR-002) — webhook route authenticated by shared secret,
+bogus/unauthenticated → 401 + zero state change; Cancel = task stop. Registry
+wiring: `PORTAL_ENGINE_NONPROD=semaphore` opt-in; prod class stays mock in dev;
+disjoint per-class config objects assert guardrail 3 structurally. ALL tests
+keep MockEngine; ONE integration test drives real Semaphore and skips without
+the compose service (the testutil.MigratedDB skip pattern). Split as sized:
+(a) compose + adapter poll-only, checkpoint; (b) webhook + streaming + itest.
+**AC:**
+- [ ] Live on VM: portal button-dump on the smoke template through real
+      Semaphore — queued→running→success, logs stream into RunDetail, cancel
+      mid-run works, audit trail shape identical to mock runs.
+- [ ] Webhook: terminal status lands without waiting a poll interval; webhook
+      DOWN → poll still finalizes (fallback proven by test); bad secret → 401.
+- [ ] `npm run check` green with zero Semaphore dependence (itest skips clean).
+**Verify:** itest output both modes (skip + live) in journal; the live drill
+above; `npm run check` green.
+**Context brief:** ADR-002; ARCHITECTURE §2 (adapter, webhook+poll);
+internal/engine/{engine.go,mock.go,registry.go}; internal/config/config.go;
+infra/compose.yaml; internal/server/server.go (webhook route seam);
+SPEC-012 (runs.Service ↔ adapter contract).
+
+### WU-034 · Dump playbook (real) — M · `todo`
+First real operation: `pg_dump -Fc` of a compose target Postgres via the
+engine — proves playbook shape, machine-readable outcomes, artifact reality.
+Compose `pgtarget` (postgres:16, seeded sample schema+rows via init script) +
+inventory fixture row so it's a portal instance (env dev; runs need the FK).
+`playbooks/dump.yml`: pg_dump -Fc → shared artifact volume, sha256 + size
+computed, ONE machine-readable result line (JSON) the adapter parses into
+engine.Artifact — which gains `Location` (mock leaves it empty). Target creds
+engine-side ONLY (Semaphore key store / vault file outside git — ADR-004);
+runner needs postgresql-client (image layer vs setup task — decide in spec).
+O-4: fixed vetted flag set, zero user-facing options. Replica-first/Patroni
+stays out (iceboxed).
+**AC:**
+- [ ] Live on VM: portal dump on pgtarget through Semaphore → real .dump on the
+      volume; registry row carries REAL sha256/size/location; `pg_restore
+      --list` on the file succeeds (the artifact is genuinely restorable).
+- [ ] Playbook failure (bad creds/unreachable target) → run failed with honest
+      error, NO artifact row, notify mail — the M1 failure path holds for real.
+- [ ] No secrets in repo, portal DB, params, or logs (grep + audit-row eyeball).
+- [ ] MockEngine tests untouched; `npm run check` green engine-free.
+**Verify:** live drill outputs + pg_restore --list in journal; `npm run check`.
+**Context brief:** O-4 (DECISIONS §Open); SPEC-033 (adapter/template contract);
+infra/compose.yaml (+pgtarget +volume); playbooks/smoke.yml (033 scaffold);
+internal/engine/semaphore.go (result-parsing seam) + engine.go (Artifact);
+infra/fixtures/instances.csv; ADR-004.
+
+### WU-035 · O-1 storage: minio — S · `todo`
+Artifact bytes get a real home. Compose `minio` + bucket bootstrap; dump
+playbook uploads AFTER checksum (engine-side creds, ADR-004) and records the
+object URL in the result line → registry `location`; the volume becomes staging
+only. Portal never proxies bytes — it stores/passes location strings (mini-ADR
+in spec). An upload failure fails the RUN: a dump that isn't stored is not a
+success and must not register an artifact claiming otherwise. Resolve O-1 in
+DECISIONS.md (annotate the Open item, never delete).
+**AC:**
+- [ ] Live: portal dump → object in minio; registry location = object URL;
+      recorded checksum matches the object's actual hash (mc-side check).
+- [ ] Injected upload failure → run failed, zero artifact row, notify mail.
+- [ ] `npm run check` green engine-free; O-1 annotated resolved.
+**Verify:** live drill + mc stat/hash output in journal; `npm run check` green.
+**Context brief:** O-1 (DECISIONS §Open); infra/compose.yaml;
+playbooks/dump.yml; internal/engine/semaphore.go (result parsing);
+migration 0009 (location column: dormant → live).
+
+### WU-036 · Restore playbook (real) + M3 rehearsal — M · `todo` *(NEW at grooming)*
+Close the loop the product exists for: a real restore of a real dump on the
+compose target through the full portal chain — plus the scripted rehearsal that
+IS the M3 exit evidence. `playbooks/restore.yml`: fetch artifact from location
+(minio), sha256 verify BEFORE touching the target (mismatch = fail, ZERO target
+writes), pg_restore with a vetted flag set (--clean --if-exists vs drop/create:
+O-4-style mini-ADR), machine-readable result line; catalog restore template
+pinned to it. `docs/demo-m3.md` (human twin, demo-m1.md pattern): seed → portal
+dump → destroy a table → portal restore (verify → safety dump → restore chain)
+→ data verified back + safety artifact registered; halt+resume beat with
+injected failure; mock-vs-semaphore same-code beat. Patroni-aware sequencing
+stays OUT (ARCHITECTURE §7; iceboxed).
+**AC:**
+- [ ] Live rehearsal passes start-to-finish on the VM release binary, human
+      pace ≤ 15 min; every M3 exit criterion checked off inside the doc.
+- [ ] Checksum tamper (corrupt the object) → chain halts at verify, target
+      untouched, notify mail; fix + resume → success.
+- [ ] The rehearsal's safety-dump artifact is itself restorable
+      (`pg_restore --list`).
+**Verify:** rehearsal transcript in journal; `npm run check` green.
+**Context brief:** ARCHITECTURE §3 (restore) + §7 (do-not-discover-twice);
+SPEC-031 (chain assembly + verify-step semantics); playbooks/dump.yml;
+docs/demo-m1.md (rehearsal doc pattern); infra/compose.yaml.
+
+**M3 exit (ROADMAP):** demo-m3.md rehearsal passes live; a 3-step chain halts on
+injected failure, notifies, resumes; the SAME portal code runs Mock and
+Semaphore behind the adapter. Then: multi-agent review gate (the M1/M2
+pattern) + fix WUs before any Phase-4 WU. Organizational note when reached:
+security vetting package (arch doc §8.2) becomes submittable.
 
 ## Phase 4 — Hardening (M4) — groom at M3 close
 
@@ -547,3 +756,12 @@ staging seed, retention job (1y audit), cold-start + docs reconciliation audit, 
 - Portal self-target ban (research gotcha #2) — enforce in inventory layer when real targets exist
 - Bulk/rolling operations (Screen 2 sticky bar); saved views
 - 5-year audit shipping to object storage; SIEM export
+- AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming)
+- AuthZ: denial-rate alarm — a spike of `authz.denied` should mail the DBA list, not sit silently in auth_event
+- AuthN: break-glass use should ALSO send a mail alarm via notify (today: alarmed audit action + log line only)
+- Role admin CLI (`portal role grant|revoke|list`) — role grants happen only at boot per auth mode today
+- Schedules UI: cron×window hint — flag when a schedule's upcoming fires fall outside the instance's maintenance window (needs window eval over future fire times)
+- Run read model: expose `window_warned` on the run API (audit-only today) so the UI can show the flag post-hoc
+- Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory)
+- Schedule-change ledger — schedule rows are mutable with no edit history; consider audit_event actions or a ledger table
+- Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work)

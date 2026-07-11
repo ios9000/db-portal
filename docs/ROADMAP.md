@@ -32,12 +32,13 @@ windows warn-only.
 **Exit:** no anonymous access; a scheduled dump fires with full audit attribution;
 window warning visible in UI and audit flag.
 
-## M3 — Restore, chains, real engine (WU-030…035)
+## M3 — Restore, chains, real engine (WU-030…036)
 
 Artifact registry, restore workflow (checksum verify, auto safety-dump, prod ritual),
 chain engine (halt + notify + resume-from-failed-step), SemaphoreAdapter against a real
 Semaphore in compose, first real playbook (pg_dump against a compose target), minio
-artifact storage.
+artifact storage, real restore playbook + scripted rehearsal (WU-036, added at s14
+grooming — the exit criterion had no covering WU).
 
 **Exit:** restore rehearsal on a compose target passes; a 3-step chain halts on injected
 failure, notifies, resumes; the SAME portal code runs Mock and Semaphore engines behind
