@@ -1,5 +1,17 @@
 name: dbportal-dev
 
+# GOTCHA (found while wiring the semaphore service, WU-033): with `-f
+# infra/compose.yaml` and no other flag, Compose's project directory
+# defaults to THIS file's directory (infra/), so it looks for infra/.env —
+# not repo-root .env — and every ${VAR:-default} below silently falls back
+# to its default. This has been invisible for postgres/mailpit because their
+# .env values happen to equal the hardcoded defaults; it is NOT invisible for
+# semaphore (real admin password / access-key-encryption). Run with the repo
+# root as the env source explicitly, e.g.:
+#   docker compose -f infra/compose.yaml --env-file .env up -d --wait
+# (root `npm run up` does not yet do this — worth a follow-up WU/idea in
+# BACKLOG.md; out of blast radius for WU-033's infra scaffold).
+
 services:
   postgres:
     image: postgres:16
@@ -23,5 +35,44 @@ services:
       - "127.0.0.1:8025:8025"   # web UI
       - "127.0.0.1:1025:1025"   # SMTP
 
+  # WU-033 (SPEC-033 mini-ADR 7): real Ansible Semaphore engine, dev-only,
+  # opt-in via PORTAL_ENGINE_NONPROD=semaphore. BoltDB dialect — no external
+  # DB. Pinned to v2.17.39: `latest`/v2.18.x currently panics on boot with
+  # BoltDB ("panic: unknown store type" in NewTerraformStore, a pro_impl
+  # code path) — v2.17.39 boots clean with SEMAPHORE_DB_DIALECT=bolt.
+  #
+  # GOTCHA: on first boot Semaphore's setup wizard IGNORES
+  # SEMAPHORE_ACCESS_KEY_ENCRYPTION and generates its own random
+  # cookie_hash/cookie_encryption/access_key_encryption, persisted in
+  # config.json under SEMAPHORE_CONFIG_PATH (/etc/semaphore). We still pass
+  # the env var (matches upstream docs and future image versions that may
+  # honor it), but durability of the REAL key comes from persisting
+  # /etc/semaphore in a named volume, not from .env. Same applies to
+  # SEMAPHORE_ADMIN/_PASSWORD/_NAME/_EMAIL: only consumed on the very first
+  # boot (when config.json doesn't exist yet) to create the admin user in
+  # BoltDB; a fresh admin is not re-created on restart.
+  semaphore:
+    image: semaphoreui/semaphore:v2.17.39
+    environment:
+      SEMAPHORE_DB_DIALECT: bolt
+      SEMAPHORE_ADMIN: ${SEMAPHORE_ADMIN:-admin}
+      SEMAPHORE_ADMIN_PASSWORD: ${SEMAPHORE_ADMIN_PASSWORD:-change-me-dev-only}
+      SEMAPHORE_ADMIN_NAME: ${SEMAPHORE_ADMIN_NAME:-Portal Admin}
+      SEMAPHORE_ADMIN_EMAIL: ${SEMAPHORE_ADMIN_EMAIL:-admin@db-portal.local}
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: ${SEMAPHORE_ACCESS_KEY_ENCRYPTION:-}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - semaphore_data:/var/lib/semaphore     # BoltDB (tasks, projects, users, …)
+      - semaphore_config:/etc/semaphore       # config.json (holds the REAL, generated encryption keys)
+      - ../playbooks:/playbooks               # local "repository" for Semaphore — see infra/semaphore-bootstrap.sh
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   pgdata:
+  semaphore_data:
+  semaphore_config:

@@ -1,0 +1,28 @@
+---
+# Dependency-free smoke playbook for WU-033 (SemaphoreAdapter).
+#
+# Purpose: prove the portal <-> Semaphore <-> Ansible round trip without any
+# real target host, SSH key, or vault secret. Runs entirely on the Semaphore
+# runner itself (hosts: localhost, connection: local). The ~15s sleep gives
+# the portal (or a human via the API) a window to demonstrate cancel-mid-run.
+#
+# Mapped in Semaphore as the "smoke" template (see infra/semaphore-bootstrap.sh
+# and PORTAL_SEMAPHORE_TEMPLATES=smoke:<id> in .env).
+
+- name: db-portal smoke
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: announce start
+      debug:
+        msg: "db-portal smoke playbook starting"
+
+    - name: simulate work (sleep ~15s so cancel-mid-run is demonstrable)
+      command: sleep 15
+      changed_when: false
+
+    - name: announce done
+      debug:
+        msg: "db-portal smoke playbook finished"
