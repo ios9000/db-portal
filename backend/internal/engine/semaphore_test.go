@@ -2,12 +2,14 @@ package engine_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +85,12 @@ func TestSemaphoreStatusMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.sem, func(t *testing.T) {
 			a := newSemaphore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// A success Status now also reads /output for the artifact;
+				// answer that path with an empty output array.
+				if strings.HasSuffix(r.URL.Path, "/output") {
+					_, _ = w.Write([]byte(`[]`))
+					return
+				}
 				require.Equal(t, "/api/project/7/tasks/42", r.URL.Path)
 				_, _ = fmt.Fprintf(w, `{"id":42,"status":%q,"start":"2026-07-11T19:00:00Z","end":"2026-07-11T19:00:30Z"}`, tc.sem)
 			}))
@@ -180,4 +188,68 @@ func TestSemaphoreCancelSendsBody(t *testing.T) {
 	require.Equal(t, "/api/project/7/tasks/42/stop", gotPath)
 	require.Equal(t, "application/json", gotCT)
 	require.NotEmpty(t, gotBody, "a bodyless stop is a 400 — the adapter must send {}")
+}
+
+// successOutput builds a stub whose task is a success and whose /output is the
+// given lines. dumpResultLine wraps the sentinel the way Ansible's debug
+// callback renders it (inside a quoted "msg": …), proving the base64 token is
+// captured up to the closing quote (SPEC-034 mini-ADR 4).
+func dumpResultLine(payload string) string {
+	return `    "msg": "DBPORTAL_RESULT=` + base64.StdEncoding.EncodeToString([]byte(payload)) + `"`
+}
+
+func successStub(t *testing.T, outputLines ...string) *engine.SemaphoreAdapter {
+	t.Helper()
+	h := http.NewServeMux()
+	h.HandleFunc("/api/project/7/tasks/42", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":42,"status":"success","start":"2026-07-11T19:00:00Z","end":"2026-07-11T19:00:30Z"}`))
+	})
+	h.HandleFunc("/api/project/7/tasks/42/output", func(w http.ResponseWriter, _ *http.Request) {
+		lines := make([]map[string]any, len(outputLines))
+		for i, l := range outputLines {
+			lines[i] = map[string]any{"time": "2026-07-11T19:00:00Z", "output": l}
+		}
+		_ = json.NewEncoder(w).Encode(lines)
+	})
+	return newSemaphore(t, h)
+}
+
+// On success the adapter reads the machine-readable result line the dump
+// playbook emits and attaches the Artifact — name/size/checksum/location
+// (SPEC-034 mini-ADR 5), even wrapped in Ansible's quoted debug output.
+func TestSemaphoreSuccessArtifactFromResultLine(t *testing.T) {
+	a := successStub(t,
+		"TASK [emit machine-readable result line] ***",
+		dumpResultLine(`{"name":"appdb-x.dump","size_bytes":5382,"sha256":"865a597d4f51","location":"/artifacts/appdb-x.dump"}`),
+	)
+	st, err := a.Status(context.Background(), "42")
+	require.NoError(t, err)
+	require.Equal(t, engine.StateSuccess, st.State)
+	require.NotNil(t, st.Artifact)
+	require.Equal(t, "appdb-x.dump", st.Artifact.Name)
+	require.EqualValues(t, 5382, st.Artifact.SizeBytes)
+	require.Equal(t, "865a597d4f51", st.Artifact.Checksum)
+	require.Equal(t, "/artifacts/appdb-x.dump", st.Artifact.Location)
+}
+
+// A missing, unparseable, or non-JSON result line never fabricates an artifact
+// and never fails the run — a dump that announced nothing just registers no
+// row (SPEC-034 mini-ADR 5). The adapter must not invent bytes from garbage.
+func TestSemaphoreSuccessNoArtifact(t *testing.T) {
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	cases := []struct{ name, line string }{
+		{"no sentinel at all", "PLAY RECAP *** ok=5 failed=0"},
+		{"sentinel, unparseable base64", "DBPORTAL_RESULT=abc"}, // matches the regex, decode fails
+		{"decoded is not json", "DBPORTAL_RESULT=" + b64("this is not json")},
+		{"json without a name", "DBPORTAL_RESULT=" + b64(`{"size_bytes":5,"sha256":"x"}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := successStub(t, tc.line)
+			st, err := a.Status(context.Background(), "42")
+			require.NoError(t, err)
+			require.Equal(t, engine.StateSuccess, st.State, "a bad/absent result line never fails the run")
+			require.Nil(t, st.Artifact)
+		})
+	}
 }

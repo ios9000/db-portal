@@ -55,6 +55,11 @@ type Artifact struct {
 	Name      string
 	SizeBytes int64
 	Checksum  string // sha256, hex
+	// Location is where the bytes live: a filesystem path on the shared
+	// artifact volume today (WU-034), an object URL after WU-035. Empty for
+	// the mock (metadata-only). Stored on the registry row (artifact.location,
+	// SPEC-030), never exposed by the API.
+	Location string
 }
 
 // JobStatus is a point-in-time snapshot of a job.

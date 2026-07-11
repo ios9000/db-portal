@@ -353,9 +353,9 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 			class = op.RetentionClass
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO artifact (run_id, name, size_bytes, checksum, retention_class)
-			VALUES ($1, $2, $3, $4, $5)`,
-			runID, artifact.Name, artifact.SizeBytes, artifact.Checksum, class); err != nil {
+			INSERT INTO artifact (run_id, name, size_bytes, checksum, retention_class, location)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))`,
+			runID, artifact.Name, artifact.SizeBytes, artifact.Checksum, class, artifact.Location); err != nil {
 			return fmt.Errorf("runs: register artifact: %w", err)
 		}
 	}

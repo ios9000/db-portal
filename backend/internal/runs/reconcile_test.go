@@ -192,3 +192,35 @@ func TestPollFinalizesWithoutWebhook(t *testing.T) {
 	final := waitTerminal(t, svc, run.ID)
 	require.Equal(t, "success", final.State, "the watcher's poll finalized the run with no webhook in play")
 }
+
+// WU-034 (SPEC-034 mini-ADR 6): a REAL engine returns an Artifact carrying a
+// Location; finalize stores it on the registry row (artifact.location goes
+// live). Driven through the real Status→finalize path via ReconcileByJobID.
+// The mock leaves Location empty → NULL (TestArtifactRegisteredOnSuccess).
+func TestArtifactLocationPersisted(t *testing.T) {
+	adapter := &scriptedAdapter{status: map[engine.JobID]engine.JobStatus{
+		"job-loc": {
+			ID:    "job-loc",
+			State: engine.StateSuccess,
+			Artifact: &engine.Artifact{
+				Name:      "appdb-x.dump",
+				SizeBytes: 5382,
+				Checksum:  "865a597d4f51",
+				Location:  "/artifacts/appdb-x.dump",
+			},
+		},
+	}}
+	svc, pool := newReconcileService(t, adapter)
+	ctx := context.Background()
+	runID := seedRunningRun(t, pool, "billing-test", "job-loc")
+
+	require.NoError(t, svc.ReconcileByJobID(ctx, "job-loc"))
+
+	got := registryRowsFor(t, pool, runID)
+	require.Len(t, got, 1)
+	require.Equal(t, "appdb-x.dump", got[0].name)
+	require.EqualValues(t, 5382, got[0].sizeBytes)
+	require.Equal(t, "865a597d4f51", got[0].checksum)
+	require.NotNil(t, got[0].location, "a real engine's Location is stored on the registry row")
+	require.Equal(t, "/artifacts/appdb-x.dump", *got[0].location)
+}

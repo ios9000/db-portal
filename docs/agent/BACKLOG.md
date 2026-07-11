@@ -668,7 +668,7 @@ internal/engine/{engine.go,mock.go,registry.go}; internal/config/config.go;
 infra/compose.yaml; internal/server/server.go (webhook route seam);
 SPEC-012 (runs.Service ↔ adapter contract).
 
-### WU-034 · Dump playbook (real) — M · `todo`
+### WU-034 · Dump playbook (real) — M · `done` (2026-07-11, s19 — 36d08ab slice a + slice b; SPEC-034 = docs/specs/dump-playbook.md)
 First real operation: `pg_dump -Fc` of a compose target Postgres via the
 engine — proves playbook shape, machine-readable outcomes, artifact reality.
 Compose `pgtarget` (postgres:16, seeded sample schema+rows via init script) +
@@ -680,15 +680,20 @@ engine-side ONLY (Semaphore key store / vault file outside git — ADR-004);
 runner needs postgresql-client (image layer vs setup task — decide in spec).
 O-4: fixed vetted flag set, zero user-facing options. Replica-first/Patroni
 stays out (iceboxed).
-**AC:**
-- [ ] Live on VM: portal dump on pgtarget through Semaphore → real .dump on the
-      volume; registry row carries REAL sha256/size/location; `pg_restore
-      --list` on the file succeeds (the artifact is genuinely restorable).
-- [ ] Playbook failure (bad creds/unreachable target) → run failed with honest
-      error, NO artifact row, notify mail — the M1 failure path holds for real.
-- [ ] No secrets in repo, portal DB, params, or logs (grep + audit-row eyeball).
-- [ ] MockEngine tests untouched; `npm run check` green engine-free.
-**Verify:** live drill outputs + pg_restore --list in journal; `npm run check`.
+**AC:** (all met — s19; live drill on an isolated portal, :8099 + portal_drill, torn down)
+- [x] Live on VM: portal dump on pgtarget through Semaphore → real .dump on the
+      volume (appdb-…​.dump, 5382 B); registry row carries REAL sha256/size/location
+      (checksum == `sha256sum` of the file); `pg_restore --list` succeeds
+      (ledger/widget/ledger_totals + TABLE DATA — genuinely restorable).
+- [x] Playbook failure (bad pgtarget-env creds) → RUN-2 failed, honest error
+      ("semaphore task failed"), ZERO artifact rows, notify mail "RUN-2 failed —
+      dump on pgtarget (dev)" — the M1 failure path holds for real.
+- [x] No secrets in repo, portal DB, params, or logs (pgtarget password + Semaphore
+      token + webhook secret all absent from the portal_drill dump AND the log;
+      params_digest is a hash; audit shape byte-identical to a mock run).
+- [x] MockEngine tests untouched (location stays NULL — TestArtifactRegisteredOnSuccess);
+      `npm run check` green engine-free (CHECK-EXIT:0, golangci 0 issues, vitest 116/116).
+**Verify:** live drill outputs + pg_restore --list in journal; `npm run check`. — DONE s19.
 **Context brief:** O-4 (DECISIONS §Open); SPEC-033 (adapter/template contract);
 infra/compose.yaml (+pgtarget +volume); playbooks/smoke.yml (033 scaffold);
 internal/engine/semaphore.go (result-parsing seam) + engine.go (Artifact);

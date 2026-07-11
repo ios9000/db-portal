@@ -5,32 +5,36 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-034 (Dump playbook — real, M): slice (a) DONE
-  (s19, uncommitted→committing), slice (b) NEXT.** SPEC-034 written =
-  `docs/specs/dump-playbook.md`. Execution order 030 → 032 → 031 → 033 →
-  **034** → 035 → 036.
-- **Status (s19, WU-034 slice a):** the real pg_dump path is PROVEN at the
-  Semaphore level (no portal yet). Delivered + live-verified: compose
-  `pgtarget` (postgres:16, seeded widget/ledger/ledger_totals via
-  `infra/fixtures/pgtarget-init.sql`, host 127.0.0.1:5433); a CUSTOM Semaphore
-  runner image (`infra/semaphore.Dockerfile` = v2.17.39 + `postgresql16-client`
-  + writable `/artifacts` owned 1001:0) — compose `semaphore` now `build:`s it,
-  tag `dbportal-semaphore:v2.17.39-pg16`, BoltDB state survived the swap;
-  shared `artifacts` named volume at `/artifacts`; `playbooks/dump.yml`
-  (`pg_dump --format=custom --no-owner --no-privileges`, creds via engine-side
-  libpq env — NO secret in the playbook, ADR-004; emits ONE line
-  `DBPORTAL_RESULT=<base64 json {name,size_bytes,sha256,location}>`, base64 to
-  survive ansible's debug-callback escaping); bootstrap extended with
-  `pgtarget-env` Environment (id 3, creds from `.env`) + `dump` template
-  (**id 3**). Direct Semaphore run → success, result line decodes clean,
-  sha256 == `sha256sum` of the file, `pg_restore --list` OK, password absent
-  from task output + repo. KEY BUG FIXED mid-slice: `now()`/`random` in
-  ansible `vars:` re-evaluate lazily → pg_dump's `--file` and the later `stat`
-  computed different names; `set_fact` freezes the name once.
-  **Deviation from the brief:** pgtarget went in a NEW
-  `infra/fixtures/dev-targets.csv` (env=dev), NOT `instances.csv` — that
-  fixture is pinned to exactly 8 rows by 4 test pkgs + the golden flow
-  (`require.Len(…,8)`); a 9th row reddens the suite. Import is additive.
+- **Active:** PHASE 3 (M3) — **WU-035 (O-1 storage: minio, S) is NEXT.**
+  **WU-034 (Dump playbook — real) DONE s19** — both slices shipped, all 4 AC +
+  Verify met, full-portal live drill passed on the VM (real pg_dump through
+  Semaphore, real restorable artifact, failure path, no-secrets). SPEC-034 =
+  `docs/specs/dump-playbook.md`. Execution order 030 → 032 → 031 → 033 → 034 →
+  **035** → 036.
+- **Status (s19, WU-034 CLOSED):** the SAME portal now drives a REAL `pg_dump`
+  of a compose target through Semaphore. slice (a) = infra + playbook (compose
+  `pgtarget` postgres:16 seeded widget/ledger/ledger_totals via
+  `infra/fixtures/pgtarget-init.sql`, host :5433; custom runner image
+  `infra/semaphore.Dockerfile` = v2.17.39 + postgresql16-client + writable
+  `/artifacts` owned 1001:0, compose `build:`s it as `dbportal-semaphore:v2.17.39-pg16`;
+  `artifacts` named volume; `playbooks/dump.yml` = `pg_dump --format=custom
+  --no-owner --no-privileges`, creds via engine-side libpq env — NO secret in
+  the playbook, ADR-004; emits ONE `DBPORTAL_RESULT=<base64 json
+  {name,size_bytes,sha256,location}>` line; bootstrap `pgtarget-env` env (id 3)
+  + `dump` template (**id 3**); `dev-targets.csv` NOT `instances.csv` — 8-row
+  test coupling). slice (b) = Go: `engine.Artifact` gains `Location`;
+  `semaphore.go` `Status` parses the result line on terminal SUCCESS
+  (regex `DBPORTAL_RESULT=([A-Za-z0-9+/=]+)` → base64 → json; nil on
+  missing/bad/no-name, run still success); `finalize` writes `artifact.location`
+  (`NULLIF($,'')`, so mock stays NULL). Tests: engine stub-HTTP parse cases +
+  a fixed StatusMapping /output route + runs `TestArtifactLocationPersisted`
+  (real Location stored) — mock's `TestArtifactRegisteredOnSuccess` still NULL.
+  Live drill (isolated portal :8099 + portal_drill, semaphore engine,
+  `dump:3,smoke:1`): dump on pgtarget → success, registry row REAL
+  sha256/size/location (checksum == file's `sha256sum`), `pg_restore --list`
+  OK; bad-creds dump → failed + no artifact + notify mail; no secrets in
+  DB/log. Gate GREEN (CHECK-EXIT:0, golangci 0 issues, itest ran LIVE, vitest
+  116/116). Drill torn down; demo :8080 untouched.
 - **Status (s18, WU-033 CLOSED):** slice (b) landed the webhook accelerator +
   `runs.ReconcileByJobID` + the fallback/auth tests + the live drill. The SAME
   portal now drives REAL Semaphore for the non-prod class, opt-in via
@@ -53,31 +57,26 @@
 
 ## Next action (be exact)
 
-1. **WU-034 slice (b) — adapter parse + Location + finalize + tests + drill.**
-   Read SPEC-034 (`docs/specs/dump-playbook.md`) mini-ADRs 5+6.
-   - `engine.go`: add `Location string` to `Artifact` (mock leaves it empty —
-     mock.go needs NO change, "" is the zero value).
-   - `internal/engine/semaphore.go`: on `Status` mapping to `StateSuccess`,
-     fetch `/output`, `parseResultLine` = regex `DBPORTAL_RESULT=([A-Za-z0-9+/=]+)`
-     → base64 decode → json → `Artifact{Name,SizeBytes,Checksum,Location}`.
-     No sentinel / bad b64 / bad json → nil Artifact + Warn (run still success).
-     StartJob keeps ignoring params (no extra-vars in WU-034).
-   - `internal/runs/service.go` finalize: the `INSERT INTO artifact` gains
-     `location` = `NULLIF($N,'')` from `artifact.Location`.
-   - Tests (engine-free, gate stays green): stub-HTTP result-line parse cases;
-     a finalize test asserting `artifact.location` set when the (fake) adapter
-     returns Location, NULL for mock. Golden flow unaffected (mock, location NULL).
-   - LIVE DRILL (isolated portal, per [[live-drill-isolation]]): scratch DB +
-     spare port + auth off, `PORTAL_ENGINE_NONPROD=semaphore`
-     `PORTAL_SEMAPHORE_TEMPLATES=dump:3,smoke:1`, token from `.env`. Import
-     `infra/fixtures/dev-targets.csv` (+instances.csv). POST dump on `pgtarget`
-     → success, registry row w/ REAL sha256/size/location, `pg_restore --list`
-     on the volume file OK. Failure path: temporarily point `pgtarget-env` at
-     bad creds (or stop pgtarget) → run failed, NO artifact row, notify mail.
-     grep no-secret. Tear down; leave demo :8080 untouched.
-   - Dev facts: semaphore project 1, dump template **3**, pgtarget-env 3,
-     smoke template 1; pgtarget host-port 5433; `.env` has the token +
-     `PGTARGET_*`. Persistent `.env` STAYS `PORTAL_ENGINE_NONPROD=mock`.
+1. **START WU-035 (O-1 storage: minio — S).** Read its BACKLOG entry + context
+   brief: O-1 (DECISIONS §Open); infra/compose.yaml; playbooks/dump.yml (the
+   result line already carries `location` — now it becomes an object URL);
+   internal/engine/semaphore.go (result parsing — unchanged shape, new
+   location value); migration 0009 (`location` column, now LIVE from WU-034).
+   Deliver: compose `minio` + bucket bootstrap; dump.yml UPLOADS the .dump to
+   minio AFTER the checksum (engine-side creds, ADR-004) and records the object
+   URL as `location`; the `artifacts` volume becomes STAGING only. Upload
+   failure FAILS the run (a dump that isn't stored must not register an
+   artifact). Portal never proxies bytes — it stores/passes location strings
+   (mini-ADR). Resolve O-1 in DECISIONS.md (annotate the Open item, don't
+   delete). Write SPEC-035 just-in-time. AC live drill: portal dump → object in
+   minio, registry location = object URL, recorded checksum == the object's
+   actual hash (mc-side); injected upload failure → run failed, zero artifact,
+   mail. `npm run check` green engine-free.
+   - Dev facts carried: semaphore project 1, dump template **3**, pgtarget-env
+     **3**, smoke template 1; pgtarget host-port 5433, seeded appdb; `.env` has
+     the Semaphore token + `PGTARGET_*`. Persistent `.env` STAYS
+     `PORTAL_ENGINE_NONPROD=mock`; drills use an isolated portal (see the
+     WU-034 drill recipe below / [[live-drill-isolation]]).
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -85,17 +84,20 @@
 ## Blocked / needs user
 
 - Nothing.
-- HEADS-UP (WU-034 slice a, s19): compose now also runs **`pgtarget`**
+- HEADS-UP (WU-034 DONE, s19): compose now also runs **`pgtarget`**
   (dbportal-dev-pgtarget-1, postgres:16, 127.0.0.1:5433, seeded appdb) and the
   `semaphore` service is now the **BUILT** image `dbportal-semaphore:v2.17.39-pg16`
   (postgresql16-client + `/artifacts`). New named volumes `artifacts`,
   `pgtargetdata`. To bring the whole dev stack up from a fresh clone:
   `docker compose -f infra/compose.yaml --env-file .env up -d --build --wait`
   then `set -a; . ./.env; set +a; sh infra/semaphore-bootstrap.sh` (now also
-  creates `pgtarget-env` + the `dump` template; prints
+  creates `pgtarget-env` (id 3) + the `dump` template (id 3); prints
   `SEMAPHORE_DUMP_TEMPLATE_ID`). `pgtarget` creds live in `.env` as `PGTARGET_*`
-  (engine-side only, ADR-004). A leftover `.dump` from the slice-(a) proof sits
-  in the `artifacts` volume — harmless.
+  (engine-side only, ADR-004). The persistent `.env` stays
+  `PORTAL_SEMAPHORE_TEMPLATES=smoke:1` + `PORTAL_ENGINE_NONPROD=mock`; the
+  `dump:3` map + semaphore engine are used only by an isolated drill portal.
+  A few leftover `.dump` files from the slice-(a) proof + the s19 drill sit in
+  the `artifacts` volume — harmless (WU-035 makes the volume staging-only).
 - HEADS-UP (Semaphore, WU-033 DONE): the compose `semaphore` service is LEFT
   RUNNING on the VM at 127.0.0.1:3000 (`docker ps` → dbportal-dev-semaphore-1).
   The skip-gated itest depends on it PLUS the API token in gitignored `.env`
@@ -285,16 +287,25 @@
 
 ## Checkpoint log (last 3, newest first)
 
-- 2026-07-11 — WU-034 slice (a) done (s19): the real pg_dump path proven at the
-  Semaphore level. compose `pgtarget` (seeded) + custom runner image
-  (`infra/semaphore.Dockerfile`, postgresql16-client + writable `/artifacts`) +
-  `artifacts` volume; `playbooks/dump.yml` (pg_dump -Fc, engine-side libpq
-  creds, `DBPORTAL_RESULT=<base64 json>` result line); bootstrap `pgtarget-env`
-  + `dump` template (id 3); `dev-targets.csv` (NOT instances.csv — 8-row test
-  coupling); SPEC-034 = docs/specs/dump-playbook.md. Direct Semaphore run →
-  success, result decodes clean, sha256 matches file, `pg_restore --list` OK,
-  no password in output/repo. Next: slice (b) — adapter parse + Artifact.Location
-  + finalize + tests + full-portal live drill. No Go changes yet.
+- 2026-07-11 — WU-034 DONE (s19, 36d08ab slice a + slice b): the SAME portal
+  drives a REAL pg_dump of a compose target through Semaphore, behind the
+  unchanged engine.Adapter seam. slice (a) infra+playbook: compose `pgtarget`
+  (seeded) + custom runner image (`infra/semaphore.Dockerfile`, postgresql16-client
+  + writable `/artifacts`) + `artifacts` volume; `playbooks/dump.yml` (pg_dump
+  -Fc, engine-side libpq creds — NO secret in playbook, `DBPORTAL_RESULT=<base64
+  json>` result line — base64 to survive ansible's debug-callback escaping);
+  bootstrap `pgtarget-env` + `dump` template (id 3); `dev-targets.csv` (NOT
+  instances.csv — 8-row test coupling); SPEC-034. BUG fixed: now()/random in
+  ansible vars: are lazy → set_fact freezes the artifact name. slice (b) Go:
+  `Artifact.Location` + semaphore.go result parsing on terminal SUCCESS +
+  finalize writes `artifact.location` (NULLIF, mock stays NULL); engine stub
+  parse tests + runs `TestArtifactLocationPersisted`. Gate GREEN (CHECK-EXIT:0,
+  golangci 0 issues, itest LIVE, vitest 116/116). LIVE DRILL (isolated portal
+  :8099 + portal_drill, semaphore engine, dump:3): dump on pgtarget → success,
+  registry REAL sha256/size/location (== file `sha256sum`), `pg_restore --list`
+  OK (ledger/widget/ledger_totals + DATA); bad-creds dump → failed + no artifact
+  + mail "RUN-2 failed — dump on pgtarget (dev)"; no secret in DB/log. Drill
+  torn down; demo :8080 untouched. All 4 AC + Verify met. Active → WU-035.
 - 2026-07-11 — WU-033 DONE (s18, slice b): SemaphoreAdapter complete — the
   SAME portal drives REAL Semaphore for nonprod, opt-in, behind the unchanged
   engine.Adapter seam. Slice (b) shipped: `runs.ReconcileByJobID` (find run by

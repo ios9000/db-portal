@@ -3,12 +3,14 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -104,7 +106,85 @@ func (a *SemaphoreAdapter) Status(ctx context.Context, id JobID) (JobStatus, err
 	if st.State == StateFailed {
 		st.Error = "semaphore task failed"
 	}
+	// On success, read the machine-readable result line the dump playbook
+	// emits and attach the artifact (SPEC-034 mini-ADR 5). Both the watcher
+	// and ReconcileByJobID reach finalize through Status, so acceleration and
+	// the poll fallback carry the artifact identically. A success that
+	// announced no artifact (smoke, or a dump whose line is missing) → nil,
+	// and the run still succeeds with no registry row.
+	if st.State == StateSuccess {
+		st.Artifact = a.fetchArtifact(ctx, id)
+	}
 	return st, nil
+}
+
+// dbportalResultRE matches the single result line the dump playbook emits:
+// `DBPORTAL_RESULT=<base64>`. base64's alphabet excludes the surrounding
+// quote Ansible's debug callback adds, so the capture stops cleanly at the
+// token boundary (SPEC-034 mini-ADR 4).
+var dbportalResultRE = regexp.MustCompile(`DBPORTAL_RESULT=([A-Za-z0-9+/=]+)`)
+
+// semDumpResult is the JSON the dump playbook base64-encodes into its result
+// line (SPEC-034 mini-ADR 4).
+type semDumpResult struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	Location  string `json:"location"`
+}
+
+// fetchArtifact reads the task output and parses the result line into an
+// Artifact. Best-effort: an output-fetch error, a missing/corrupt line, or a
+// success that produced none (smoke) all yield nil — Status still reports
+// success, so poll always finalizes; a nil merely means no registry row.
+func (a *SemaphoreAdapter) fetchArtifact(ctx context.Context, id JobID) *Artifact {
+	var lines []semOutputLine
+	if err := a.do(ctx, http.MethodGet, a.taskPath(id)+"/output", nil, &lines); err != nil {
+		a.logf("semaphore: could not read task output for artifact", "job", string(id), "err", err.Error())
+		return nil
+	}
+	art := parseResultLine(lines)
+	if art == nil {
+		// Not necessarily an error — a non-dump playbook produces no line.
+		a.logf("semaphore: success task emitted no DBPORTAL_RESULT line (no artifact)", "job", string(id))
+	}
+	return art
+}
+
+// parseResultLine scans task output (newest task last) for the sentinel,
+// base64-decodes it, and unmarshals the JSON. A missing sentinel, bad base64,
+// bad JSON, or an empty name all yield nil — the adapter never fabricates an
+// artifact from a malformed line.
+func parseResultLine(lines []semOutputLine) *Artifact {
+	for i := len(lines) - 1; i >= 0; i-- {
+		m := dbportalResultRE.FindStringSubmatch(lines[i].Output)
+		if m == nil {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(m[1])
+		if err != nil {
+			return nil
+		}
+		var r semDumpResult
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil
+		}
+		if r.Name == "" {
+			return nil
+		}
+		return &Artifact{Name: r.Name, SizeBytes: r.SizeBytes, Checksum: r.SHA256, Location: r.Location}
+	}
+	return nil
+}
+
+// logf logs at Info if a logger is set (the adapter tolerates a nil logger in
+// tests). "no result line" is a normal outcome for non-dump playbooks, so it
+// is Info, not Warn — a missing dump artifact surfaces downstream as a
+// success with no registry row.
+func (a *SemaphoreAdapter) logf(msg string, args ...any) {
+	if a.log != nil {
+		a.log.Info(msg, args...)
+	}
 }
 
 // StreamLogs replays the task's output so far, then polls for new lines until
