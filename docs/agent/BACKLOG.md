@@ -557,7 +557,7 @@ scratch DB); golden flow asserts an artifact row w/ origin FK after its dump bea
 (finalize) + query.go (read model); internal/server/runs_http.go (handler
 patterns); ARCHITECTURE §3 ("artifact registered (checksum, retention class)").
 
-### WU-032 · Chain engine — M · `todo`
+### WU-032 · Chain engine — M · `done` (2026-07-11, e465bab core + b10b960 UI — SPEC-032)
 Portal-level sequential step execution over runs (D5): halt + notify on failure,
 persisted state, resume from failed step — the mechanism restore (031) rides.
 Migration 0010: `chain` (id, kind, actor, target instance FK, confirm — stored
@@ -578,15 +578,19 @@ strip on RunDetail (step N of M, sibling links) + Resume on halted chains;
 Activity unchanged (steps ARE runs). Mutations DBA-gated + body-capped like
 every other endpoint.
 **AC:**
-- [ ] 3-step chain, injected failure at step 2: step 1 run+audit intact, chain
+- [x] 3-step chain, injected failure at step 2: step 1 run+audit intact, chain
       halted, ONE mail; resume re-runs step 2 then 3 to success (the ROADMAP
       exit drill, as -race test at the service seam AND an HTTP-seam e2e).
-- [ ] Halted chain survives restart; boot sweep halts orphaned running chains
+      (chain_test.go behaviors 1–3 + golden flow Beat 9)
+- [x] Halted chain survives restart; boot sweep halts orphaned running chains
       (crash mid-step) + notifies; no double-fire of a step across restart.
-- [ ] Resume while running / double-resume → 409 (single-flight per chain);
-      non-DBA resume → 403 with authz.denied trail.
-- [ ] Step runs carry full audit attribution through runs.Start — zero Registry
-      or audit bypass (grep-level: chain pkg never touches engine directly).
+      (TestSweepOrphans + live boot-sweep drill s16: count=1, mail in mailpit)
+- [x] Resume while running / double-resume → 409 (single-flight per chain);
+      non-DBA resume → 403 with authz.denied trail. (TestResumeSingleFlight,
+      resume route in TestMutationsRequireDBARole)
+- [x] Step runs carry full audit attribution through runs.Start — zero Registry
+      or audit bypass (grep-level: chain pkg never touches engine directly —
+      imports are catalog/runs/pgx only).
 **Verify:** the -race + e2e tests above; `npm run check` green.
 **Context brief:** D5; ARCHITECTURE §3 (chains); docs/agent/reviews/m2-gate.md
 item 1 (the stored-evidence pattern); internal/runs/service.go (Start seam,

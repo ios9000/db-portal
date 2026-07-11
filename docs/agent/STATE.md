@@ -5,23 +5,33 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-030 done 2026-07-11 (s15, c7c6b73)**; next WU
-  is **WU-032 (chain engine, M)** in a fresh session — NOT WU-031; execution
-  order is 030 → 032 → 031 → 033 → 034 → 035 → 036 (see the Phase 3 header
-  note in BACKLOG.md: restore IS the first chain, so the chain engine lands
-  before restore rides it).
-- **Status (s15, WU-030):** artifact registry live. SPEC-030 =
-  docs/specs/artifacts.md (5 mini-ADRs: dual write run-cols + registry same
-  tx; retention class stamped at registration, 'standard' only until 031;
-  UNIQUE(run_id) exactly-once backstop; ?instance required + unknown = 404;
-  registry code lives in internal/runs). Migration 0009: `artifact` table
-  (run_id FK origin UNIQUE, name/size/checksum NOT NULL, retention_class
-  CHECK standard|safety, `location` DORMANT until 034/035) + idempotent
-  backfill of historical successful dumps. finalize() inserts the registry
-  row inside the guarded terminal transition. GET /api/artifacts?instance=
-  (session-gated, newest 50, 400 missing param / 404 unknown). Golden flow
-  asserts registration on BOTH launch paths (button beat 3+4, scheduled
-  beat 8). No UI slice (031's drawer feeds from the endpoint).
+- **Active:** PHASE 3 (M3) — **WU-032 done 2026-07-11 (s16, e465bab core +
+  b10b960 UI)**; next WU is **WU-031 (restore workflow on MockEngine, M)**
+  in a fresh session. Execution order 030 → 032 → 031 → 033 → 034 → 035
+  → 036 (restore rides the chain engine, which now exists).
+- **Status (s16, WU-032):** chain engine live. SPEC-032 = docs/specs/chains.md
+  (7 mini-ADRs: actor `chain:<mover>` where mover = creator, then RESUMER;
+  chain_step.run_id FK → run, NULL until fired, UNIQUE, re-pointed on resume
+  — superseded runs keep run+audit rows but leave the strip; resume after
+  cancel = resume after failure, stored creation-time confirm replays
+  verbatim, NO fresh ritual; step status DERIVED from linked run, no
+  mirrored column; ONE mail per halt = the chain's, run mail suppressed by
+  StepRunFilter keyed on the `chain:` prefix — race-free, stamped at
+  submit; one async driver for create+resume; chain states
+  running|halted|success, NO terminal failure, all transitions guarded).
+  Migration 0010 (chain + chain_step). internal/chain: Service
+  (Create/Resume/Get/ForRun/SweepOrphans, guarded flips = single-flight)
+  + driver (fire → watch → advance/halt; fire-time errors halt visibly,
+  scheduler posture). Boot sweep runs AFTER runs.SweepOrphans in main.
+  notify.Mailer.ChainHalted (D7 content; links newest step run).
+  HTTP: GET /api/runs/{id}/chain (session; 404 = not a step),
+  POST /api/chains/{id}/resume (dba; 409 not halted). Golden flow Beat 9 =
+  the ROADMAP drill at the HTTP seam. RunDetail chain strip (Sonnet slice
+  b10b960): steps + sibling links + counter, polls while running,
+  superseded note on later 404, Resume on halted. testutil.FakeSMTP now
+  serves multiple sessions (was: exactly one — second mails vanished).
+  Live-verified s16: boot sweep halted a crash-shape chain (count=1),
+  halt mail in mailpit, HTTP resume drove run 24 to success as chain:dba1.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -30,21 +40,23 @@
 
 ## Next action (be exact)
 
-1. **Start WU-032 in a fresh session** (chain engine, M — the mechanism
-   restore rides). Ritual: read its BACKLOG entry + ONLY its context brief;
-   write SPEC-032 (SPEC-TEMPLATE.md) with the named mini-ADRs (step-run
-   actor attribution `chain:<initiator>` vs plain; chain_step.run_id FK
-   direction so `run` stays untouched; resume-after-cancel confirm).
-   Migration 0010 (chain + chain_step, stored creation-time confirm per the
-   WU-024 lesson), chain.Service through runs.Service.Start ONLY, halt+ONE
-   mail, resume re-fires failed step as NEW run, boot sweep after
-   SweepOrphans. Chain engine core = architect-implemented; the RunDetail
-   chain strip UI slice is a Sonnet-brief candidate (checkpoint boundary
-   before it).
-2. After WU-032: WU-031 (restore workflow on MockEngine, M) — assembles the
-   kind=restore chain (verify → UNCONDITIONAL safety dump w/ retention_class
-   'safety' → restore); decides the Start→finalize plumbing for 'safety'
-   (SPEC-030 deferred it there).
+1. **Start WU-031 in a fresh session** (restore workflow on MockEngine, M).
+   Ritual: read its BACKLOG entry + ONLY its context brief; write SPEC-031
+   with the named mini-ADR (verify as its own chain step vs engine-side
+   re-check — pre-O-1 MockEngine "verifies" with injectable failure).
+   Assembles the kind=restore chain via 032's chain.Service: (1) checksum
+   verify, (2) UNCONDITIONAL safety dump of the TARGET registering with
+   retention_class 'safety' (Start→finalize plumbing for 'safety' decided
+   here — SPEC-030 deferred it), (3) restore. Catalog gains `restore`;
+   POST endpoint is the first chain assembler. Prod target = typed-name
+   ritual (TARGET's name, stored on the chain — 032 provides). Verify-fail
+   halts BEFORE the safety dump: zero runs on the target. NO skip
+   affordance for the safety dump anywhere (the motivating incident).
+   Golden flow gains a restore beat. UI slice (Restore drawer from
+   instance context: pick artifact via 030 API, pick target, banner +
+   ritual) = Sonnet-brief candidate, checkpoint boundary before it.
+2. After WU-031: WU-033 (SemaphoreAdapter, M — compose service, webhook +
+   poll fallback; ritual/authz seams stay architect-side).
 3. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -53,23 +65,35 @@
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of 90aae5a, migrations at 0008 — one BEHIND head now; run
-  `portal migrate up` if the demo gets rebuilt on newer code)
-  with `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password
-  "demo-glass", hash only in the unit env — recover via `systemctl show
-  dbportal-demo -p Environment`). Sign in dba1/dba1. Schedules list is
-  empty (live-verify schedules deleted; runs 14–22 remain as verify
-  history incl. schedule:dba1 rows). Fixture windows restored (only the
-  4 prods have windows). Before any live check that runs its own portal:
-  `systemctl stop dbportal-demo` — bind-in-use + two-portals-one-DB
-  hazard. ALSO (bit s10 twice): a backgrounded `portal &` may report a
-  wrapper PID in `$!` — always kill the PID that `ss -ltnp` shows
-  holding :8080.
+  :8080 (binary of b10b960, dev DB migrated to 0010) with
+  `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password "demo-glass",
+  hash only in the unit env — recover via `systemctl show dbportal-demo -p
+  Environment`; NOTE stopping the unit DELETES it and the env — s16
+  regenerated the bcrypt hash from the known password and re-ran
+  systemd-run, the recipe is in JOURNAL s16). Sign in dba1/dba1. Verify
+  history in the DB now includes chain 1 (test-chain on hr-test, success)
+  and its run 24 — RUN-24's page shows the chain strip live. Before any
+  live check that runs its own portal: `systemctl stop dbportal-demo` —
+  bind-in-use + two-portals-one-DB hazard. ALSO (bit s10 twice): a
+  backgrounded `portal &` may report a wrapper PID in `$!` — always kill
+  the PID that `ss -ltnp` shows holding :8080.
 
 ## Standing context (stable facts worth re-stating)
 
 - MVP scope = D1–D7 (DECISIONS.md). Engine is MockEngine until WU-033.
-- **Delegation model (4 successes: WU-019, WU-020b, WU-021b, WU-022b):**
+- **Chain engine (WU-032, SPEC-032 = docs/specs/chains.md):** chains are
+  portal-assembled ONLY (no client create API; 031's restore POST is the
+  first assembler). internal/chain imports catalog/runs, NEVER engine —
+  steps ARE runs through runs.Service.Start (full guardrail/audit path),
+  attributed `chain:<mover>` (creator, then resumer). Halt = ONE chain
+  mail; run mail suppressed via StepRunFilter wired in main. Stored
+  confirm replays verbatim per step (env promotion mid-chain fails the
+  ritual visibly). Boot sweep AFTER runs.SweepOrphans. Step status derived
+  from linked run; superseded runs keep history, leave the strip. UI
+  step-status vocabulary = `pending` + run states, fixed; 031 consumes
+  as-is.
+- **Delegation model (5 successes: WU-019, WU-020b, WU-021b, WU-022b,
+  WU-032-UI):**
   implementation WUs with a tight brief run on a Sonnet 5 general-purpose
   subagent (Agent tool, `model: sonnet`, no git); architect (Fable) writes
   specs/briefs, implements security/concurrency-sensitive slices itself,
@@ -119,7 +143,9 @@
   green EVERY session. Beat 0 login; WU-021 beats (ritual 400, actor
   pinned, requested_by); Beat 8 (WU-022): live executor fires a due
   schedule, schedule:dba1 attribution; WU-030 asserts artifact registration
-  w/ origin FK on both dump beats. WU-031 adds Beat 9 (restore chain).
+  w/ origin FK on both dump beats; Beat 9 (WU-032): 3-step chain halts on
+  injected step-2 failure with ONE chain mail, HTTP resume re-fires as
+  chain:dba1 to success. WU-031 extends with the restore chain.
   Human twin = docs/demo-m1.md (beats 1–7 + §8 schedules preview).
 - Guardrails (WU-015, SPEC-015): EnvBanner on RunDetail + LaunchDrawer +
   schedule drawer; prod ritual = typed exact instance name, client AND
@@ -173,6 +199,15 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-11 — WU-032 done (s16, e465bab + b10b960): chain engine —
+  SPEC-032 (7 mini-ADRs), migration 0010, chain Service+driver+boot sweep,
+  StepRunFilter halt-mail exactly-once, resume API, golden flow Beat 9,
+  RunDetail chain strip (5th Sonnet delegation success). FakeSMTP
+  multi-session fix. Live drill: boot sweep + mailpit mail + HTTP resume
+  → run 24 as chain:dba1. Session recovered mid-WU from an ssh reset —
+  tree survey found the core complete; this session added Beat 9, authz
+  route pins, 0010 walk pins, ChainHalted mail test, UI slice.
+  Active → WU-031 (restore workflow).
 - 2026-07-11 — WU-030 done (s15, c7c6b73): artifact registry metadata-first —
   SPEC-030 (5 mini-ADRs), migration 0009 (artifact table, UNIQUE run_id,
   dormant location, idempotent backfill), finalize() registers inside the
@@ -183,8 +218,3 @@
   entries; execution order 030→032→031→033→034→035→036; WU-036 (restore
   playbook + demo-m3.md rehearsal) added — exit criterion had no covering
   WU; ROADMAP range updated; 9 icebox items filed. Active → WU-030.
-- 2026-07-11 — WU-024 + WU-025 done (s13, 54db393 + 90aae5a): both M2-gate
-  fix WUs — scheduler hardening (stored ritual evidence, race guards,
-  instance-wide overlap, bounded fires) + identity/session honesty
-  (username case-fold, honest bootstrap/sign-out, list gating, boot warn).
-  M2 FORMALLY CLOSED.
