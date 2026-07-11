@@ -20,6 +20,7 @@ import (
 
 	"github.com/ios9000/db-portal/backend/internal/authn"
 	"github.com/ios9000/db-portal/backend/internal/authz"
+	"github.com/ios9000/db-portal/backend/internal/chain"
 	"github.com/ios9000/db-portal/backend/internal/config"
 	"github.com/ios9000/db-portal/backend/internal/db"
 	"github.com/ios9000/db-portal/backend/internal/engine"
@@ -85,13 +86,18 @@ func run(log *slog.Logger, args []string) error {
 	registry.Register(engine.ClassNonProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}))
 
 	runSvc := runs.NewService(pool, registry, log)
+	chainSvc := chain.New(pool, runSvc, log)
 	// Failure/cancel mail to the DBA list (SPEC-014) — wired before the
-	// orphan sweep so unattended endings notify too. No recipients =
-	// notifications off, stated once so nobody hunts for missing mail.
+	// orphan sweeps so unattended endings notify too. Chain step runs mail
+	// at chain granularity only: the halt mail is THE mail, the run-level
+	// one is filtered (SPEC-032 mini-ADR 5). No recipients = notifications
+	// off, stated once so nobody hunts for missing mail.
 	if to := cfg.NotifyRecipients(); len(to) > 0 {
-		runSvc.Notifier = &notify.Mailer{
+		mailer := &notify.Mailer{
 			Addr: cfg.SMTPAddr(), From: cfg.SMTPFrom, To: to, BaseURL: cfg.BaseURL,
 		}
+		runSvc.Notifier = chain.StepRunFilter{Next: mailer}
+		chainSvc.Notifier = mailer
 		log.Info("run notifications enabled", "smtp", cfg.SMTPAddr(), "to", to)
 	} else {
 		log.Info("run notifications disabled (PORTAL_NOTIFY_TO is empty)")
@@ -102,6 +108,13 @@ func run(log *slog.Logger, args []string) error {
 		log.Warn("orphan sweep skipped", "err", err.Error())
 	} else if n > 0 {
 		log.Info("orphaned runs finalized", "count", n)
+	}
+	// Then halt chains those orphans belonged to (SPEC-032 behavior 6) —
+	// this order lets the chain sweep see its step runs already terminal.
+	if n, err := chainSvc.SweepOrphans(ctx); err != nil {
+		log.Warn("chain sweep skipped", "err", err.Error())
+	} else if n > 0 {
+		log.Info("orphaned chains halted", "count", n)
 	}
 
 	auth, err := buildAuthenticator(cfg, pool, log)
@@ -133,6 +146,7 @@ func run(log *slog.Logger, args []string) error {
 		Runs:          runSvc,
 		Artifacts:     runSvc,
 		Schedules:     sched,
+		Chains:        chainSvc,
 		Auth:          auth,
 		Roles:         roles,
 		SecureCookies: cfg.CookieSecure,

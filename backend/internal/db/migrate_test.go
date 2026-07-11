@@ -46,9 +46,16 @@ func TestMigrateUpDown(t *testing.T) {
 	require.True(t, columnExists(t, pool, "schedule", "confirm"),
 		"0008 up must add the stored ritual evidence (M2-gate finding 1)")
 	require.True(t, tableExists(t, pool, "artifact"), "0009 up must create the artifact registry")
+	require.True(t, tableExists(t, pool, "chain"), "0010 up must create the chain table")
+	require.True(t, tableExists(t, pool, "chain_step"), "0010 up must create the chain_step table")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "chain"), "0010 down must remove the chain tables")
+	require.False(t, tableExists(t, pool, "chain_step"))
+	require.True(t, tableExists(t, pool, "artifact"), "0009 must survive 0010 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "artifact"), "0009 down must remove the artifact registry")
 	require.True(t, columnExists(t, pool, "schedule", "confirm"), "0008 must survive 0009 down")
@@ -157,6 +164,9 @@ func TestArtifactBackfillWalk(t *testing.T) {
 	insertRun("failed", true)   // non-success never registers
 
 	for range 2 {
+		// goose down steps one migration; 0010 (chains) sits above 0009 now,
+		// so reaching below the registry takes two.
+		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.False(t, tableExists(t, pool, "artifact"))
 		require.NoError(t, db.Migrate(ctx, dsn, "up"))

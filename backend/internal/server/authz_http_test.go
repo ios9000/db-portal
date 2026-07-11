@@ -35,13 +35,15 @@ func guardedServer(t *testing.T, guard server.RoleGuard) *httptest.Server {
 	t.Helper()
 	return depsServer(t, server.Deps{
 		DB: fakePinger{}, Instances: stubReader{}, Runs: stubRuns{run: sampleRun()},
-		Schedules: stubSchedules{}, Auth: allowAllAuth{}, Roles: guard,
+		Schedules: stubSchedules{}, Chains: stubChains{chain: sampleChain()},
+		Auth: allowAllAuth{}, Roles: guard,
 	})
 }
 
 // SPEC-021 behavior 1 (handler half): mutations answer 403 for a session
 // without the dba role; the guard sees the session identity and the route.
-// SPEC-022 behavior 8 adds the schedule mutations to the same group.
+// SPEC-022 behavior 8 adds the schedule mutations, SPEC-032 behavior 4 the
+// chain resume, to the same group.
 func TestMutationsRequireDBARole(t *testing.T) {
 	asked := &roleAsk{}
 	ts := guardedServer(t, strictRoles{err: authz.ErrDenied, last: asked})
@@ -52,6 +54,7 @@ func TestMutationsRequireDBARole(t *testing.T) {
 		{http.MethodPost, "/api/schedules"},
 		{http.MethodPatch, "/api/schedules/3"},
 		{http.MethodDelete, "/api/schedules/3"},
+		{http.MethodPost, "/api/chains/7/resume"},
 	} {
 		req, err := http.NewRequest(route.method, ts.URL+route.path,
 			strings.NewReader(`{"instance":"billing-test","operation":"dump"}`))
@@ -72,7 +75,7 @@ func TestMutationsRequireDBARole(t *testing.T) {
 func TestReadsSkipTheRoleGuard(t *testing.T) {
 	ts := guardedServer(t, strictRoles{err: authz.ErrDenied})
 
-	for _, path := range []string{"/api/instances", "/api/runs", "/api/runs/7", "/api/operations", "/api/schedules", "/api/auth/me"} {
+	for _, path := range []string{"/api/instances", "/api/runs", "/api/runs/7", "/api/runs/7/chain", "/api/operations", "/api/schedules", "/api/auth/me"} {
 		resp, err := http.Get(ts.URL + path)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())

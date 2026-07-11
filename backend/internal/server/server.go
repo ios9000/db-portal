@@ -28,6 +28,7 @@ type Deps struct {
 	Runs      RunService
 	Artifacts ArtifactReader
 	Schedules ScheduleService
+	Chains    ChainService
 	Auth      Authenticator
 	Roles     RoleGuard
 	// SecureCookies marks the session cookie Secure (PORTAL_COOKIE_SECURE;
@@ -55,6 +56,7 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 			r.Get("/runs", listRuns(log, d.Runs))
 			r.Get("/runs/{id}", getRun(log, d.Runs))
 			r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
+			r.Get("/runs/{id}/chain", getRunChain(log, d.Chains))
 			r.Get("/artifacts", listArtifacts(log, d.Artifacts))
 			r.Get("/schedules", listSchedules(log, d.Schedules))
 			// Mutations need the dba role; reads stay session-gated
@@ -67,6 +69,7 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 				r.Post("/schedules", createSchedule(log, d.Schedules))
 				r.Patch("/schedules/{id}", patchSchedule(log, d.Schedules))
 				r.Delete("/schedules/{id}", deleteSchedule(log, d.Schedules))
+				r.Post("/chains/{id}/resume", resumeChain(log, d.Chains))
 			})
 		})
 	})

@@ -28,6 +28,7 @@ import (
 
 	"github.com/ios9000/db-portal/backend/internal/authn"
 	"github.com/ios9000/db-portal/backend/internal/authz"
+	"github.com/ios9000/db-portal/backend/internal/chain"
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
 	"github.com/ios9000/db-portal/backend/internal/notify"
@@ -56,11 +57,19 @@ func TestGoldenFlow(t *testing.T) {
 	svc.PollInterval = 2 * time.Millisecond
 	t.Cleanup(svc.Wait) // watchers + notify goroutines drain before the pool closes
 
+	// Notifier wiring in the production shape (SPEC-032 mini-ADR 5): run
+	// mail behind the chain step filter, chain halt mail direct.
 	smtpAddr, mail := testutil.FakeSMTP(t)
-	svc.Notifier = &notify.Mailer{
+	mailer := &notify.Mailer{
 		Addr: smtpAddr, From: "portal@db-portal.local",
 		To: []string{"dba@example.test"}, BaseURL: "http://portal.local:8080",
 	}
+	svc.Notifier = chain.StepRunFilter{Next: mailer}
+
+	chainSvc := chain.New(pool, svc, log)
+	chainSvc.PollInterval = 2 * time.Millisecond
+	chainSvc.Notifier = mailer
+	t.Cleanup(chainSvc.Wait)
 
 	// Same boot-time grants as main.go's fake mode (SPEC-021 mini-ADR 8):
 	// the dev directory's DBAs get the dba role; the guard is otherwise live.
@@ -80,6 +89,7 @@ func TestGoldenFlow(t *testing.T) {
 		DB: pool, Instances: inventory.NewStore(pool), Runs: svc,
 		Artifacts: svc,
 		Schedules: sched,
+		Chains:    chainSvc,
 		Auth:      authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
 		Roles:     roles,
 	}))
@@ -246,6 +256,90 @@ func TestGoldenFlow(t *testing.T) {
 	schedArts := listArtifacts(t, c, "billing-test")
 	require.Len(t, schedArts, 2)
 	require.Equal(t, schedRun.ID, schedArts[0].RunID, "the scheduled dump's artifact leads")
+
+	// Beat 9 — the chain engine (SPEC-032, the ROADMAP M3 drill at the HTTP
+	// seam): a portal-assembled 3-step chain halts on an injected step-2
+	// failure with exactly ONE mail at chain granularity, then a DBA resume
+	// over the API re-fires the failed step as a NEW run and carries the
+	// chain to success. Chains have no client-facing create (031's restore
+	// POST is the first assembler), so creation rides the service like Beat
+	// 5's failure injection; everything after is production HTTP.
+	drill, err := chainSvc.Create(ctx, chain.CreateRequest{
+		Kind: "test-chain", Instance: "hr-test", Actor: "dba1", Reason: "drill",
+		Steps: []chain.StepSpec{
+			{Operation: "dump"},
+			{Operation: "dump", Params: map[string]string{"mock_fail_at": "1"}},
+			{Operation: "dump"},
+		},
+	})
+	require.NoError(t, err)
+
+	var halted chain.Chain
+	require.Eventually(t, func() bool {
+		halted, err = chainSvc.Get(ctx, drill.ID)
+		require.NoError(t, err)
+		return halted.State == "halted"
+	}, 10*time.Second, 5*time.Millisecond, "the injected failure must halt the chain")
+	chainSvc.Wait() // halt-mail goroutine settles before asserting on it
+
+	require.Equal(t, "success", halted.Steps[0].Status, "step 1 stands")
+	require.Equal(t, "failed", halted.Steps[1].Status)
+	require.Equal(t, "pending", halted.Steps[2].Status, "step 3 never fired")
+	failedStepRun := *halted.Steps[1].RunID
+
+	// The strip lookup answers over HTTP from any step run.
+	stripResp, err := c.get(fmt.Sprintf("/api/runs/%d/chain", failedStepRun))
+	require.NoError(t, err)
+	var strip chain.Chain
+	require.NoError(t, json.NewDecoder(stripResp.Body).Decode(&strip))
+	require.NoError(t, stripResp.Body.Close())
+	require.Equal(t, http.StatusOK, stripResp.StatusCode)
+	require.Equal(t, drill.ID, strip.ID)
+	require.Equal(t, "halted", strip.State)
+
+	// Exactly ONE mail, the chain's — the step run's own failure mail is
+	// suppressed by the filter (mini-ADR 5).
+	select {
+	case msg = <-mail:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no chain halt mail arrived")
+	}
+	require.Contains(t, msg.Data,
+		fmt.Sprintf("Subject: [db-portal] CHAIN-%d halted — test-chain on hr-test (test)", drill.ID))
+	require.Contains(t, msg.Data, fmt.Sprintf("http://portal.local:8080/runs/%d", failedStepRun))
+	select {
+	case extra := <-mail:
+		t.Fatalf("halt must mail exactly once, got a second: %.120s", extra.Data)
+	default:
+	}
+
+	// The human fixes the cause, then resumes over the API as themselves.
+	_, err = pool.Exec(ctx,
+		`UPDATE chain_step SET params = '{}' WHERE chain_id = $1 AND seq = 2`, drill.ID)
+	require.NoError(t, err)
+	resumeResp, err := c.post(fmt.Sprintf("/api/chains/%d/resume", drill.ID), "")
+	require.NoError(t, err)
+	require.NoError(t, resumeResp.Body.Close())
+	require.Equal(t, http.StatusOK, resumeResp.StatusCode)
+
+	var done chain.Chain
+	require.Eventually(t, func() bool {
+		done, err = chainSvc.Get(ctx, drill.ID)
+		require.NoError(t, err)
+		return done.State == "success"
+	}, 10*time.Second, 5*time.Millisecond, "the resumed chain must finish")
+
+	// The failed step re-fired as a NEW run (history kept: the superseded
+	// run survives, still failed); every step run is fully audited through
+	// Start, attributed chain:dba1 — and steps ARE runs, so Activity's
+	// requester filter finds the whole drill.
+	require.NotEqual(t, failedStepRun, *done.Steps[1].RunID)
+	requireAudit(t, ctx, pool, failedStepRun, "chain:dba1", "test", "failed")
+	for _, st := range done.Steps {
+		requireAudit(t, ctx, pool, *st.RunID, "chain:dba1", "test", "success")
+	}
+	require.Len(t, listRuns(t, c, "?requested_by=chain:dba1"), 4,
+		"three steps + the superseded attempt, all visible as runs")
 }
 
 // apiClient is the authenticated client every HTTP beat runs through: a

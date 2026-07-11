@@ -16,9 +16,10 @@ type SMTPCapture struct {
 	Data string
 }
 
-// FakeSMTP serves exactly one SMTP session on a random loopback port and
-// sends the captured message on the returned channel. Just enough protocol
-// for net/smtp: 220 greeting, 250s, 354 for DATA, 221 on QUIT.
+// FakeSMTP serves SMTP sessions (one message each) on a random loopback
+// port until the test ends, sending every captured message on the returned
+// channel. Just enough protocol for net/smtp: 220 greeting, 250s, 354 for
+// DATA, 221 on QUIT.
 func FakeSMTP(t *testing.T) (addr string, got <-chan SMTPCapture) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -27,58 +28,67 @@ func FakeSMTP(t *testing.T) (addr string, got <-chan SMTPCapture) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
-	ch := make(chan SMTPCapture, 1)
+	ch := make(chan SMTPCapture, 8)
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-
-		var cap SMTPCapture
-		r := bufio.NewReader(conn)
-		say := func(line string) { _, _ = fmt.Fprintf(conn, "%s\r\n", line) }
-		say("220 fake ESMTP")
 		for {
-			line, err := r.ReadString('\n')
+			conn, err := ln.Accept()
 			if err != nil {
-				return
+				return // listener closed by cleanup
 			}
-			line = strings.TrimRight(line, "\r\n")
-			cmd := strings.ToUpper(line)
-			switch {
-			case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
-				say("250 fake")
-			case strings.HasPrefix(cmd, "MAIL FROM:"):
-				cap.From = strings.Trim(line[len("MAIL FROM:"):], "<> ")
-				say("250 OK")
-			case strings.HasPrefix(cmd, "RCPT TO:"):
-				cap.To = append(cap.To, strings.Trim(line[len("RCPT TO:"):], "<> "))
-				say("250 OK")
-			case cmd == "DATA":
-				say("354 go ahead")
-				var body strings.Builder
-				for {
-					dl, err := r.ReadString('\n')
-					if err != nil {
-						return
-					}
-					if strings.TrimRight(dl, "\r\n") == "." {
-						break
-					}
-					body.WriteString(dl)
-				}
-				cap.Data = body.String()
-				say("250 accepted")
-			case cmd == "QUIT":
-				say("221 bye")
-				ch <- cap
-				return
-			default:
-				say("250 OK")
-			}
+			serveSMTP(conn, ch)
 		}
 	}()
 	return ln.Addr().String(), ch
+}
+
+// serveSMTP handles one connection delivering one message. Sessions are
+// served sequentially — senders in this codebase dial, deliver, and QUIT,
+// so a fairness scheme would be dead weight.
+func serveSMTP(conn net.Conn, ch chan<- SMTPCapture) {
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	var cap SMTPCapture
+	r := bufio.NewReader(conn)
+	say := func(line string) { _, _ = fmt.Fprintf(conn, "%s\r\n", line) }
+	say("220 fake ESMTP")
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		line = strings.TrimRight(line, "\r\n")
+		cmd := strings.ToUpper(line)
+		switch {
+		case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
+			say("250 fake")
+		case strings.HasPrefix(cmd, "MAIL FROM:"):
+			cap.From = strings.Trim(line[len("MAIL FROM:"):], "<> ")
+			say("250 OK")
+		case strings.HasPrefix(cmd, "RCPT TO:"):
+			cap.To = append(cap.To, strings.Trim(line[len("RCPT TO:"):], "<> "))
+			say("250 OK")
+		case cmd == "DATA":
+			say("354 go ahead")
+			var body strings.Builder
+			for {
+				dl, err := r.ReadString('\n')
+				if err != nil {
+					return
+				}
+				if strings.TrimRight(dl, "\r\n") == "." {
+					break
+				}
+				body.WriteString(dl)
+			}
+			cap.Data = body.String()
+			say("250 accepted")
+		case cmd == "QUIT":
+			say("221 bye")
+			ch <- cap
+			return
+		default:
+			say("250 OK")
+		}
+	}
 }
