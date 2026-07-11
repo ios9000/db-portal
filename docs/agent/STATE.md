@@ -16,24 +16,24 @@
   ROADMAP ("groom at M2 close; grooming is a deliverable"): Phase 3
   (WU-030…035) ACs + context briefs in BACKLOG format — currently
   one-line skeletons.
-- **Status:** WU-023 closed per SPEC-023 (docs/specs/windows.md, 6
-  mini-ADRs). internal/window (pure): `Day HH:MM-HH:MM` weekly grammar,
-  wrap-capable (fixture ships `Sat 22:00-02:00`), end==start rejected.
-  ONE parser, two consumers: runs.Start stamps the 0003-PRE-PROVISIONED
-  audit_event.window_warned on run.submitted (drawer AND scheduler share
-  the stamp point — zero scheduler-side code); inventory read model
-  computes window_state inside|outside|null server-side (client never
-  parses window text). D6 everywhere: every failure mode = no warning;
-  garbage logs once per instance per process; a window can never block.
-  finished row does NOT carry the flag. LaunchDrawer shows an amber
-  .drawer-warn line when outside. NO migration — spec draft 1 invented
-  one; the fresh-DB migrate walk caught the drift (0003 comment:
-  "semantics arrive in WU-023"). Architect-implemented end to end (S
-  slice, delegation overhead > diff). Evidence: npm run check green
-  (vitest 96/96, Go all pkgs -race). LIVE (Fri night vs Sat fixture
-  windows): 4 windowed prods "outside"; prod run submitted warned=t /
-  finished=f; inside-window run warned=f; garbage 201+201 + exactly 1
-  log line; backdated prod schedule fire → schedule:dba1 warned=t.
+- **Status (s13, the gate-fix pair):** WU-024 (54db393): schedule.confirm
+  (migration 0008) stores the creation-time ritual evidence and the
+  executor fires with it VERBATIM — env promotion of an unconfirmed
+  schedule stamps visible 'error', zero runs (live-drilled); fire()
+  re-checks the live row; stamp keeps a concurrent disable's NULL clock
+  (CASE needs ::timestamptz — bare param breaks pgx type inference
+  SILENTLY); overlap probe = any live run on the INSTANCE (manual runs
+  block scheduled fires too; SPEC-022 mini-ADR 4+8 amended in place);
+  FireTimeout 30s/fire, stamp on WithoutCancel ctx; SetEnabled idempotent;
+  PATCH 413. WU-025 (90aae5a): Login lowercases the username at the seam
+  (one human = one actor across session/auth_event/audit_event/user_role;
+  passwords NOT folded; live: "DBA1" → dba1 everywhere + 201 run under
+  the grant); bootstrap 401=signed-out vs anything-else=retry screen;
+  sign-out only completes locally when the server confirmed (2xx/401),
+  else visible error — httpOnly cookie can't be cleared client-side;
+  New-schedule waits for the list; ldap+CookieSecure=false boot Warn
+  (live-verified on a throwaway :8090 boot). Evidence: npm run check
+  green both stacks (vitest 100/100; Go all pkgs -race), CI green.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
