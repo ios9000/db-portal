@@ -5,32 +5,32 @@
 
 ## Now
 
-- **Active WU:** WU-023 (maintenance windows warn-only, S) — **not started,
-  fresh session, spec first** (parse `Day HH:MM-HH:MM`, warn-never-block per
-  D6, `window_warned` audit stamp shape + timezone are the spec decisions).
-  WU-022 DONE 2026-07-10 (s12, commits e316515 spec + 0579a58 backend +
-  a5c2867 UI). ROADMAP M2 scheduled-dump exit criterion met + live-verified.
-- **Status:** WU-022 closed per SPEC-022 (docs/specs/scheduler.md, 10
-  mini-ADRs). Backend (architect-implemented): migration 0007 (schedule
-  table, instance FK CASCADE, partial due-index), internal/schedule =
-  store CRUD (prod ritual at CREATION — confirm == instance name; executor
-  then confirms programmatically every fire) + executor (DB tick loop over
-  persisted pre-jittered next_fire_at; robfig/cron/v3 is PARSER ONLY;
-  misfire = coalesced catch-up for free — due-in-past is just due;
-  fire-then-stamp: crash mid-fire retries via sweep+catch-up composition;
-  overlap = skip visibly; disabled = frozen, re-enable computes from now;
-  engine refusal counts as 'fired' → SPEC-014 mail; every outcome stamps +
-  advances, never wedges). Actor = `schedule:<created_by>` through the
-  explicit StartRequest door. API GET/POST/PATCH/DELETE /api/schedules,
-  mutations behind requireRole, 64KiB/500-char caps. UI (4th Sonnet
-  delegation, first pass green): Schedules page — table (env badge, cron
-  chip, next/last fire, RUN-n links, toggle, two-step delete) + create
-  drawer w/ prod typed-name ritual; api.ts Schedule type + 4 fns +
-  patchJSON/deleteVoid helpers. Golden flow Beat 8 = live executor loop
-  fires a due schedule e2e. Evidence: npm run check green (vitest 94/94,
-  Go all pkgs -race). LIVE on release binary: jitter-bounded fire w/ both
-  audit rows schedule:dba1; disabled never fires; stop across 2 fire
-  times → ONE coalesced catch-up; restart w/ nothing due → no re-fire.
+- **Active:** M2 MILESTONE GATE — **Phase 2 (WU-020…023) is COMPLETE**
+  2026-07-10 (s12). WU-023 DONE (commits 3de6187 spec + 97de1ab impl).
+  ROADMAP M2 exit criteria all met + live-verified: no anonymous access
+  (WU-020), scheduled dump fires with full audit attribution (WU-022),
+  window warning visible in UI + audit flag (WU-023). Next session: run
+  the M2 gate review, then groom Phase 3 (WU-030…035) ACs + context
+  briefs at gate close (ROADMAP sequencing rule — grooming is a
+  deliverable).
+- **Status:** WU-023 closed per SPEC-023 (docs/specs/windows.md, 6
+  mini-ADRs). internal/window (pure): `Day HH:MM-HH:MM` weekly grammar,
+  wrap-capable (fixture ships `Sat 22:00-02:00`), end==start rejected.
+  ONE parser, two consumers: runs.Start stamps the 0003-PRE-PROVISIONED
+  audit_event.window_warned on run.submitted (drawer AND scheduler share
+  the stamp point — zero scheduler-side code); inventory read model
+  computes window_state inside|outside|null server-side (client never
+  parses window text). D6 everywhere: every failure mode = no warning;
+  garbage logs once per instance per process; a window can never block.
+  finished row does NOT carry the flag. LaunchDrawer shows an amber
+  .drawer-warn line when outside. NO migration — spec draft 1 invented
+  one; the fresh-DB migrate walk caught the drift (0003 comment:
+  "semantics arrive in WU-023"). Architect-implemented end to end (S
+  slice, delegation overhead > diff). Evidence: npm run check green
+  (vitest 96/96, Go all pkgs -race). LIVE (Fri night vs Sat fixture
+  windows): 4 windowed prods "outside"; prod run submitted warned=t /
+  finished=f; inside-window run warned=f; garbage 201+201 + exactly 1
+  log line; backdated prod schedule fire → schedule:dba1 warned=t.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -39,33 +39,36 @@
 
 ## Next action (be exact)
 
-1. **WU-023 (windows warn-only) in a FRESH session, spec first**
-   (docs/specs/windows.md): parse the fixture's `Day HH:MM-HH:MM` shape from
-   instance.maintenance_window (raw text since WU-010, O-3); launching
-   OUTSIDE the window — drawer AND scheduler path — warns, NEVER blocks
-   (D6); `window_warned` stamp on the audit trail (spec decides column vs
-   action — note audit_event has hardened NOT NULLs and append-only
-   triggers); unparseable/empty = no warning, logged once; timezone
-   mini-ADR (SPEC-022 mini-ADR 7 pinned server-local — stay consistent).
-   Read: BACKLOG WU-023; D6; O-3 (DECISIONS §Open); WU-010 schema;
-   LaunchDrawer + runs.Service.Start (stamp point); internal/schedule
-   executor fire() (the second launch path).
-2. WU-023 closes Phase 2 → M2 milestone gate: groom Phase 3 (WU-030…035)
-   ACs + context briefs at gate close, per ROADMAP sequencing rules.
+1. **M2 milestone gate in a FRESH session.** ROADMAP: "milestone gates are
+   hard — no next-phase WU starts until exit criteria + review gate pass."
+   Exit evidence already live-verified per-WU (see JOURNAL s10–s12); the
+   gate review itself remains. Precedent: the M1 gate used the
+   m1-gate-review multi-agent workflow — per the cost-sensitivity memory,
+   STATE the expected agent count/cost FIRST and offer the lighter
+   alternative (Sonnet reviewers + inline verification by the architect).
+   Scope: WU-020…023 code (authn, authz, scheduler, windows).
+2. **At gate close: groom Phase 3** (WU-030…035 — artifact registry,
+   restore, chains, SemaphoreAdapter, real dump playbook, minio) into
+   context-window-sized WUs with ACs + context briefs (BACKLOG format).
+3. Icebox reminders while grooming: session GC sweep, denial-rate alarm,
+   break-glass mail alarm, role admin CLI, cron×window schedule hint,
+   window_warned on run read model.
 
 ## Blocked / needs user
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of a5c2867, migrations at 0007) with `PORTAL_AUTH_MODE=fake`
-  + demo break-glass hash (password "demo-glass", hash only in the unit
-  env — recover via `systemctl show dbportal-demo -p Environment`). Sign in
-  dba1/dba1. Schedules list is empty (live-verify schedules were deleted;
-  runs 14/15 remain as schedule:dba1 history). Before any live check that
-  runs its own portal: `systemctl stop dbportal-demo` — bind-in-use +
-  two-portals-one-DB hazard. ALSO (bit s10 twice): a backgrounded
-  `portal &` may report a wrapper PID in `$!` — always kill the PID that
-  `ss -ltnp` shows holding :8080.
+  :8080 (binary of 97de1ab, migrations at 0007 — 0008 was never needed)
+  with `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password
+  "demo-glass", hash only in the unit env — recover via `systemctl show
+  dbportal-demo -p Environment`). Sign in dba1/dba1. Schedules list is
+  empty (live-verify schedules deleted; runs 14–21 remain as verify
+  history incl. schedule:dba1 rows). Fixture windows restored (only the
+  4 prods have windows). Before any live check that runs its own portal:
+  `systemctl stop dbportal-demo` — bind-in-use + two-portals-one-DB
+  hazard. ALSO (bit s10 twice): a backgrounded `portal &` may report a
+  wrapper PID in `$!` — always kill the PID that `ss -ltnp` shows
+  holding :8080.
 
 ## Standing context (stable facts worth re-stating)
 
@@ -110,6 +113,14 @@
   schedule drawer; prod ritual = typed exact instance name, client AND
   server, launch AND schedule-create; Registry.Register panics on
   cross-class adapter sharing; env stamping pinned by tests.
+- **Windows (WU-023, SPEC-023 = docs/specs/windows.md):** internal/window
+  pure parser (`Day HH:MM-HH:MM`, weekly, wrap-capable, server-local —
+  same clock as cron). runs.Start stamps audit_event.window_warned
+  (column pre-provisioned in 0003) on run.submitted only; both launch
+  paths share it. instance JSON window_state inside|outside|null is
+  server-computed — the client never parses window text. D6: every
+  parse/eval failure = no warning, never a block; garbage logs once per
+  instance per process.
 - Inventory (WU-010): cluster/instance tables (name natural key, env CHECK,
   window raw text), quarantine tables; `portal import <csv>` idempotent;
   engine.ClassForEnv = env authority. size_gb canonicalized (WU-018).
@@ -149,16 +160,16 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-10 — WU-023 done (s12, 3de6187+97de1ab): windows warn-only —
+  SPEC-023, internal/window parser + audit stamp (0003's dormant column)
+  + window_state read model + drawer warn line; live-verified Fri-night
+  vs Sat fixture windows. PHASE 2 COMPLETE. Demo portal on 97de1ab.
+  Active → M2 gate (fresh session), then Phase 3 grooming.
 - 2026-07-10 — WU-022 done (s12, e316515+0579a58+a5c2867): scheduler —
   SPEC-022, tick-loop executor over persisted jittered next_fire_at,
   schedule CRUD + Schedules UI, golden-flow Beat 8; live-verified incl.
-  restart battery (coalesced catch-up, no double-fire). Demo portal
-  rebuilt on a5c2867, DB at migration 0007. Active → WU-023 (fresh
-  session, spec first; closes Phase 2 → M2 gate).
+  restart battery (coalesced catch-up, no double-fire).
 - 2026-07-10 — WU-021 done (s11, 5dbb24a+4daf552+f0a7d45+99bac19): AuthZ —
   SPEC-021, role store + guards + real actor + run.cancel_requested +
   server-side prod ritual + requested_by filter + body caps; live-verified
   end to end (403 denial trail, ritual 400s, 3-row cancel trail).
-- 2026-07-10 — WU-020 done (s10, 0e30914+5034dc8+d5c6731): AuthN — SPEC-020,
-  sessions + directory seam + break-glass + login UI; golden flow
-  authenticates for real; live-verified end to end.

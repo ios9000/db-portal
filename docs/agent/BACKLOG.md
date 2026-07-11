@@ -445,16 +445,21 @@ real stop/start across two missed fire times → ONE coalesced catch-up).
 **Context brief:** ADR-003; D4; internal/runs/service.go (Start seam); frontend
 /schedules stub route (App.tsx); WU-021 actor conventions.
 
-### WU-023 · Maintenance windows warn-only — S · `pending`
+### WU-023 · Maintenance windows warn-only — S · `done (2026-07-10, commits 3de6187 spec + 97de1ab impl — architect-implemented, too small to delegate)`
 Give `instance.maintenance_window` (raw text since WU-010, O-3) just enough semantics
-to warn: parse the fixture's `Day HH:MM-HH:MM` shape; launching OUTSIDE the window
-(drawer AND scheduler path) shows a warn banner — never blocks (D6) — and stamps a
-`window_warned` flag on the audit trail (schema addition, spec decides column vs
-action). Unparseable/empty window = no warning, logged once. Timezone: assume portal
-server TZ, mini-ADR it.
+to warn: parse the fixture's `Day HH:MM-HH:MM` shape (SPEC-023: wrap-capable — the
+fixture ships `Sat 22:00-02:00`); launching OUTSIDE the window (drawer AND scheduler
+path — one stamp point, runs.Start) shows a warn banner — never blocks (D6) — and
+stamps `window_warned` on the run.submitted audit row. NO schema addition needed:
+0003 pre-provisioned the column ("semantics arrive in WU-023") — the spec's first
+draft invented a migration and the fresh-DB walk caught it. Unparseable/empty = no
+warning, logged once per instance per process. Timezone: server-local (mini-ADR 6,
+consistent with SPEC-022). Instance read model gains server-computed `window_state`
+so the client never parses window text.
 **Verify:** launch outside window → banner + `window_warned` true in audit; inside →
 no flag; scheduled fire outside window carries the flag too; garbage window text never
-blocks a launch; `npm run check` green.
+blocks a launch; `npm run check` green. ALL VERIFIED LIVE 2026-07-10 (Fri-night runs
+against the fixture's Sat windows; garbage window 2×201 + exactly 1 log line).
 **Context brief:** D6; O-3 (DECISIONS §Open); WU-010 schema (instance.maintenance_window);
 LaunchDrawer (frontend) + runs.Service.Start (stamp point); WU-022 executor path.
 

@@ -131,6 +131,8 @@ target — gates that aren't THE gate rot. `docs/demo-m1.md` stays the human twi
 ## Open (inherited from architecture doc §10)
 
 - **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real)
-- **O-3** maintenance-window source (rec: per-instance inventory field) — WU-010 adds the field
+- **O-3** maintenance-window source (rec: per-instance inventory field) — WU-010 adds the
+  field; WU-023 gives it warn-only semantics (SPEC-023: `Day HH:MM-HH:MM`, server-local).
+  Still open post-MVP: multi-window/holiday grammar, per-instance timezones, editing UI.
 - **O-4** dump options matrix (rec: `pg_dump -Fc`, small vetted option set) — WU-034
 - **O-5** workshop "Wrap" section never received — confirm no extra decisions outstanding
