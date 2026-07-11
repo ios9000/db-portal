@@ -78,6 +78,7 @@ func TestGoldenFlow(t *testing.T) {
 
 	ts := httptest.NewServer(server.NewRouter(log, server.Deps{
 		DB: pool, Instances: inventory.NewStore(pool), Runs: svc,
+		Artifacts: svc,
 		Schedules: sched,
 		Auth:      authn.NewService(pool, authn.DevDirectory(), log, time.Hour, ""),
 		Roles:     roles,
@@ -137,6 +138,14 @@ func TestGoldenFlow(t *testing.T) {
 			require.Nil(t, in.LastBackupAt, "%s was never dumped", in.Name)
 		}
 	}
+
+	// The dump is registered (SPEC-030, WU-030): a first-class registry row
+	// keyed to its origin run — what WU-031's restore drawer will feed from.
+	arts := listArtifacts(t, c, "billing-test")
+	require.Len(t, arts, 1)
+	require.Equal(t, run.ID, arts[0].RunID, "registry row carries the origin run FK")
+	require.Equal(t, run.Artifact.Checksum, arts[0].Checksum)
+	require.Equal(t, "standard", arts[0].RetentionClass)
 
 	// Beat 4 — live logs over SSE: replay of the finished job, then exactly
 	// one `end` event (SPEC-013).
@@ -231,6 +240,12 @@ func TestGoldenFlow(t *testing.T) {
 	require.Equal(t, "success", schedRun.State)
 	require.Equal(t, "schedule:dba1", schedRun.RequestedBy)
 	requireAudit(t, ctx, pool, schedRun.ID, "schedule:dba1", "test", "success")
+
+	// Scheduled dumps register too (SPEC-030 behavior 1) — both launch
+	// paths share finalize, so billing-test now lists two, newest first.
+	schedArts := listArtifacts(t, c, "billing-test")
+	require.Len(t, schedArts, 2)
+	require.Equal(t, schedRun.ID, schedArts[0].RunID, "the scheduled dump's artifact leads")
 }
 
 // apiClient is the authenticated client every HTTP beat runs through: a
@@ -289,6 +304,19 @@ func startRun(t *testing.T, c *apiClient, instance string) runs.Run {
 	var run runs.Run
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&run))
 	return run
+}
+
+func listArtifacts(t *testing.T, c *apiClient, instance string) []runs.RegisteredArtifact {
+	t.Helper()
+	resp, err := c.get("/api/artifacts?instance=" + instance)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Artifacts []runs.RegisteredArtifact `json:"artifacts"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body.Artifacts
 }
 
 func listRuns(t *testing.T, c *apiClient, query string) []runs.Run {

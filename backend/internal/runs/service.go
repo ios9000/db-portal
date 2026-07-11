@@ -324,6 +324,19 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 		return nil
 	}
 
+	// Register the artifact (SPEC-030): same tx as the guarded run UPDATE,
+	// so the registry row and the run's artifact_* columns cannot diverge
+	// and a losing finalizer (0 rows above) never reaches this INSERT.
+	// UNIQUE (run_id) backstops exactly-once at the schema layer.
+	if state == string(engine.StateSuccess) && artifact != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO artifact (run_id, name, size_bytes, checksum)
+			VALUES ($1, $2, $3, $4)`,
+			runID, artifact.Name, artifact.SizeBytes, artifact.Checksum); err != nil {
+			return fmt.Errorf("runs: register artifact: %w", err)
+		}
+	}
+
 	// Actor is inherited from the submitted row along with the other
 	// immutable stamps: it means "on whose behalf", not "which component
 	// wrote the row" — watcher and sweep finalizations carry the requester

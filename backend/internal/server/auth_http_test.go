@@ -75,7 +75,7 @@ func withSession(t *testing.T, req *http.Request) *http.Request {
 func TestAPIRequiresSession(t *testing.T) {
 	ts, _ := authServer(t)
 
-	for _, path := range []string{"/api/instances", "/api/runs", "/api/operations", "/api/auth/me"} {
+	for _, path := range []string{"/api/instances", "/api/runs", "/api/operations", "/api/artifacts", "/api/auth/me"} {
 		resp, err := http.Get(ts.URL + path)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())

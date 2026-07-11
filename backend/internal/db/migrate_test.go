@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -16,24 +17,8 @@ import (
 // TestMigrateUpDown runs the embedded migrations up and down against a
 // scratch database created on the dev Postgres (skips if unreachable).
 func TestMigrateUpDown(t *testing.T) {
-	admin := testutil.DB(t)
 	ctx := context.Background()
-
-	suffix := make([]byte, 4)
-	_, err := rand.Read(suffix)
-	require.NoError(t, err)
-	scratch := "portal_test_" + hex.EncodeToString(suffix)
-
-	_, err = admin.Exec(ctx, "CREATE DATABASE "+scratch)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, err := admin.Exec(context.Background(), "DROP DATABASE "+scratch+" WITH (FORCE)")
-		require.NoError(t, err)
-	})
-
-	cfg := testutil.Config(t)
-	cfg.DBName = scratch
-	dsn := cfg.DSN()
+	dsn := scratchDSN(t)
 
 	require.NoError(t, db.Migrate(ctx, dsn, "up"))
 
@@ -60,9 +45,14 @@ func TestMigrateUpDown(t *testing.T) {
 	require.True(t, tableExists(t, pool, "schedule"), "0007 up must create the schedule table")
 	require.True(t, columnExists(t, pool, "schedule", "confirm"),
 		"0008 up must add the stored ritual evidence (M2-gate finding 1)")
+	require.True(t, tableExists(t, pool, "artifact"), "0009 up must create the artifact registry")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "artifact"), "0009 down must remove the artifact registry")
+	require.True(t, columnExists(t, pool, "schedule", "confirm"), "0008 must survive 0009 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, columnExists(t, pool, "schedule", "confirm"), "0008 down must remove the column")
 	require.True(t, tableExists(t, pool, "schedule"), "0007 must survive 0008 down")
@@ -95,6 +85,106 @@ func TestMigrateUpDown(t *testing.T) {
 
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "app_meta"), "0001 down must remove the baseline table")
+}
+
+// scratchDSN creates a throwaway database on the dev Postgres (skips if
+// unreachable) and returns its DSN; the database drops on test cleanup.
+func scratchDSN(t *testing.T) string {
+	t.Helper()
+	admin := testutil.DB(t)
+	ctx := context.Background()
+
+	suffix := make([]byte, 4)
+	_, err := rand.Read(suffix)
+	require.NoError(t, err)
+	scratch := "portal_test_" + hex.EncodeToString(suffix)
+
+	_, err = admin.Exec(ctx, "CREATE DATABASE "+scratch)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := admin.Exec(context.Background(), "DROP DATABASE "+scratch+" WITH (FORCE)")
+		require.NoError(t, err)
+	})
+
+	cfg := testutil.Config(t)
+	cfg.DBName = scratch
+	return cfg.DSN()
+}
+
+// TestArtifactBackfillWalk pins 0009's backfill (SPEC-030 behavior 4):
+// every historical successful dump registers exactly once, artifact-less
+// and non-success runs never do, and the up→down→up walk lands the
+// identical set each time.
+func TestArtifactBackfillWalk(t *testing.T) {
+	ctx := context.Background()
+	dsn := scratchDSN(t)
+	require.NoError(t, db.Migrate(ctx, dsn, "up"))
+
+	pool, err := db.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	// A pre-registry estate: the runs exist, the artifact table (created
+	// empty above) has never seen them — the walk's re-up must backfill.
+	var clusterID, instanceID int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO cluster (name, platform) VALUES ('c1', 'vm') RETURNING id`).Scan(&clusterID))
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO instance (name, cluster_id, env, pg_version, owner)
+		VALUES ('billing-test', $1, 'test', '16.3', 'team') RETURNING id`,
+		clusterID).Scan(&instanceID))
+
+	finished := time.Date(2026, 7, 1, 3, 0, 0, 0, time.UTC)
+	insertRun := func(state string, withArtifact bool) int64 {
+		t.Helper()
+		var name, checksum *string
+		var size *int64
+		if withArtifact {
+			n, sz, sum := "billing-test.dump.tgz", int64(1234), "abc123"
+			name, size, checksum = &n, &sz, &sum
+		}
+		var id int64
+		require.NoError(t, pool.QueryRow(ctx, `
+			INSERT INTO run (instance_id, operation, environment, engine_class, playbook_tag,
+				state, artifact_name, artifact_size_bytes, artifact_checksum, finished_at)
+			VALUES ($1, 'dump', 'test', 'nonprod', 'dump', $2, $3, $4, $5, $6)
+			RETURNING id`,
+			instanceID, state, name, size, checksum, finished).Scan(&id))
+		return id
+	}
+	dumped := insertRun("success", true)
+	insertRun("success", false) // artifact-less success: nothing to register
+	insertRun("failed", true)   // non-success never registers
+
+	for range 2 {
+		require.NoError(t, db.Migrate(ctx, dsn, "down"))
+		require.False(t, tableExists(t, pool, "artifact"))
+		require.NoError(t, db.Migrate(ctx, dsn, "up"))
+
+		rows, err := pool.Query(ctx,
+			`SELECT run_id, name, retention_class, created_at FROM artifact ORDER BY id`)
+		require.NoError(t, err)
+		type row struct {
+			runID       int64
+			name, class string
+			createdAt   time.Time
+		}
+		var got []row
+		for rows.Next() {
+			var r row
+			require.NoError(t, rows.Scan(&r.runID, &r.name, &r.class, &r.createdAt))
+			got = append(got, r)
+		}
+		rows.Close()
+		require.NoError(t, rows.Err())
+
+		require.Len(t, got, 1, "exactly the one historical successful dump")
+		require.Equal(t, dumped, got[0].runID)
+		require.Equal(t, "billing-test.dump.tgz", got[0].name)
+		require.Equal(t, "standard", got[0].class)
+		require.Equal(t, finished, got[0].createdAt.UTC(),
+			"backfilled created_at is the run's finished_at, not migration time")
+	}
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {

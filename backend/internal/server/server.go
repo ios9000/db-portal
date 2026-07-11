@@ -26,6 +26,7 @@ type Deps struct {
 	DB        Pinger
 	Instances InstanceReader
 	Runs      RunService
+	Artifacts ArtifactReader
 	Schedules ScheduleService
 	Auth      Authenticator
 	Roles     RoleGuard
@@ -54,6 +55,7 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 			r.Get("/runs", listRuns(log, d.Runs))
 			r.Get("/runs/{id}", getRun(log, d.Runs))
 			r.Get("/runs/{id}/logs", streamRunLogs(log, d.Runs))
+			r.Get("/artifacts", listArtifacts(log, d.Artifacts))
 			r.Get("/schedules", listSchedules(log, d.Schedules))
 			// Mutations need the dba role; reads stay session-gated
 			// (SPEC-021 mini-ADR 2). Logout stays role-free above — any

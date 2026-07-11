@@ -131,6 +131,7 @@ func run(log *slog.Logger, args []string) error {
 		DB:            pool,
 		Instances:     inventory.NewStore(pool),
 		Runs:          runSvc,
+		Artifacts:     runSvc,
 		Schedules:     sched,
 		Auth:          auth,
 		Roles:         roles,
