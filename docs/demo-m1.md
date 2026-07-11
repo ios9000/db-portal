@@ -100,6 +100,11 @@ engine job id is prefixed `mock-prod-` — prod jobs run through a **separate
 engine adapter** (guardrail layer 3), even as mocks. Audit rows for this run
 carry `environment = 'prod'`.
 
+Unless the demo happens to run Saturday 02:00–06:00 (server time), the drawer
+also shows an **amber maintenance-window warning** — billing-prod's window is
+on file from the CSV, and the launch is outside it. It warns, never blocks
+(D6), and the run's `run.submitted` audit row records `window_warned = true`.
+
 Talking point: D2 — one pane of glass for prod + non-prod WITH engineered
 mix-up safeguards: banner (see it), ritual (mean it), credentials (contain it),
 audit env stamp (prove it).

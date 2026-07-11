@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -24,6 +24,7 @@ function makeInstance(overrides: Partial<Instance>): Instance {
     size_gb: 12,
     owner: 'team-billing',
     maintenance_window: null,
+    window_state: null,
     last_backup_at: null,
     ...overrides,
   };
@@ -212,4 +213,25 @@ test('overlay click on the started state keeps it open; explicit Close still wor
 
   await user.click(screen.getByRole('button', { name: 'Close' }));
   expect(onClose).toHaveBeenCalledOnce();
+});
+
+// SPEC-023: the window warning is display-only — server-computed state,
+// amber caution, and it never gates the launch button.
+test('outside the maintenance window shows the warn line with the raw window', () => {
+  renderDrawer(makeInstance({ maintenance_window: 'Sat 02:00-06:00', window_state: 'outside' }));
+
+  const warn = screen.getByRole('alert');
+  expect(warn.textContent).toContain('Outside this instance');
+  expect(warn.textContent).toContain('Sat 02:00-06:00');
+  expect(warn.textContent).toContain('never block');
+  expect(screen.getByRole('button', { name: /run backup on billing-test/i })).toBeEnabled();
+});
+
+test('inside the window or without one, no warn line renders', () => {
+  renderDrawer(makeInstance({ maintenance_window: 'Sat 02:00-06:00', window_state: 'inside' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+
+  cleanup();
+  renderDrawer(makeInstance({}));
+  expect(screen.queryByRole('alert')).toBeNull();
 });

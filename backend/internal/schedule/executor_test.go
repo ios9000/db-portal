@@ -297,6 +297,34 @@ func TestStartErrorStampsErrorAndAdvances(t *testing.T) {
 	require.Equal(t, int32(1), starter.calls.Load(), "an advanced schedule is not retried this cron cycle")
 }
 
+// SPEC-023 behavior 5: a scheduled fire outside the maintenance window
+// carries window_warned on its submitted row — drawer and scheduler share
+// the stamp point (runs.Start), proven here through the executor.
+func TestScheduledFireStampsWindowWarned(t *testing.T) {
+	svc, _, pool := newExecutor(t, time.Millisecond)
+	ctx := context.Background()
+
+	// A window three days from now: the fire is guaranteed outside it.
+	day := time.Now().AddDate(0, 0, 3).Weekday().String()[:3]
+	_, err := pool.Exec(ctx,
+		`UPDATE instance SET maintenance_window = $1 WHERE name = 'billing-test'`,
+		day+" 00:00-01:00")
+	require.NoError(t, err)
+
+	sc, err := svc.Create(ctx, createReq("billing-test", "@daily"))
+	require.NoError(t, err)
+	backdate(t, pool, sc.ID, 1)
+	svc.FireDue(ctx)
+
+	after := getSchedule(t, svc, sc.ID)
+	require.NotNil(t, after.LastRunID)
+	var warned bool
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT window_warned FROM audit_event
+		WHERE run_id = $1 AND action = 'run.submitted'`, *after.LastRunID).Scan(&warned))
+	require.True(t, warned, "the scheduler path must carry the window stamp too")
+}
+
 // SPEC-022 behavior 2 (loop half): the ticker loop itself picks up a due
 // schedule — Run(ctx) is what production executes.
 func TestRunLoopFires(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/ios9000/db-portal/backend/internal/catalog"
 	"github.com/ios9000/db-portal/backend/internal/engine"
+	"github.com/ios9000/db-portal/backend/internal/window"
 )
 
 var (
@@ -73,6 +74,11 @@ type Service struct {
 	// path is exercisable deterministically.
 	failRecordJobID error
 
+	// warnedWindows guards the once-per-instance-per-process log for
+	// unparseable maintenance windows (SPEC-023 mini-ADR 3) — garbage
+	// window text must not spam a line per launch.
+	warnedWindows sync.Map
+
 	wg sync.WaitGroup
 }
 
@@ -112,8 +118,10 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 
 	var instanceID int64
 	var env string
-	err := s.pool.QueryRow(ctx, `SELECT id, env FROM instance WHERE name = $1`, req.Instance).
-		Scan(&instanceID, &env)
+	var maintenanceWindow *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, env, maintenance_window FROM instance WHERE name = $1`, req.Instance).
+		Scan(&instanceID, &env, &maintenanceWindow)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Run{}, fmt.Errorf("%w: %q", ErrUnknownInstance, req.Instance)
@@ -127,6 +135,8 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 	if env == "prod" && req.Confirm != req.Instance {
 		return Run{}, ErrProdUnconfirmed
 	}
+
+	windowWarned := s.outsideWindow(req.Instance, maintenanceWindow)
 
 	class, err := engine.ClassForEnv(env) // fails closed on garbage
 	if err != nil {
@@ -157,9 +167,9 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 		return Run{}, fmt.Errorf("runs: insert run: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest)
-		VALUES ($1, 'run.submitted', $2, $3, $4, $5, $6)`,
-		req.Actor, runID, instanceID, env, op.PlaybookTag, digest); err != nil {
+		INSERT INTO audit_event (actor, action, run_id, instance_id, environment, playbook_tag, params_digest, window_warned)
+		VALUES ($1, 'run.submitted', $2, $3, $4, $5, $6, $7)`,
+		req.Actor, runID, instanceID, env, op.PlaybookTag, digest, windowWarned); err != nil {
 		return Run{}, fmt.Errorf("runs: audit submit: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -201,6 +211,27 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 		return Run{}, gerr
 	}
 	return run, fmt.Errorf("%w: %s", ErrEngine, err.Error())
+}
+
+// outsideWindow reports whether now falls outside the instance's
+// maintenance window (SPEC-023): the audit stamp both launch paths share,
+// since drawer and scheduler flow through Start. Warn-only semantics (D6):
+// no window, or a window the parser rejects, is simply false — a window
+// can never block a launch. Unparseable text logs once per instance per
+// process, not per launch.
+func (s *Service) outsideWindow(instance string, raw *string) bool {
+	if raw == nil || *raw == "" {
+		return false
+	}
+	w, err := window.Parse(*raw)
+	if err != nil {
+		if _, logged := s.warnedWindows.LoadOrStore(instance, true); !logged {
+			s.log.Warn("maintenance window unparseable — window warnings off for this instance",
+				"instance", instance, "window", *raw, "err", err.Error())
+		}
+		return false
+	}
+	return !w.Contains(time.Now())
 }
 
 // recordJobID stores the engine job id on the run row — the link the

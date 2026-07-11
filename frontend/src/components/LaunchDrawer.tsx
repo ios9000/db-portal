@@ -82,6 +82,14 @@ export function LaunchDrawer({ instance, operation, onClose }: Props) {
           <EnvBadge env={instance.env} />
         </div>
 
+        {instance.window_state === 'outside' && (
+          <p className="drawer-warn" role="alert">
+            Outside this instance's maintenance window
+            {instance.maintenance_window !== null && ` (${instance.maintenance_window})`}. You can
+            still launch — windows warn, never block.
+          </p>
+        )}
+
         {started === null ? (
           <>
             <div className="chip-strip">

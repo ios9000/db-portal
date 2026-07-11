@@ -117,3 +117,54 @@ func TestLastBackupAt(t *testing.T) {
 	require.Nil(t, byName["hr-test"].LastBackupAt, "a restore is not a backup")
 	require.Nil(t, byName["billing-prod"].LastBackupAt, "no runs at all")
 }
+
+// SPEC-023 behavior 6: window_state tracks the server clock against the
+// parsed window — inside/outside for parseable windows, nil for empty and
+// for garbage (the read path never errors and never logs).
+func TestWindowState(t *testing.T) {
+	pool := testutil.MigratedDB(t)
+	importCSV(t, pool, "instances.csv", fixtureCSV(t))
+	s := inventory.NewStore(pool)
+
+	setWindow := func(instance, window string) {
+		t.Helper()
+		_, err := pool.Exec(context.Background(),
+			`UPDATE instance SET maintenance_window = NULLIF($2, '') WHERE name = $1`,
+			instance, window)
+		require.NoError(t, err)
+	}
+	// Deterministic relative windows: inside = a 12h wrap-capable span
+	// centered on now; outside = three days away.
+	base := time.Now().Add(-6 * time.Hour)
+	inside := base.Weekday().String()[:3] + " " + base.Format("15:04") + "-" +
+		time.Now().Add(6*time.Hour).Format("15:04")
+	outside := time.Now().AddDate(0, 0, 3).Weekday().String()[:3] + " 00:00-01:00"
+
+	setWindow("billing-test", inside)
+	setWindow("crm-test", outside)
+	setWindow("hr-test", "whenever quiet")
+	setWindow("analytics-dev", "")
+
+	state := func(name string) *string {
+		t.Helper()
+		in, err := s.GetInstance(context.Background(), name)
+		require.NoError(t, err)
+		return in.WindowState
+	}
+	require.NotNil(t, state("billing-test"))
+	require.Equal(t, "inside", *state("billing-test"))
+	require.NotNil(t, state("crm-test"))
+	require.Equal(t, "outside", *state("crm-test"))
+	require.Nil(t, state("hr-test"), "garbage window text reads as no window")
+	require.Nil(t, state("analytics-dev"), "no window, no state")
+
+	// The list path computes it too.
+	list, err := s.ListInstances(context.Background(), "test")
+	require.NoError(t, err)
+	for _, in := range list {
+		if in.Name == "crm-test" {
+			require.NotNil(t, in.WindowState)
+			require.Equal(t, "outside", *in.WindowState)
+		}
+	}
+}

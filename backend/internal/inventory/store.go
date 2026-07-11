@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ios9000/db-portal/backend/internal/window"
 )
 
 // ErrNotFound is returned by GetInstance for an unknown instance name.
@@ -28,6 +30,28 @@ type Instance struct {
 	// finished (WU-011R); nil until one exists. Only backups the portal ran
 	// count — it has no visibility into backups taken elsewhere.
 	LastBackupAt *time.Time `json:"last_backup_at"`
+	// WindowState says where "now" sits relative to the maintenance window
+	// (SPEC-023 mini-ADR 5): "inside" | "outside", nil when the instance
+	// has no window or the text doesn't parse. Server-computed at read
+	// time — the frontend displays it and never parses window text.
+	WindowState *string `json:"window_state"`
+}
+
+// windowState evaluates the window against the server clock; every parse
+// failure is nil (D6: windows warn, never block — and never error).
+func windowState(raw *string) *string {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	w, err := window.Parse(*raw)
+	if err != nil {
+		return nil
+	}
+	state := "outside"
+	if w.Contains(time.Now()) {
+		state = "inside"
+	}
+	return &state
 }
 
 // Store reads the inventory tables. Writes happen only through Import.
@@ -67,6 +91,7 @@ func (s *Store) ListInstances(ctx context.Context, env string) ([]Instance, erro
 			&in.PGVersion, &in.SizeGB, &in.Owner, &in.MaintenanceWindow, &in.LastBackupAt); err != nil {
 			return nil, fmt.Errorf("inventory: scan instance: %w", err)
 		}
+		in.WindowState = windowState(in.MaintenanceWindow)
 		instances = append(instances, in)
 	}
 	if err := rows.Err(); err != nil {
@@ -88,5 +113,6 @@ func (s *Store) GetInstance(ctx context.Context, name string) (Instance, error) 
 	case err != nil:
 		return Instance{}, fmt.Errorf("inventory: get instance %q: %w", name, err)
 	}
+	in.WindowState = windowState(in.MaintenanceWindow)
 	return in, nil
 }

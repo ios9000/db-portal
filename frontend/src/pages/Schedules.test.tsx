@@ -16,6 +16,7 @@ const INSTANCES: Instance[] = [
     size_gb: 38,
     owner: 'billing-team',
     maintenance_window: null,
+    window_state: null,
     last_backup_at: null,
   },
   {
@@ -27,6 +28,7 @@ const INSTANCES: Instance[] = [
     size_gb: 412,
     owner: 'billing-team',
     maintenance_window: null,
+    window_state: null,
     last_backup_at: null,
   },
 ];

@@ -34,18 +34,20 @@
    block, delay, or fail a launch; garbage text degrades to exactly the
    pre-WU-023 behavior.
 
-4. **The stamp is a column, not an action:** migration 0008 adds
-   `audit_event.window_warned boolean NOT NULL DEFAULT false`, stamped
-   true on the `run.submitted` row when a parseable window exists and the
-   launch instant falls outside it. A separate action row would put a
-   second actor-attributed event on every warned run for what is one fact
-   about one decision. Submitted-only: `run.finished` inherits the stamps
-   that *identify* the run (actor, env, tag); the warning qualifies the
-   launch decision, which happens once. Because the check lives in
-   runs.Service.Start — after the instance lookup, before any row — the
-   drawer path and the scheduler path are the same implementation; a
-   scheduled fire outside the window carries the flag with zero
-   scheduler-side code.
+4. **The stamp is a column, not an action** — and the column already
+   exists: migration 0003 (WU-012) pre-provisioned
+   `audit_event.window_warned boolean NOT NULL DEFAULT false` with the
+   comment "semantics arrive in WU-023". This WU ships NO migration; it
+   makes the dormant column true on the `run.submitted` row when a
+   parseable window exists and the launch instant falls outside it. (A
+   separate action row would put a second actor-attributed event on every
+   warned run for what is one fact about one decision.) Submitted-only:
+   `run.finished` inherits the stamps that *identify* the run (actor,
+   env, tag); the warning qualifies the launch decision, which happens
+   once. Because the check lives in runs.Service.Start — after the
+   instance lookup, before any row — the drawer path and the scheduler
+   path are the same implementation; a scheduled fire outside the window
+   carries the flag with zero scheduler-side code.
 
 5. **Instance read model gains `window_state`:**
    `"inside" | "outside" | null` (null = no window or unparseable),
@@ -58,16 +60,14 @@
    cron. One portal, one wall clock, stated in the UI hint. Per-instance
    timezones ride O-3's post-MVP grammar.
 
-## Data (migration 0008)
+## Data
 
-```sql
-ALTER TABLE audit_event
-    ADD COLUMN window_warned boolean NOT NULL DEFAULT false;
-```
-
-Down drops the column. DDL is untouched by the append-only triggers
-(UPDATE/DELETE/TRUNCATE); existing rows read false — honest, they predate
-window semantics.
+None. `audit_event.window_warned` shipped dormant in migration 0003
+(WU-012 planned ahead); every row written before this WU honestly reads
+its DEFAULT false. Process note for the journal: the first draft of this
+spec invented a migration 0008 for it — the fresh-DB migration walk
+failed with "column already exists" and caught the drift. Read the
+authoritative schema files, not the summary of them.
 
 ## Interfaces
 
@@ -101,8 +101,8 @@ window semantics.
    submitted row (proves the shared stamp point through the executor).
 6. Instance JSON: window_state inside/outside tracks a window computed
    around now; null for empty and for garbage windows.
-7. Migration 0008 up adds the column (default false on old rows), down
-   removes it; `npm run check` green.
+7. `npm run check` green (the 0003→0001 migration walk already covers the
+   column's lifecycle).
 
 ## UI slice
 

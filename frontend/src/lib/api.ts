@@ -211,6 +211,10 @@ export interface Instance {
   maintenance_window: string | null;
   /** Newest successful dump run's finish time (WU-011R); null if never dumped. */
   last_backup_at: string | null;
+  /** Where "now" sits relative to the maintenance window (SPEC-023):
+   * server-computed — the client displays it and never parses window text.
+   * null = no window, or text the server couldn't parse. */
+  window_state: 'inside' | 'outside' | null;
 }
 
 /** List instances, optionally narrowed to one environment (server-side). */

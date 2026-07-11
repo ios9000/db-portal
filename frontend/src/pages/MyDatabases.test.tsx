@@ -18,6 +18,7 @@ const SAMPLE: Instance[] = [
     size_gb: 412,
     owner: 'billing-team',
     maintenance_window: 'Sat 02:00-06:00',
+    window_state: null,
     last_backup_at: null,
   },
   {
@@ -29,6 +30,7 @@ const SAMPLE: Instance[] = [
     size_gb: 38,
     owner: 'billing-team',
     maintenance_window: null,
+    window_state: null,
     last_backup_at: BACKED_UP_AT,
   },
   {
@@ -40,6 +42,7 @@ const SAMPLE: Instance[] = [
     size_gb: null,
     owner: 'analytics-team',
     maintenance_window: null,
+    window_state: null,
     last_backup_at: null,
   },
 ];

@@ -79,30 +79,90 @@ func waitTerminal(t *testing.T, svc *runs.Service, id int64) runs.Run {
 }
 
 type auditRow struct {
-	actor       string
-	action      string
-	environment string
-	playbookTag string
-	digest      string
-	finalStatus *string
-	jobID       *string
+	actor        string
+	action       string
+	environment  string
+	playbookTag  string
+	digest       string
+	finalStatus  *string
+	jobID        *string
+	windowWarned bool
 }
 
 func auditEvents(t *testing.T, pool *pgxpool.Pool, runID int64) []auditRow {
 	t.Helper()
 	rows, err := pool.Query(context.Background(), `
-		SELECT actor, action, environment, playbook_tag, params_digest, final_status, job_id
+		SELECT actor, action, environment, playbook_tag, params_digest, final_status, job_id, window_warned
 		FROM audit_event WHERE run_id = $1 ORDER BY id`, runID)
 	require.NoError(t, err)
 	defer rows.Close()
 	var out []auditRow
 	for rows.Next() {
 		var a auditRow
-		require.NoError(t, rows.Scan(&a.actor, &a.action, &a.environment, &a.playbookTag, &a.digest, &a.finalStatus, &a.jobID))
+		require.NoError(t, rows.Scan(&a.actor, &a.action, &a.environment, &a.playbookTag, &a.digest, &a.finalStatus, &a.jobID, &a.windowWarned))
 		out = append(out, a)
 	}
 	require.NoError(t, rows.Err())
 	return out
+}
+
+// insideWindowNow / outsideWindowNow build deterministic window texts
+// relative to the wall clock: the inside one starts 6h ago and ends 6h
+// from now (wrap-capable, so midnight proximity can't flake it); the
+// outside one sits three days away.
+func insideWindowNow() string {
+	base := time.Now().Add(-6 * time.Hour)
+	return base.Weekday().String()[:3] + " " + base.Format("15:04") + "-" +
+		time.Now().Add(6*time.Hour).Format("15:04")
+}
+
+func outsideWindowNow() string {
+	day := time.Now().AddDate(0, 0, 3).Weekday()
+	return day.String()[:3] + " 00:00-01:00"
+}
+
+func setWindow(t *testing.T, pool *pgxpool.Pool, instance, window string) {
+	t.Helper()
+	tag, err := pool.Exec(context.Background(),
+		`UPDATE instance SET maintenance_window = $2 WHERE name = $1`, instance, window)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, tag.RowsAffected())
+}
+
+// SPEC-023 behaviors 3+4: the window stamp on the submitted row — outside
+// warns, inside doesn't, no window doesn't, and garbage NEVER blocks.
+func TestWindowWarnedStamp(t *testing.T) {
+	svc, pool := newService(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name, window string
+		warned       bool
+	}{
+		{"outside the window warns", outsideWindowNow(), true},
+		{"inside the window is quiet", insideWindowNow(), false},
+		{"garbage text never blocks", "every other fortnight", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setWindow(t, pool, "billing-test", tc.window)
+			run, err := svc.Start(ctx, testReq("billing-test", "dump", "", nil))
+			require.NoError(t, err, "a window must never block a launch")
+			waitTerminal(t, svc, run.ID)
+
+			events := auditEvents(t, pool, run.ID)
+			require.Len(t, events, 2)
+			require.Equal(t, tc.warned, events[0].windowWarned)
+			require.False(t, events[1].windowWarned,
+				"the warning qualifies the launch decision; finished doesn't carry it")
+		})
+	}
+
+	// Empty window (the fixture's non-prod instances): quiet.
+	run, err := svc.Start(ctx, testReq("crm-test", "dump", "", nil))
+	require.NoError(t, err)
+	waitTerminal(t, svc, run.ID)
+	require.False(t, auditEvents(t, pool, run.ID)[0].windowWarned)
 }
 
 // SPEC-012 behaviors 1 + 3: happy path to success with artifact metadata,

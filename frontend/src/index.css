@@ -636,6 +636,18 @@ tr.prod-edge td:first-child {
   font-size: 14px;
 }
 
+/* Maintenance-window warning (WU-023): amber like the TEST badge — a
+   caution, deliberately NOT the prod/failure red. Warns, never blocks. */
+.drawer-warn {
+  margin: 0;
+  padding: var(--space-05) var(--space-1);
+  color: var(--env-test-fg);
+  background: var(--env-test-bg);
+  border: 1px solid var(--env-test-border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
 .drawer-started {
   margin: 0;
   color: var(--status-success-fg);
