@@ -5,14 +5,18 @@
 
 ## Now
 
-- **Active:** M2 MILESTONE GATE — **Phase 2 (WU-020…023) is COMPLETE**
-  2026-07-10 (s12). WU-023 DONE (commits 3de6187 spec + 97de1ab impl).
-  ROADMAP M2 exit criteria all met + live-verified: no anonymous access
-  (WU-020), scheduled dump fires with full audit attribution (WU-022),
-  window warning visible in UI + audit flag (WU-023). Next session: run
-  the M2 gate review, then groom Phase 3 (WU-030…035) ACs + context
-  briefs at gate close (ROADMAP sequencing rule — grooming is a
-  deliverable).
+- **Active:** WU-024 (M2-gate fix: scheduler hardening, M) — **not
+  started, fresh session**. M2 GATE REVIEW DONE 2026-07-10 (s12, workflow
+  wf_7ee53a3d-c48): 5 Sonnet reviewers, architect-verified inline — 11
+  findings, 11 confirmed, 0 refuted, NO criticals. **GATE PASSES with fix
+  WUs** (M1 protocol): WU-024 (scheduler: stored confirm vs env
+  promotion [the one HIGH], stamp-vs-disable guard, per-instance overlap,
+  per-fire timeout, SetEnabled idempotency, PATCH 413) then WU-025
+  (identity/session: username case canonicalization, bootstrap error
+  state, honest sign-out, New-schedule gating, cookie-secure boot warn)
+  land BEFORE any Phase-3 WU. Full record:
+  docs/agent/reviews/m2-gate.md. Phase 2 itself COMPLETE (WU-020…023
+  live-verified, JOURNAL s10-s12).
 - **Status:** WU-023 closed per SPEC-023 (docs/specs/windows.md, 6
   mini-ADRs). internal/window (pure): `Day HH:MM-HH:MM` weekly grammar,
   wrap-capable (fixture ships `Sat 22:00-02:00`), end==start rejected.
@@ -39,20 +43,21 @@
 
 ## Next action (be exact)
 
-1. **M2 milestone gate in a FRESH session.** ROADMAP: "milestone gates are
-   hard — no next-phase WU starts until exit criteria + review gate pass."
-   Exit evidence already live-verified per-WU (see JOURNAL s10–s12); the
-   gate review itself remains. Precedent: the M1 gate used the
-   m1-gate-review multi-agent workflow — per the cost-sensitivity memory,
-   STATE the expected agent count/cost FIRST and offer the lighter
-   alternative (Sonnet reviewers + inline verification by the architect).
-   Scope: WU-020…023 code (authn, authz, scheduler, windows).
-2. **At gate close: groom Phase 3** (WU-030…035 — artifact registry,
-   restore, chains, SemaphoreAdapter, real dump playbook, minio) into
-   context-window-sized WUs with ACs + context briefs (BACKLOG format).
-3. Icebox reminders while grooming: session GC sweep, denial-rate alarm,
-   break-glass mail alarm, role admin CLI, cron×window schedule hint,
-   window_warned on run read model.
+1. **WU-024 (M2-gate fix: scheduler hardening) in a FRESH session.** No
+   new spec — the gate record IS the brief: docs/agent/reviews/m2-gate.md
+   items 1-3, 5, 8, 11. Carries the gate's one HIGH (item 1: persist the
+   creation-time confirm on the schedule row, migration 0008; env
+   promotion then fails the ritual visibly). Includes the SPEC-022
+   mini-ADR 4 amendment (per-instance overlap). Concurrency-sensitive →
+   architect-implemented per the delegation model.
+2. **WU-025 (M2-gate fix: identity & session honesty)** — items 4, 6, 7,
+   9, 10. Mixed backend seam + 3 small frontend fixes; delegation call at
+   session time (likely architect: authn seam is security-sensitive and
+   the UI diffs are tiny).
+3. **Then groom Phase 3** (WU-030…035) ACs + context briefs — that is M2
+   close. Icebox reminders while grooming: session GC sweep, denial-rate
+   alarm, break-glass mail alarm, role admin CLI, cron×window schedule
+   hint, window_warned on run read model.
 
 ## Blocked / needs user
 

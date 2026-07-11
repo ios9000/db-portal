@@ -393,6 +393,9 @@ retried; overlay click during launch keeps drawer; stale response ignored;
 > Groomed 2026-07-08 (s07, M1 close). Specs stay just-in-time: write `docs/specs/authn.md`
 > etc. at WU start, not before. Order is fixed: 020 → 021 (guards need sessions) → 022 →
 > 023 (windows warn on BOTH launch paths, so the scheduler must exist first).
+> M2 exit criteria live-verified per WU (JOURNAL s10-s12). Multi-agent review gate =
+> DONE 2026-07-10 (s12) — GATE PASSES with fix WUs: see M2-gate fixes below +
+> docs/agent/reviews/m2-gate.md (11 confirmed findings, 0 refuted, no criticals).
 
 ### WU-020 · AuthN: LDAP bind against AD — M · `done (2026-07-10, commits 0e30914+5034dc8+d5c6731 — spec+backend by architect, UI slice via Sonnet 5 delegation)`
 Login page + server sessions; AD LDAP bind (portal NEVER stores AD passwords —
@@ -462,6 +465,49 @@ blocks a launch; `npm run check` green. ALL VERIFIED LIVE 2026-07-10 (Fri-night 
 against the fixture's Sat windows; garbage window 2×201 + exactly 1 log line).
 **Context brief:** D6; O-3 (DECISIONS §Open); WU-010 schema (instance.maintenance_window);
 LaunchDrawer (frontend) + runs.Service.Start (stamp point); WU-022 executor path.
+
+### M2-gate review fixes (2026-07-10, s12) — land BEFORE any Phase-3 WU
+
+> Multi-agent gate review DONE 2026-07-10 (workflow wf_7ee53a3d-c48, 5 Sonnet
+> reviewers, architect-verified inline): 11 findings, 11 confirmed, 0 refuted,
+> no criticals — full scenarios + fix sketches: `docs/agent/reviews/m2-gate.md`.
+> Order 024 → 025 (024 carries the one HIGH).
+
+### WU-024 · M2-gate fix: scheduler hardening — M · `pending`
+Gate items 1-3, 5, 8, 11 (docs/agent/reviews/m2-gate.md): (1) persist the
+creation-time `confirm` string on the schedule row (migration 0008) and fire with
+it verbatim — an instance promoted to prod after schedule creation then fails the
+ritual visibly (status 'error') instead of auto-confirming; test the promotion
+path. (2) stamp guards `next_fire_at = CASE WHEN enabled THEN … ELSE NULL END` +
+re-check enabled at fire() entry. (3) overlap probe widens to ANY live run on the
+instance (also stops piling onto a live button-press run) — amend SPEC-022
+mini-ADR 4; cross-resource locking stays M4. (5) per-fire context.WithTimeout.
+(8) SetEnabled short-circuits when state is unchanged (no jitter re-roll).
+(11) PATCH oversized body → 413.
+**Verify:** promote-instance-to-prod test → next fire stamps 'error', zero runs;
+disable-during-fire leaves next_fire_at NULL; sibling schedules on one instance
+never overlap (and a scheduled fire skips while a manual run is live); redundant
+PATCH enabled=true leaves next_fire_at byte-identical; `npm run check` green.
+**Context brief:** docs/agent/reviews/m2-gate.md items 1-3, 5, 8, 11;
+internal/schedule/{schedule,executor}.go; SPEC-022 mini-ADRs 4+8;
+inventory/import.go upsert (env update path).
+
+### WU-025 · M2-gate fix: identity & session honesty — S · `pending`
+Gate items 4, 6, 7, 9, 10: (4) canonicalize (lowercase) the username ONCE at the
+authn seam before session/audit/authz — AD binds are case-insensitive, the portal
+is not; decide in-fix whether existing mixed-case session rows need care (TTL
+makes them self-expire). (6) App bootstrap: 401 → login, anything else → an
+"unavailable + retry" state (the idiom every page already uses). (7) sign-out:
+proceed locally only on 401; other failures surface "could not confirm sign-out"
+and stay signed in (httpOnly cookie cannot be cleared client-side). (9) gate the
+New-schedule button on the list having loaded. (10) boot Warn when
+AuthMode=="ldap" && !CookieSecure (mirror the PORTAL_LDAP_INSECURE warning).
+**Verify:** login as "DBA1" in fake/ldap-shaped test → session + audit rows say
+"dba1" and requireRole matches; bootstrap with a 500ing /me shows retry not
+login; failed logout keeps the session UI-visible; `npm run check` green.
+**Context brief:** docs/agent/reviews/m2-gate.md items 4, 6, 7, 9, 10;
+internal/authn/{service,ldap}.go; frontend App.tsx + components/Shell.tsx +
+pages/Schedules.tsx; cmd/portal/main.go (boot warnings).
 
 ## Phase 3 — Restore, chains, real engine (M3) — groom at M2 close
 
