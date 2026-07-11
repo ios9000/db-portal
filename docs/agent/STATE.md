@@ -73,6 +73,21 @@
 ## Blocked / needs user
 
 - Nothing.
+- HEADS-UP (Semaphore, WU-033): the compose `semaphore` service is LEFT
+  RUNNING on the VM at 127.0.0.1:3000 (`docker ps` → dbportal-dev-semaphore-1).
+  The skip-gated itest and slice (b)'s drill depend on it PLUS the API token in
+  gitignored `.env` (`PORTAL_SEMAPHORE_API_TOKEN`, minted by
+  infra/semaphore-bootstrap.sh). If the service was restarted/reset (BoltDB in
+  the `semaphore_data` volume — a `docker compose down -v` wipes it), re-run
+  `docker compose -f infra/compose.yaml --env-file .env up -d --wait semaphore`
+  then `set -a; . ./.env; set +a; sh infra/semaphore-bootstrap.sh` and update
+  `PORTAL_SEMAPHORE_API_TOKEN` in `.env` with the freshly-printed token (tokens
+  are shown ONCE, never re-listable). Verify: `curl 127.0.0.1:3000/api/ping`
+  → 200, and `go test ./internal/engine/ -run TestSemaphoreIntegration` passes
+  (not skips). Demo portal (dbportal-demo :8080) is still the 270e665 WU-031
+  binary with MockEngine — slice (b)'s full-portal drill needs a build:release
+  + a demo run with `PORTAL_ENGINE_NONPROD=semaphore` + a `dump:<smoke-id>`
+  template mapping (so the catalog dump op fires the smoke template in dev).
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
   :8080. **Rebuilt s17 to the 270e665 binary (WU-031); dev DB still at 0010**
   (WU-031 adds no migration). Env `PORTAL_AUTH_MODE=fake` + demo break-glass
