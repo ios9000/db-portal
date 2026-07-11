@@ -165,6 +165,11 @@ func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger)
 		if cfg.LDAPInsecure {
 			log.Warn("PORTAL_LDAP_INSECURE=true — LDAP TLS verification is off; dev only")
 		}
+		// Same loudness as the LDAP warning above (M2-gate finding 10): a
+		// prod-shaped boot without the Secure cookie flag must not be silent.
+		if !cfg.CookieSecure {
+			log.Warn("PORTAL_COOKIE_SECURE=false with ldap auth — the session cookie may travel over plain HTTP; set it true behind TLS")
+		}
 		dir := authn.LDAP{
 			URL:          cfg.LDAPURL,
 			BindTemplate: cfg.LDAPBindTemplate,

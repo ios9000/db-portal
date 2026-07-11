@@ -142,7 +142,10 @@ export function Schedules() {
     setSchedules((prev) => [created, ...(prev ?? [])]);
   };
 
-  const catalogReady = instances.length > 0 && operations.length > 0;
+  // The create button also waits for the LIST (M2-gate finding 9): a row
+  // created before the initial fetch resolves would be overwritten by the
+  // stale response moments later.
+  const catalogReady = instances.length > 0 && operations.length > 0 && schedules !== null;
 
   return (
     <>

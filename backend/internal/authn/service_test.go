@@ -209,3 +209,32 @@ func TestAuthEventIsAppendOnly(t *testing.T) {
 		require.ErrorContains(t, err, "append-only", stmt)
 	}
 }
+
+// M2-gate finding 4: the username is canonicalized once at the seam —
+// "DBA1" and "dba1" are ONE principal in the session, on the auth trail
+// and (downstream) in user_role lookups. Passwords stay case-sensitive.
+func TestLoginNormalizesUsernameCase(t *testing.T) {
+	svc, pool := newService(t)
+	ctx := context.Background()
+
+	sess, err := svc.Login(ctx, "DBA1", "dba1", "10.0.0.1:1234")
+	require.NoError(t, err)
+	require.Equal(t, "dba1", sess.Identity.Username, "the session carries the folded form")
+
+	id, err := svc.Validate(ctx, sess.Token)
+	require.NoError(t, err)
+	require.Equal(t, "dba1", id.Username)
+
+	_, err = svc.Login(ctx, "dba1", "DBA1", "10.0.0.1:1234")
+	require.ErrorIs(t, err, authn.ErrBadCredentials, "passwords are NOT case-folded")
+
+	// The failure trail folds too: one human, one actor, either way.
+	_, err = svc.Login(ctx, "DBA2", "wrong", "10.0.0.1:1234")
+	require.ErrorIs(t, err, authn.ErrBadCredentials)
+
+	require.Equal(t, []string{
+		"dba1/auth.login",
+		"dba1/auth.login_failed",
+		"dba2/auth.login_failed",
+	}, authEvents(t, pool))
+}

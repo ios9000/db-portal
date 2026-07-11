@@ -304,3 +304,27 @@ test('delete requires a second click to confirm, then removes the row', async ()
   expect(del).toBeDefined();
   expect(String(del![0])).toBe('/api/schedules/3');
 });
+
+// M2-gate finding 9: creating before the initial list resolves would let
+// the stale response overwrite the new row — the button waits for both
+// the catalog AND the list.
+test('New schedule stays disabled until the list has loaded', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://test');
+      if (url.pathname === '/api/instances') {
+        return Promise.resolve(new Response(JSON.stringify({ instances: INSTANCES })));
+      }
+      if (url.pathname === '/api/operations') {
+        return Promise.resolve(new Response(JSON.stringify({ operations: [DUMP_OP] })));
+      }
+      return new Promise<Response>(() => {}); // the schedules GET never answers
+    }),
+  );
+  renderPage();
+
+  await screen.findByText('Loading schedules…');
+  // The catalog resolved (microtask flush happened above); the list didn't.
+  expect(screen.getByRole('button', { name: 'New schedule' })).toBeDisabled();
+});

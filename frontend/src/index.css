@@ -636,6 +636,13 @@ tr.prod-edge td:first-child {
   font-size: 14px;
 }
 
+/* Sign-out failure (WU-025): the session is still live — say so, small
+   but red, right where the user is looking. */
+.signout-error {
+  color: var(--status-failed-fg);
+  font-size: 12px;
+}
+
 /* Maintenance-window warning (WU-023): amber like the TEST badge — a
    caution, deliberately NOT the prod/failure red. Warns, never blocks. */
 .drawer-warn {

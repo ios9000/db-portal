@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, NavLink, Route, Routes } from 'react-router';
-import { type Identity, logout } from '../lib/api';
+import { ApiError, type Identity, logout } from '../lib/api';
 import { Activity } from '../pages/Activity';
 import { MyDatabases } from '../pages/MyDatabases';
 import { RunDetail } from '../pages/RunDetail';
@@ -9,9 +9,11 @@ import { StatusFooter } from './StatusFooter';
 
 interface Props {
   identity: Identity;
-  /** Drop the app back to signed-out state. Called after logout() settles
-   * either way — a 401 here just means the session was already gone, and
-   * there's nothing else the button can meaningfully do about it. */
+  /** Drop the app back to signed-out state. Called only when the server
+   * CONFIRMED the session is gone — a 2xx logout or a 401 (already gone).
+   * The cookie is httpOnly, so the client cannot revoke anything itself;
+   * pretending to sign out on other failures would leave a live session
+   * behind a signed-out screen (M2-gate finding 7). */
   onSignOut: () => void;
 }
 
@@ -22,15 +24,22 @@ interface Props {
  */
 export function Shell({ identity, onSignOut }: Props) {
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
 
   const handleSignOut = async () => {
     setSigningOut(true);
+    setSignOutError(false);
     try {
       await logout();
-    } catch {
-      // session already gone server-side — sign out locally regardless
-    } finally {
       onSignOut();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onSignOut(); // session already gone server-side
+      } else {
+        setSignOutError(true); // the session row is still alive — say so
+      }
+    } finally {
+      setSigningOut(false);
     }
   };
 
@@ -45,6 +54,11 @@ export function Shell({ identity, onSignOut }: Props) {
         </nav>
         <span className="spacer" />
         <div className="topbar-user">
+          {signOutError && (
+            <span className="signout-error" role="alert">
+              Could not confirm sign-out — try again.
+            </span>
+          )}
           <span className="identity">{identity.display_name}</span>
           <button
             type="button"

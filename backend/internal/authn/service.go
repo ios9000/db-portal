@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,6 +56,11 @@ func NewService(pool *pgxpool.Pool, dir Directory, log *slog.Logger, ttl time.Du
 // (ErrBadCredentials) and delayed; the attempted username and remote land
 // in auth_event — the password never does, anywhere.
 func (s *Service) Login(ctx context.Context, username, password, remote string) (Session, error) {
+	// Canonicalize ONCE at the seam (M2-gate finding 4): AD binds are
+	// case-insensitive, but sessions, both audit ledgers and user_role
+	// lookups compare exact strings — one human must be one actor. Every
+	// row this request writes (success OR failure) uses the folded form.
+	username = strings.ToLower(username)
 	id, action, err := s.authenticate(ctx, username, password)
 	if err != nil {
 		s.event(ctx, username, "auth.login_failed", remote, "bad credentials")

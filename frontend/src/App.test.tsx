@@ -17,6 +17,7 @@ function stubApp(
   overrides: {
     me?: () => Promise<Response>;
     instances?: () => Promise<Response>;
+    logout?: () => Promise<Response>;
   } = {},
 ) {
   const mock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -25,7 +26,7 @@ function stubApp(
       return (overrides.me ?? (() => Promise.resolve(new Response(JSON.stringify(IDENTITY)))))();
     }
     if (url.pathname === '/api/auth/logout' && init?.method === 'POST') {
-      return Promise.resolve(new Response(null, { status: 204 }));
+      return (overrides.logout ?? (() => Promise.resolve(new Response(null, { status: 204 }))))();
     }
     if (url.pathname === '/healthz') {
       return Promise.resolve(new Response(JSON.stringify({ status: 'ok', db: 'ok' })));
@@ -140,4 +141,76 @@ test('visiting /login while already signed in bounces to /', async () => {
 
   expect(await screen.findByRole('heading', { name: 'My Databases' })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument();
+});
+
+// M2-gate finding 6: only a 401 means signed out. A degraded backend gets
+// a retry screen, never the sign-in form.
+test('a non-401 bootstrap failure shows retry, not the sign-in form; retry recovers', async () => {
+  let probes = 0;
+  stubApp({
+    me: () => {
+      probes += 1;
+      return probes === 1
+        ? Promise.resolve(new Response('{"error":"sessions unavailable"}', { status: 500 }))
+        : Promise.resolve(new Response(JSON.stringify(IDENTITY)));
+    },
+  });
+  const user = userEvent.setup();
+
+  render(
+    <MemoryRouter initialEntries={['/']}>
+      <App />
+    </MemoryRouter>,
+  );
+
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('unreachable');
+  expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
+});
+
+// M2-gate finding 7: a failed sign-out must not pretend — the httpOnly
+// cookie is still valid, so the session stays visibly signed in.
+test('a failed sign-out keeps the session and says so', async () => {
+  stubApp({
+    logout: () => Promise.resolve(new Response('{"error":"boom"}', { status: 500 })),
+  });
+  const user = userEvent.setup();
+
+  render(
+    <MemoryRouter initialEntries={['/']}>
+      <App />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole('navigation', { name: 'Primary' });
+  await user.click(screen.getByRole('button', { name: 'Sign out' }));
+
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('Could not confirm sign-out');
+  expect(screen.getByText('DBA One')).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument();
+});
+
+// The one failure that IS a completed sign-out: the session was already
+// gone server-side (401) — signing out locally is then honest.
+test('sign-out on an already-dead session still lands on /login', async () => {
+  stubApp({
+    logout: () =>
+      Promise.resolve(new Response('{"error":"authentication required"}', { status: 401 })),
+  });
+  const user = userEvent.setup();
+
+  render(
+    <MemoryRouter initialEntries={['/']}>
+      <App />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole('navigation', { name: 'Primary' });
+  await user.click(screen.getByRole('button', { name: 'Sign out' }));
+
+  expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
 });
