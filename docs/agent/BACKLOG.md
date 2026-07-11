@@ -492,7 +492,7 @@ PATCH enabled=true leaves next_fire_at byte-identical; `npm run check` green.
 internal/schedule/{schedule,executor}.go; SPEC-022 mini-ADRs 4+8;
 inventory/import.go upsert (env update path).
 
-### WU-025 · M2-gate fix: identity & session honesty — S · `pending`
+### WU-025 · M2-gate fix: identity & session honesty — S · `done (2026-07-11, commit 90aae5a — architect-implemented; case-fold + boot warn live-verified)`
 Gate items 4, 6, 7, 9, 10: (4) canonicalize (lowercase) the username ONCE at the
 authn seam before session/audit/authz — AD binds are case-insensitive, the portal
 is not; decide in-fix whether existing mixed-case session rows need care (TTL

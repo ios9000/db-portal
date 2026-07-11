@@ -5,20 +5,17 @@
 
 ## Now
 
-- **Active:** WU-025 (M2-gate fix: identity & session honesty, S) —
-  **not started, fresh session**. WU-024 DONE 2026-07-11 (s13, commit
-  54db393): the gate's one HIGH is closed — schedule.confirm (migration
-  0008) persists the creation-time ritual evidence, executor fires with
-  it verbatim; promotion of an unconfirmed schedule's instance to prod
-  now stamps a visible 'error' (live-verified on the demo portal, zero
-  runs). Plus: fire() live-row re-check + stamp enabled-guard
-  (::timestamptz cast REQUIRED in the CASE — bare param broke type
-  inference and failed silently), per-INSTANCE overlap (mini-ADR 4
-  amended — manual runs block scheduled fires too), per-fire FireTimeout
-  30s w/ stamp on WithoutCancel context, SetEnabled redundant-toggle
-  no-op, PATCH 413. M2 gate itself: PASSED 2026-07-10 (11/11 confirmed,
-  0 refuted, record: docs/agent/reviews/m2-gate.md). WU-025 is the LAST
-  item before M2 closes and Phase-3 grooming starts.
+- **Active:** PHASE 3 GROOMING — **M2 IS FORMALLY CLOSED** 2026-07-11
+  (s13): exit criteria live-verified (s10-s12), gate review passed (s12,
+  11/11 confirmed / 0 refuted / record docs/agent/reviews/m2-gate.md),
+  both fix WUs done — WU-024 (54db393: stored ritual evidence/migration
+  0008, disable-race guards, per-instance overlap, bounded fires,
+  idempotent toggle, PATCH 413) and WU-025 (90aae5a: username case-fold
+  at the authn seam, honest bootstrap retry + sign-out, New-schedule
+  list gating, ldap cookie-secure boot warn). Next deliverable per
+  ROADMAP ("groom at M2 close; grooming is a deliverable"): Phase 3
+  (WU-030…035) ACs + context briefs in BACKLOG format — currently
+  one-line skeletons.
 - **Status:** WU-023 closed per SPEC-023 (docs/specs/windows.md, 6
   mini-ADRs). internal/window (pure): `Day HH:MM-HH:MM` weekly grammar,
   wrap-capable (fixture ships `Sat 22:00-02:00`), end==start rejected.
@@ -45,26 +42,29 @@
 
 ## Next action (be exact)
 
-1. **WU-025 (M2-gate fix: identity & session honesty) in a FRESH
-   session.** The gate record IS the brief: docs/agent/reviews/m2-gate.md
-   items 4, 6, 7, 9, 10 — (4) lowercase the username ONCE at the authn
-   seam (session/audit/authz all key off it; AD binds are
-   case-insensitive), (6) App bootstrap 401→login vs everything-else→
-   retry state, (7) sign-out proceeds locally only on 401 (httpOnly
-   cookie can't be cleared client-side), (9) gate New-schedule on the
-   list having loaded, (10) boot Warn for ldap-mode + CookieSecure=false.
-   Authn seam is security-sensitive → likely architect end-to-end (the
-   UI diffs are tiny; delegation overhead > diff).
-2. **Then groom Phase 3** (WU-030…035) ACs + context briefs — that is M2
-   close. Icebox reminders while grooming: session GC sweep, denial-rate
-   alarm, break-glass mail alarm, role admin CLI, cron×window schedule
-   hint, window_warned on run read model.
+1. **Groom Phase 3 in a FRESH session** (WU-030…035: artifact registry,
+   restore workflow, chain engine, SemaphoreAdapter, real dump playbook,
+   minio storage). Deliverable = BACKLOG entries in the house format:
+   size, goal, verify commands, context brief per WU; split anything
+   L-sized. Key design tensions to surface while grooming: restore's
+   auto-pre-restore-safety-dump (D5/D6 interplay), chain state
+   persistence vs run table shape, Semaphore in compose (ADR-002's
+   webhook + poll fallback), where artifact bytes actually live pre-O-1
+   (WU-030 is metadata-first). Read: ROADMAP M3, ARCHITECTURE §§2-5,
+   D4/D5, ADR-002; the icebox list below for what NOT to pull in.
+2. Icebox candidates to (re)file while grooming: session GC sweep,
+   denial-rate alarm, break-glass mail alarm, role admin CLI,
+   cron×window schedule hint, window_warned on run read model,
+   boot-stampede spreading (M4), schedule-change ledger.
+3. Housekeeping note for the grooming session: demo-m1.md header still
+   says "live-verified 2026-07-08"; beats have been re-verified through
+   s13 — refresh the line when the doc is next touched.
 
 ## Blocked / needs user
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of 54db393, migrations at 0008 = schedule.confirm)
+  :8080 (binary of 90aae5a, migrations at 0008)
   with `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password
   "demo-glass", hash only in the unit env — recover via `systemctl show
   dbportal-demo -p Environment`). Sign in dba1/dba1. Schedules list is
