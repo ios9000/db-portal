@@ -31,6 +31,12 @@ type Deps struct {
 	Chains    ChainService
 	Auth      Authenticator
 	Roles     RoleGuard
+	// Engine reconciles a Semaphore task id to its run (SPEC-033): the
+	// session-less webhook accelerator's only entry into runs.
+	Engine Reconciler
+	// SemaphoreWebhookSecret guards that webhook; empty disables it (the route
+	// 401s everything — poll-only mode).
+	SemaphoreWebhookSecret string
 	// SecureCookies marks the session cookie Secure (PORTAL_COOKIE_SECURE;
 	// off in dev — plain HTTP).
 	SecureCookies bool
@@ -44,8 +50,11 @@ func NewRouter(log *slog.Logger, d Deps) http.Handler {
 	r.Use(requestLogger(log))
 	r.Get("/healthz", healthz(d.DB))
 	r.Route("/api", func(r chi.Router) {
-		// The one API route outside the session guard (SPEC-020).
+		// Routes outside the session guard: login (SPEC-020) and the
+		// Semaphore webhook (SPEC-033 mini-ADR 5 — a machine, not a browser;
+		// its own shared secret is the guard, session-less by design).
 		r.Post("/auth/login", login(log, d))
+		r.Post("/engine/semaphore/webhook", webhookSemaphore(log, d.SemaphoreWebhookSecret, d.Engine))
 		r.Group(func(r chi.Router) {
 			r.Use(requireSession(d.Auth))
 			r.Post("/auth/logout", logout(log, d))

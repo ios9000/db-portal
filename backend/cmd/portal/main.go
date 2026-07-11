@@ -92,6 +92,14 @@ func run(log *slog.Logger, args []string) error {
 	registry.Register(engine.ClassNonProd, nonprod)
 
 	runSvc := runs.NewService(pool, registry, log)
+	// Against a REAL remote engine the webhook is the fast finalizer and the
+	// watcher's poll is the fallback truth (ADR-002, SPEC-033 mini-ADR 2) — so
+	// poll GENTLY at the configured Semaphore cadence instead of the mock's
+	// tight 500ms default, which would hammer Semaphore's REST API once per
+	// running job. Mock/default keeps the snappy in-process cadence.
+	if cfg.EngineNonProd == "semaphore" && cfg.SemaphorePollInterval > 0 {
+		runSvc.PollInterval = cfg.SemaphorePollInterval
+	}
 	chainSvc := chain.New(pool, runSvc, log)
 	// Failure/cancel mail to the DBA list (SPEC-014) — wired before the
 	// orphan sweeps so unattended endings notify too. Chain step runs mail
@@ -147,15 +155,20 @@ func run(log *slog.Logger, args []string) error {
 
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
-		DB:            pool,
-		Instances:     inventory.NewStore(pool),
-		Runs:          runSvc,
-		Artifacts:     runSvc,
-		Schedules:     sched,
-		Chains:        chainSvc,
-		Auth:          auth,
-		Roles:         roles,
-		SecureCookies: cfg.CookieSecure,
+		DB:        pool,
+		Instances: inventory.NewStore(pool),
+		Runs:      runSvc,
+		Artifacts: runSvc,
+		Schedules: sched,
+		Chains:    chainSvc,
+		Auth:      auth,
+		Roles:     roles,
+		// The Semaphore webhook accelerator (SPEC-033): reconciler + its shared
+		// secret. Always mounted; an empty secret leaves it 401-only (poll-only
+		// mode), which is exactly the mock/default posture.
+		Engine:                 runSvc,
+		SemaphoreWebhookSecret: cfg.SemaphoreWebhookSecret,
+		SecureCookies:          cfg.CookieSecure,
 	}).Run(ctx)
 }
 

@@ -634,7 +634,7 @@ by then); internal/catalog/catalog.go; internal/server/runs_http.go;
 frontend/src/components/LaunchDrawer.tsx (ritual pattern) +
 pages/MyDatabases.tsx (entry point); docs/specs/guardrails.md.
 
-### WU-033 · SemaphoreAdapter — M · `todo`
+### WU-033 · SemaphoreAdapter — M · `done` (2026-07-11)
 ADR-002's payoff: the same portal drives a REAL engine. Compose `semaphore`
 service (BoltDB dialect for dev simplicity — mini-ADR; admin creds in .env only,
 ADR-004); playbooks/ becomes a Semaphore-servable repo layout + `smoke.yml`
@@ -650,14 +650,19 @@ keep MockEngine; ONE integration test drives real Semaphore and skips without
 the compose service (the testutil.MigratedDB skip pattern). Split as sized:
 (a) compose + adapter poll-only, checkpoint; (b) webhook + streaming + itest.
 **AC:**
-- [ ] Live on VM: portal button-dump on the smoke template through real
-      Semaphore — queued→running→success, logs stream into RunDetail, cancel
-      mid-run works, audit trail shape identical to mock runs.
-- [ ] Webhook: terminal status lands without waiting a poll interval; webhook
-      DOWN → poll still finalizes (fallback proven by test); bad secret → 401.
-- [ ] `npm run check` green with zero Semaphore dependence (itest skips clean).
+- [x] Live on VM: portal button-dump on the smoke template through real
+      Semaphore — queued→running→success (run 1, task 2147483634, ~18s), logs
+      stream into RunDetail (34 real ansible lines + `end`), cancel mid-run
+      works (run 2 → canceled), audit trail shape identical to mock runs
+      (submitted→finished / submitted→cancel_requested→finished). [s18]
+- [x] Webhook: terminal status lands without waiting a poll interval (run 4,
+      watcher parked 30s, webhook finalized on the spot); webhook DOWN → poll
+      still finalizes (runs 1–3 fired no webhook; `TestPollFinalizesWithoutWebhook`);
+      bad/missing secret → 401 + zero state change (live + `TestWebhookAuthFailsClosed`). [s18]
+- [x] `npm run check` green with zero Semaphore dependence (itest skips clean
+      when the token is unset). [s18]
 **Verify:** itest output both modes (skip + live) in journal; the live drill
-above; `npm run check` green.
+above; `npm run check` green. — DONE s18.
 **Context brief:** ADR-002; ARCHITECTURE §2 (adapter, webhook+poll);
 internal/engine/{engine.go,mock.go,registry.go}; internal/config/config.go;
 infra/compose.yaml; internal/server/server.go (webhook route seam);

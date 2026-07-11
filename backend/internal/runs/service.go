@@ -438,6 +438,58 @@ func (s *Service) SweepOrphans(ctx context.Context) (int, error) {
 	return swept, nil
 }
 
+// ReconcileByJobID accelerates one run to its terminal state (SPEC-033
+// mini-ADR 2): it finds the run carrying jobID and runs ONE Status→finalize.
+// It is the Semaphore webhook's only entry into runs, and it asserts NOTHING
+// from the webhook — the outcome comes from re-polling the REAL engine job,
+// whose status is authoritative. Poll stays the truth: the periodic watcher
+// runs this identical path, so a missing webhook still finalizes (the ADR-002
+// fallback) and a payload that lies about status cannot force an outcome.
+//
+// No-op (nil) when nothing needs doing: no run owns that job id
+// (stale/spoofed/unknown task), the run is already terminal, the adapter no
+// longer knows the job (ErrUnknownJob — a genuinely lost job is the poll
+// authority's call, not the webhook's), or the job is not yet terminal. Only a
+// terminal Status finalizes, and the WU-016 single-finalizer guard makes that
+// safe alongside the concurrent watcher — whoever wins finalizes, the other's
+// UPDATE touches 0 rows and is a silent no-op (no duplicate audit or notify).
+func (s *Service) ReconcileByJobID(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return nil
+	}
+	var runID int64
+	var class engine.EnvClass
+	var state string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, engine_class, state FROM run WHERE job_id = $1 ORDER BY id DESC LIMIT 1`, jobID).
+		Scan(&runID, &class, &state)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil // no run owns this task id — nothing to reconcile
+	case err != nil:
+		return fmt.Errorf("runs: reconcile look up job %q: %w", jobID, err)
+	}
+	if engine.JobState(state).Terminal() {
+		return nil // already finalized; the first outcome stands
+	}
+	adapter, err := s.registry.For(class)
+	if err != nil {
+		return fmt.Errorf("runs: reconcile job %q: %w", jobID, err)
+	}
+	st, err := adapter.Status(ctx, engine.JobID(jobID))
+	if errors.Is(err, engine.ErrUnknownJob) {
+		return nil // the poll authority owns a genuinely lost job, not the webhook
+	}
+	if err != nil {
+		return fmt.Errorf("runs: reconcile status job %q: %w", jobID, err)
+	}
+	if !st.State.Terminal() {
+		return nil // not done yet — the periodic watcher keeps polling
+	}
+	return s.finalize(ctx, runID, string(st.State), st.Error,
+		timePtr(st.Started), timePtr(st.Finished), st.Artifact)
+}
+
 // paramsDigest is the sha256 hex of the canonical (sorted-key JSON) params —
 // the audit trail's tamper-evident summary of what was sent to the engine.
 func paramsDigest(params map[string]string) string {
