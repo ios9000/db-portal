@@ -5,38 +5,32 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-031 done 2026-07-11 (s17, f2dcf2d backend +
-  270e665 UI)**; next WU is **WU-033 (SemaphoreAdapter, M)** in a fresh
-  session. Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036.
-- **Status (s17, WU-031 backend):** restore backend complete, gate green both
-  stacks. (Recovered an interrupted twin session's uncommitted backend after
-  an ssh reset — verified-don't-redo: the on-disk code compiled and matched
-  SPEC-031, so this session wrote the entire missing test layer + golden-flow
-  beat rather than restarting. See JOURNAL s17.) SPEC-031 =
-  docs/specs/restore.md (5 mini-ADRs): (1) **verify is its OWN chain step** —
-  a bad artifact halts BEFORE the safety dump, target untouched; (2) retention
-  class rides the catalog op, `finalize` stamps it — NO schema change (0009
-  already carries retention_class); (3) verify/safety_dump/restore are
-  INTERNAL (non-launchable) ops behind a SINGLE `StartRequest.Internal` choke
-  point in `runs.Start` — the chain driver is the only caller that sets it, so
-  a bare restore over POST /api/runs or the scheduler = 400 unknown op; (4)
-  restore is a client POST assembling a chain via a PURE recipe (`no skip
-  affordance` is structural, not a runtime check); (5) explicit target,
-  default non-prod, prod = typed-name ritual enforced once in `chain.Create`.
-  internal/restore.Steps = fixed `[verify, safety_dump, restore]` with
-  artifact lineage (id+checksum+name) on verify+restore only. catalog gains
-  `Launchable`+`RetentionClass` (All()=launchable only, ByID=all). runs.Start
-  launchable gate; finalize stamps retention_class from the catalog
-  ('safety' for safety_dump, else 'standard'). runs.GetArtifact +
-  ErrArtifactNotFound. chain driver sets Internal:true on every step. mock
-  gains `verify`; its restore script trimmed to restore-only (safety dump is
-  its own step now). POST /api/restore (dba, body+reason capped) → 201 chain
-  read model; 400 missing/prod-unconfirmed, 404 unknown artifact/instance.
-  Golden flow **Beat 10** = restore end to end: happy path (3 steps success,
-  ONE 'safety' artifact on the target, restore-step lineage tied,
-  last_backup_at ignores the safety dump) THEN injected verify-fail halts at
-  step 1 with ZERO safety_dump/restore runs on the target, one chain mail,
-  API resume → success.
+- **Active:** PHASE 3 (M3) — **WU-033 (SemaphoreAdapter, M) IN PROGRESS
+  (s18)**: SPEC-033 written (docs/specs/semaphore.md); **slice (a) — compose
+  Semaphore + poll-only adapter — is the next action.** WU-031 done s17
+  (f2dcf2d + 270e665, live-drilled 98fc2a8). Execution order 030 → 032 → 031 →
+  033 → 034 → 035 → 036.
+- **Status (s18, WU-033 spec):** SPEC-033 = docs/specs/semaphore.md (8
+  mini-ADRs). ADR-002's payoff — the SAME portal drives REAL Semaphore for the
+  NON-PROD class, opt-in, behind the UNCHANGED engine.Adapter seam. Key
+  decisions: (1) JobID = the Semaphore task id, adapter holds NO job state
+  (durable across restart, ErrUnknownJob falls out — no runs.Service change);
+  (2) **POLL is the only finalizer; the webhook merely triggers a re-poll and
+  NEVER asserts state** — so "webhook down → poll finalizes" is the DEFAULT
+  (not a special path) and a spoofed payload can't force an outcome; seam =
+  new `runs.ReconcileByJobID` (find run by job_id, one Status→finalize, safe
+  under the WU-016 guard); (3) playbook tag → Semaphore template id is config,
+  fail-closed; (4) StreamLogs = poll output replay-then-follow, the mock
+  contract verbatim (RunDetail SSE unchanged); (5) webhook route is
+  session-less + shared-secret constant-time + writes NOTHING from the body,
+  fails closed; (6) `PORTAL_ENGINE_NONPROD=mock|semaphore` opt-in, prod stays
+  mock in dev, disjoint config = guardrail 3 structural (Registry panics on a
+  shared instance); (7) compose Semaphore BoltDB dialect, creds `.env`-only
+  (ADR-004); (8) ALL tests keep MockEngine + ONE skip-gated itest. Split: (a)
+  compose + playbooks/smoke.yml + adapter poll-only + stub-server units +
+  skip-gated itest → CHECKPOINT; (b) webhook + `ReconcileByJobID` + fallback
+  test + live VM drill. Delegation: compose/playbook scaffold = Sonnet-brief
+  candidate; adapter HTTP client + webhook auth + ReconcileByJobID = architect.
 - **Where:** PRIMARY = VM #2 `dbportal-vm` (root@80.209.240.36, host "206610",
   8 vCPU / 31 GB / 387 GB, Ubuntu 24.04.4), repo `/root/db-portal`, bootstrapped via
   `infra/bootstrap-vm.sh` on 2026-07-06. Workstation `P:\Projects\db-portal` = docs-only
@@ -45,11 +39,18 @@
 
 ## Next action (be exact)
 
-1. **Start WU-033 in a fresh session** (SemaphoreAdapter, M — compose service,
-   webhook + poll fallback; ritual/authz seams stay architect-side). Read its
-   BACKLOG entry + ONLY its context brief; write SPEC-033 first. Semaphore
-   stays opt-in (PORTAL_ENGINE_NONPROD), MockEngine remains the default for
-   dev + ALL tests per ADR-002, with ONE skip-gated integration test.
+1. **WU-033 slice (a)** — SPEC-033 is written; build the compose Semaphore
+   service (BoltDB dialect, 127.0.0.1, creds `.env`-only) + `playbooks/` repo
+   layout + `smoke.yml` (echo/sleep), then `internal/engine/semaphore.go`
+   (StartJob/Status/Cancel + poll-based StreamLogs, JobID = task id, no job
+   state), config fields (`PORTAL_ENGINE_NONPROD` + semaphore block) + main
+   opt-in wiring, unit tests over a stub HTTP server + the skip-gated itest
+   (poll-only). Then CHECKPOINT (commit, STATE, journal) BEFORE slice (b)
+   (webhook + `ReconcileByJobID` + fallback test + live VM drill). Compose +
+   playbook scaffold = Sonnet-brief candidate; adapter/webhook = architect.
+   First live task: stand up the compose Semaphore, pin its REST specifics
+   (task-create payload, status enum, output pagination, cancel verb) against
+   the running BoltDB service — open question 1 in SPEC-033.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -95,15 +96,31 @@
   from linked run; superseded runs keep history, leave the strip. UI
   step-status vocabulary = `pending` + run states, fixed; 031 consumes
   as-is.
-- **Delegation model (5 successes: WU-019, WU-020b, WU-021b, WU-022b,
-  WU-032-UI):**
+- **Restore (WU-031, SPEC-031 = docs/specs/restore.md):** the FIRST chain
+  assembler. `POST /api/restore {artifact_id, target, confirm, reason}` (dba)
+  builds a `kind=restore` chain via the pure recipe `internal/restore.Steps` =
+  `[verify, safety_dump, restore]` — the safety dump is a LITERAL in the slice,
+  so "no skip affordance" is structural, not a runtime check (D1 incident). The
+  ops verify/safety_dump/restore are catalog entries with `Launchable=false`;
+  `runs.Start` refuses a non-launchable op unless `StartRequest.Internal` is
+  set, which ONLY chain/driver.go does → bare restore over POST /api/runs or
+  the scheduler = 400. `finalize` stamps `artifact.retention_class` from the
+  catalog op ('safety' for safety_dump, else 'standard'); last_backup_at (dump
+  only) ignores safety dumps. Prod target ritual enforced once in
+  `chain.Create` before any row. 034/036 add the real verify/restore playbooks
+  behind this same recipe. UI = RestoreDrawer from MyDatabases.
+- **Delegation model (6 successes: WU-019, WU-020b, WU-021b, WU-022b,
+  WU-032-UI, WU-031-UI):**
   implementation WUs with a tight brief run on a Sonnet 5 general-purpose
-  subagent (Agent tool, `model: sonnet`, no git); architect (Fable) writes
+  subagent (Agent tool, `model: sonnet`, no git); architect (Fable/Opus) writes
   specs/briefs, implements security/concurrency-sensitive slices itself,
-  reviews diffs, runs the gate, live-verifies, commits. Workflow tool only
-  for multi-agent pipelines (gate reviews). Phase 3 delegation candidates:
-  UI slices of 031/032, playbook/compose scaffolds of 033/034; chain engine
-  core, SemaphoreAdapter concurrency, ritual/authz seams = architect.
+  reviews diffs, runs the gate, live-verifies, commits. WU-031-UI (s17,
+  124k tok): reviewed line-by-line, only issue was a prettier gap the fe gate
+  doesn't check but the pre-commit hook does (`npm run fmt` before committing
+  delegated FE work). Workflow tool only for multi-agent pipelines (gate
+  reviews). Phase 3 delegation candidates: playbook/compose scaffolds of
+  033/034; chain engine core, SemaphoreAdapter concurrency, ritual/authz
+  seams = architect.
   (WU-023 + WU-030 were architect-implemented end to end: S-sized, no/thin
   UI — delegation overhead exceeds the diff.)
 - **Artifact registry (WU-030, SPEC-030 = docs/specs/artifacts.md):**
@@ -202,6 +219,19 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-11 — WU-033 spec written (s18, SPEC-CHECKPOINT — implementation not
+  started): SPEC-033 = docs/specs/semaphore.md (8 mini-ADRs) for the
+  SemaphoreAdapter. Core design: same portal drives REAL Semaphore for nonprod,
+  opt-in via PORTAL_ENGINE_NONPROD, behind the unchanged engine.Adapter seam;
+  JobID = durable Semaphore task id (no in-process job state); POLL is the only
+  finalizer and the webhook merely triggers a re-poll (never asserts state → an
+  absent webhook still finalizes by default; seam = new runs.ReconcileByJobID);
+  tag→template-id is fail-closed config; webhook route session-less +
+  shared-secret constant-time; disjoint per-class config = guardrail 3
+  structural; BoltDB compose dialect, creds .env-only; MockEngine stays the
+  test default + ONE skip-gated itest. Split: (a) compose + poll-only adapter +
+  itest → checkpoint; (b) webhook + fallback test + live drill. Docs-only, no
+  gate run needed. Active → WU-033 slice (a).
 - 2026-07-11 — WU-031 DONE (s17, f2dcf2d backend + 270e665 UI): restore
   workflow on MockEngine, all AC + Verify met. Backend (recovered from an
   interrupted twin — see below): internal/restore recipe, catalog
@@ -214,9 +244,11 @@
   unconditional safety-dump plan preview, never a checkbox; success links to
   the first step run or /activity), api.ts fetchArtifacts/startRestore, 10
   vitest. AC-4 grep confirmed: Internal:true only in chain/driver.go, the
-  recipe is the sole op source. Gate green both stacks (vitest 116/116). NOTE:
-  no live browser drive (demo still on b10b960/0010) — seam covered by e2e
-  Beat 10 + vitest; live-verify recipe in Next action §3. Active → WU-033.
+  recipe is the sole op source. Gate green both stacks (vitest 116/116).
+  LIVE-DRILLED s17 (98fc2a8): demo rebuilt to 270e665, POST /api/restore drove
+  verify→safety_dump→restore to success over real HTTP + 'safety' artifact on
+  the target + prod-ritual 400s (no headless browser on VM, so SPA render not
+  automated). Active → WU-033.
   RECOVERY DETAIL: the twin (ssh reset) left the backend prod code + SPEC-031
   uncommitted and never checkpointed (STATE.md said "start fresh" — stale;
   trust the tree). Reaped the idle twin (user-authorized), verified on-disk
@@ -233,9 +265,3 @@
   tree survey found the core complete; this session added Beat 9, authz
   route pins, 0010 walk pins, ChainHalted mail test, UI slice.
   Active → WU-031 (restore workflow).
-- 2026-07-11 — WU-030 done (s15, c7c6b73): artifact registry metadata-first —
-  SPEC-030 (5 mini-ADRs), migration 0009 (artifact table, UNIQUE run_id,
-  dormant location, idempotent backfill), finalize() registers inside the
-  guarded terminal tx, GET /api/artifacts?instance=, golden flow asserts
-  both launch paths. Architect-implemented; gate green both stacks.
-  Active → WU-032 (chain engine).
