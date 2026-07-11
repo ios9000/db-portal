@@ -53,31 +53,33 @@
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
-3. Optional follow-up (NOT blocking WU-031 closure): a live browser drive of
-   the Restore drawer against the new backend was NOT done — the demo unit is
-   still on b10b960/0010 (no /api/restore). The WU is verified by e2e Beat 10
-   (backend over real HTTP) + vitest (drawer over real fetch mocking the wire
-   shape), which cover both sides of the seam. To live-verify: build:release,
-   stop dbportal-demo, run the new binary (dev DB already at 0010 — WU-031 has
-   NO migration), drive MyDatabases → Restore. Watch the demo-unit-deletes and
-   bind-in-use hazards below.
+3. (DONE s17) Live drive of the restore flow completed — demo rebuilt to the
+   270e665 binary and driven end-to-end over HTTP (no headless browser on the
+   VM, so the SPA render/click wasn't automated; every API call the drawer
+   makes WAS): POST /api/restore billing-test→hr-test 201 → chain 2 drove
+   verify(run25)/safety_dump(run26)/restore(run27) all to success; hr-test
+   registered a 'safety' artifact (run 26); GET /api/runs/27/chain returns the
+   restore chain success; prod target (billing-prod) no/wrong confirm → 400
+   with zero chain rows; bare POST /api/runs{operation:restore} → 400; served
+   bundle contains /api/restore + "Restore onto". A human can click the drawer
+   visually at the demo.
 
 ## Blocked / needs user
 
 - Nothing.
 - HEADS-UP: demo portal runs as transient systemd unit `dbportal-demo` on
-  :8080 (binary of b10b960, dev DB migrated to 0010) with
-  `PORTAL_AUTH_MODE=fake` + demo break-glass hash (password "demo-glass",
-  hash only in the unit env — recover via `systemctl show dbportal-demo -p
-  Environment`; NOTE stopping the unit DELETES it and the env — s16
-  regenerated the bcrypt hash from the known password and re-ran
-  systemd-run, the recipe is in JOURNAL s16). Sign in dba1/dba1. Verify
-  history in the DB now includes chain 1 (test-chain on hr-test, success)
-  and its run 24 — RUN-24's page shows the chain strip live. Before any
-  live check that runs its own portal: `systemctl stop dbportal-demo` —
-  bind-in-use + two-portals-one-DB hazard. ALSO (bit s10 twice): a
-  backgrounded `portal &` may report a wrapper PID in `$!` — always kill
-  the PID that `ss -ltnp` shows holding :8080.
+  :8080. **Rebuilt s17 to the 270e665 binary (WU-031); dev DB still at 0010**
+  (WU-031 adds no migration). Env `PORTAL_AUTH_MODE=fake` + demo break-glass
+  hash (password "demo-glass", hash only in the unit env — recover via
+  `systemctl show dbportal-demo -p Environment`; NOTE stopping the unit
+  DELETES it and the env — the recipe is in JOURNAL s16; s17 reused the same
+  captured hash `$2a$10$BQnBaouoM6y…olo5.`). Sign in dba1/dba1. Dev DB history
+  now also includes the s17 live restore: chain 2 (restore on hr-test,
+  success) with runs 25/26/27 and a 'safety' artifact on hr-test (run 26).
+  Before any live check that runs its own portal: `systemctl stop
+  dbportal-demo` — bind-in-use + two-portals-one-DB hazard. ALSO (bit s10
+  twice): a backgrounded `portal &` may report a wrapper PID in `$!` — always
+  kill the PID that `ss -ltnp` shows holding :8080.
 
 ## Standing context (stable facts worth re-stating)
 
