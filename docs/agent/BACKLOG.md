@@ -699,7 +699,7 @@ infra/compose.yaml (+pgtarget +volume); playbooks/smoke.yml (033 scaffold);
 internal/engine/semaphore.go (result-parsing seam) + engine.go (Artifact);
 infra/fixtures/instances.csv; ADR-004.
 
-### WU-035 · O-1 storage: minio — S · `todo`
+### WU-035 · O-1 storage: minio — S · `done`
 Artifact bytes get a real home. Compose `minio` + bucket bootstrap; dump
 playbook uploads AFTER checksum (engine-side creds, ADR-004) and records the
 object URL in the result line → registry `location`; the volume becomes staging
@@ -708,11 +708,19 @@ in spec). An upload failure fails the RUN: a dump that isn't stored is not a
 success and must not register an artifact claiming otherwise. Resolve O-1 in
 DECISIONS.md (annotate the Open item, never delete).
 **AC:**
-- [ ] Live: portal dump → object in minio; registry location = object URL;
+- [x] Live: portal dump → object in minio; registry location = object URL;
       recorded checksum matches the object's actual hash (mc-side check).
-- [ ] Injected upload failure → run failed, zero artifact row, notify mail.
-- [ ] `npm run check` green engine-free; O-1 annotated resolved.
+- [x] Injected upload failure → run failed, zero artifact row, notify mail.
+- [x] `npm run check` green engine-free; O-1 annotated resolved.
 **Verify:** live drill + mc stat/hash output in journal; `npm run check` green.
+**DONE s20 (2026-07-12, fe70fbc):** all 3 AC + Verify met. Live drill (isolated
+portal :8099 + portal_drill035, semaphore engine, dump:3): dump on pgtarget →
+success, registry `location=s3://dbportal-artifacts/appdb-…​.dump`, mc-side
+`mc cat|sha256sum` == recorded sha256 (d1ad0cfe…​), staging file cleaned; minio
+stopped → dump failed at the `mc cp` upload step (pg_dump ok), ZERO artifact,
+mail "RUN-2 failed — dump on pgtarget (dev)"; all 4 secrets (PG/token/webhook/
+minio) absent from DB dump + portal log + both task outputs. Recovered from an
+interrupted twin (see JOURNAL s20).
 **Context brief:** O-1 (DECISIONS §Open); infra/compose.yaml;
 playbooks/dump.yml; internal/engine/semaphore.go (result parsing);
 migration 0009 (location column: dormant → live).

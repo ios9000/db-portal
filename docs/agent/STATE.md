@@ -5,12 +5,30 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-035 (O-1 storage: minio, S) is NEXT.**
-  **WU-034 (Dump playbook — real) DONE s19** — both slices shipped, all 4 AC +
-  Verify met, full-portal live drill passed on the VM (real pg_dump through
-  Semaphore, real restorable artifact, failure path, no-secrets). SPEC-034 =
-  `docs/specs/dump-playbook.md`. Execution order 030 → 032 → 031 → 033 → 034 →
-  **035** → 036.
+- **Active:** PHASE 3 (M3) — **WU-036 (Restore playbook — real + M3 rehearsal, M)
+  is NEXT** (the LAST M3 WU; then the M3 gate review).
+  **WU-035 (O-1 storage: minio, S) DONE s20** (fe70fbc impl + closeout) — dump
+  artifact bytes now live in object storage; all 3 AC + Verify met, live drill
+  passed on the VM (object in minio, mc-side hash match, injected upload
+  failure, no-secrets). SPEC-035 = `docs/specs/artifact-storage.md`.
+  **WU-034 (Dump playbook — real) DONE s19.** Execution order 030 → 032 → 031 →
+  033 → 034 → 035 → **036**.
+- **Status (s20, WU-035 CLOSED):** the SAME portal now stores a REAL pg_dump in
+  object storage. Twin-recovery session (see checkpoint log): adopted ~82 min of
+  a parked twin's uncommitted, coherent WU-035 work after `ps`/`who`/per-pts
+  `sshd` checks + SPEC verification, SIGTERM-reaped the idle twin, gated + drilled
+  + committed. NO Go/FE change — the SPEC-034 result line already carries
+  `location`; only its value changed (path → `s3://…` URL), opaque to the portal.
+  compose gained `minio` (RELEASE.2025-09-07, :9000 API/:9001 console, `miniodata`
+  vol) + `createbuckets` one-shot (mc mb --ignore-existing; minio has no
+  healthcheck so the one-shot IS the readiness gate); the runner image bakes `mc`
+  (RELEASE.2025-08-13); bootstrap folds `MC_HOST_dbportal` (jq @uri credentialed
+  alias) + `MC_CONFIG_DIR=/tmp/.mc` + `DBPORTAL_BUCKET` into pgtarget-env (id 3,
+  engine-side, ADR-004); `playbooks/dump.yml` uploads `mc cp` AFTER the sha/size
+  stat, `mc stat --json` asserts stored size == local, THEN emits the result line
+  (`location='s3://'~bucket~'/'~name`), then best-effort staging `rm`
+  (failed_when:false) — the `artifacts` volume is STAGING ONLY now. O-1 annotated
+  RESOLVED in DECISIONS.md. Gate GREEN (CHECK-EXIT:0, golangci 0, vitest 116/116).
 - **Status (s19, WU-034 CLOSED):** the SAME portal now drives a REAL `pg_dump`
   of a compose target through Semaphore. slice (a) = infra + playbook (compose
   `pgtarget` postgres:16 seeded widget/ledger/ledger_totals via
@@ -57,26 +75,33 @@
 
 ## Next action (be exact)
 
-1. **START WU-035 (O-1 storage: minio — S).** Read its BACKLOG entry + context
-   brief: O-1 (DECISIONS §Open); infra/compose.yaml; playbooks/dump.yml (the
-   result line already carries `location` — now it becomes an object URL);
-   internal/engine/semaphore.go (result parsing — unchanged shape, new
-   location value); migration 0009 (`location` column, now LIVE from WU-034).
-   Deliver: compose `minio` + bucket bootstrap; dump.yml UPLOADS the .dump to
-   minio AFTER the checksum (engine-side creds, ADR-004) and records the object
-   URL as `location`; the `artifacts` volume becomes STAGING only. Upload
-   failure FAILS the run (a dump that isn't stored must not register an
-   artifact). Portal never proxies bytes — it stores/passes location strings
-   (mini-ADR). Resolve O-1 in DECISIONS.md (annotate the Open item, don't
-   delete). Write SPEC-035 just-in-time. AC live drill: portal dump → object in
-   minio, registry location = object URL, recorded checksum == the object's
-   actual hash (mc-side); injected upload failure → run failed, zero artifact,
-   mail. `npm run check` green engine-free.
-   - Dev facts carried: semaphore project 1, dump template **3**, pgtarget-env
-     **3**, smoke template 1; pgtarget host-port 5433, seeded appdb; `.env` has
-     the Semaphore token + `PGTARGET_*`. Persistent `.env` STAYS
-     `PORTAL_ENGINE_NONPROD=mock`; drills use an isolated portal (see the
-     WU-034 drill recipe below / [[live-drill-isolation]]).
+1. **START WU-036 (Restore playbook — real + M3 rehearsal — M).** Read its
+   BACKLOG entry + context brief: ARCHITECTURE §3 (restore) + §7
+   (do-not-discover-twice); SPEC-031 (chain assembly + verify-step semantics);
+   playbooks/dump.yml (the dump/result-line + `mc` engine-side pattern to
+   mirror); docs/demo-m1.md (rehearsal-doc pattern); infra/compose.yaml.
+   Deliver: `playbooks/restore.yml` = fetch the artifact FROM `location` (minio;
+   `mc cp <alias>/… → local` with the `s3://`→`<alias>/` rewrite, SPEC-035
+   mini-ADR 2), **sha256 verify BEFORE touching the target** (mismatch = fail,
+   ZERO target writes), `pg_restore` with a vetted flag set (`--clean --if-exists`
+   vs drop/create — O-4-style mini-ADR), machine-readable result line; catalog
+   `restore` template pinned to it (the WU-031 restore recipe's `restore` op
+   becomes REAL — mock→semaphore same code, behind the unchanged Adapter seam).
+   Then `docs/demo-m3.md` (human twin, demo-m1.md pattern) = the M3 exit
+   rehearsal: seed → portal dump → destroy a table → portal restore
+   (verify→safety_dump→restore chain) → data verified back + safety artifact
+   registered; halt+resume on injected failure; mock-vs-semaphore same-code beat.
+   Write SPEC-036 just-in-time. AC: live rehearsal ≤15 min on the VM release
+   binary, every M3 exit criterion ticked in the doc; checksum-tamper → chain
+   halts at verify, target untouched, mail, fix+resume → success; the safety-dump
+   artifact is itself `pg_restore --list`-restorable. `npm run check` green.
+   - Dev facts carried: semaphore project 1, dump template **3**, restore
+     template = **NEW** (bootstrap creates it), pgtarget-env **3**, smoke
+     template 1; pgtarget host-port 5433, seeded appdb; the minio bucket
+     `dbportal-artifacts` (:9000) holds REAL dumps to restore from; `.env` has
+     the Semaphore token + `PGTARGET_*` + `MINIO_*`. Persistent `.env` STAYS
+     `PORTAL_ENGINE_NONPROD=mock`; drills use an isolated portal (see the WU-035
+     drill recipe below / [[live-drill-isolation]]).
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -84,20 +109,25 @@
 ## Blocked / needs user
 
 - Nothing.
-- HEADS-UP (WU-034 DONE, s19): compose now also runs **`pgtarget`**
-  (dbportal-dev-pgtarget-1, postgres:16, 127.0.0.1:5433, seeded appdb) and the
-  `semaphore` service is now the **BUILT** image `dbportal-semaphore:v2.17.39-pg16`
-  (postgresql16-client + `/artifacts`). New named volumes `artifacts`,
-  `pgtargetdata`. To bring the whole dev stack up from a fresh clone:
+- HEADS-UP (WU-035 DONE, s20): the dev stack now also runs **`minio`**
+  (dbportal-dev-minio-1, 127.0.0.1:9000 API / :9001 console) with the artifact
+  bucket **`dbportal-artifacts`** (created idempotently by the `createbuckets`
+  one-shot; `miniodata` volume). The `semaphore` runner image
+  (`dbportal-semaphore:v2.17.39-pg16`) now also bakes the **`mc`** client. The
+  `pgtarget` service (postgres:16, 127.0.0.1:5433, seeded appdb) is unchanged
+  from s19. To bring the WHOLE dev stack up from a fresh clone:
   `docker compose -f infra/compose.yaml --env-file .env up -d --build --wait`
-  then `set -a; . ./.env; set +a; sh infra/semaphore-bootstrap.sh` (now also
-  creates `pgtarget-env` (id 3) + the `dump` template (id 3); prints
-  `SEMAPHORE_DUMP_TEMPLATE_ID`). `pgtarget` creds live in `.env` as `PGTARGET_*`
-  (engine-side only, ADR-004). The persistent `.env` stays
-  `PORTAL_SEMAPHORE_TEMPLATES=smoke:1` + `PORTAL_ENGINE_NONPROD=mock`; the
-  `dump:3` map + semaphore engine are used only by an isolated drill portal.
-  A few leftover `.dump` files from the slice-(a) proof + the s19 drill sit in
-  the `artifacts` volume — harmless (WU-035 makes the volume staging-only).
+  then `set -a; . ./.env; set +a; sh infra/semaphore-bootstrap.sh` — the
+  bootstrap now folds the object-store creds (`MC_HOST_dbportal` + `MC_CONFIG_DIR`
+  + `DBPORTAL_BUCKET`) into `pgtarget-env` (id 3) alongside the `PG*` vars, and
+  still creates the `dump` template (id 3) + prints `SEMAPHORE_DUMP_TEMPLATE_ID`.
+  Object-store + pgtarget creds live in `.env` as `MINIO_*` / `PGTARGET_*`
+  (engine-side only, ADR-004; the Go portal NEVER reads them). Persistent `.env`
+  stays `PORTAL_SEMAPHORE_TEMPLATES=smoke:1` + `PORTAL_ENGINE_NONPROD=mock`; the
+  `dump:3` map + semaphore engine are used only by an isolated drill portal. The
+  `artifacts` volume is STAGING ONLY now (dump.yml `rm`s the local copy after a
+  verified upload); a few pre-WU-035 `.dump` files linger there (harmless) and
+  the bucket holds a handful of drill dumps (harmless — no retention yet, M4).
 - HEADS-UP (Semaphore, WU-033 DONE): the compose `semaphore` service is LEFT
   RUNNING on the VM at 127.0.0.1:3000 (`docker ps` → dbportal-dev-semaphore-1).
   The skip-gated itest depends on it PLUS the API token in gitignored `.env`
@@ -152,7 +182,25 @@
   panics on a shared instance). When semaphore is on, the runs watcher polls at
   `PORTAL_SEMAPHORE_POLL_INTERVAL` (gentle, webhook-accelerated), not the mock's
   500ms. Compose Semaphore v2.17.39 BoltDB, creds `.env`-only; ONE skip-gated
-  itest. NEXT (WU-034): `dump` becomes a REAL pg_dump playbook + `Artifact.Location`.
+  itest. Real dump + storage landed in WU-034/035 (below).
+- **Real dump + object storage (WU-034 SPEC=docs/specs/dump-playbook.md,
+  WU-035 SPEC=docs/specs/artifact-storage.md):** the SAME portal drives a REAL
+  `pg_dump` of the compose `pgtarget` through Semaphore and stores the bytes in
+  **minio** — behind the UNCHANGED engine.Adapter seam, nonprod-only, opt-in.
+  `playbooks/dump.yml` = pg_dump -Fc (engine-side libpq creds) → sha256/size
+  stat → `mc cp` upload to `s3://dbportal-artifacts/<name>` → `mc stat` size
+  assert → emit ONE `DBPORTAL_RESULT=<base64 json {name,size_bytes,sha256,
+  location}>` line → best-effort staging `rm`. `mc`/`pg_dump` read creds ONLY
+  from the Semaphore `pgtarget-env` Environment (id 3: `PG*` + `MC_HOST_dbportal`
+  + `MC_CONFIG_DIR` + `DBPORTAL_BUCKET`) — the playbook names NO credential
+  (ADR-004). Go side (WU-034, unchanged by WU-035): `engine.Artifact.Location`;
+  `semaphore.go` parses the result line on terminal SUCCESS (nil on missing/bad
+  → run still succeeds, just no artifact); `finalize` writes `artifact.location`
+  (`NULLIF`, mock stays NULL). Upload failure aborts the play → run failed, ZERO
+  artifact (a dump that isn't stored registers nothing). Portal never touches
+  object bytes — it stores/passes `location` strings; GET /api/artifacts does
+  NOT expose `location` (SPEC-030). WU-036 restore reads `location` and fetches
+  engine-side the same way.
 - **Chain engine (WU-032, SPEC-032 = docs/specs/chains.md):** chains are
   portal-assembled ONLY (no client create API; 031's restore POST is the
   first assembler). internal/chain imports catalog/runs, NEVER engine —
@@ -287,6 +335,34 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-12 — WU-035 DONE (s20, fe70fbc impl + closeout): dump artifact bytes
+  get a real home in object storage (O-1 resolved), behind the unchanged engine
+  seam. TWIN-RECOVERY session: opened alongside a still-attached prior ssh
+  (pts/0, `claude --resume`, sleeping/parked) that had written ~82 min of
+  uncommitted, coherent WU-035 work + rebuilt the runner image + brought the
+  minio stack up, but never gated/drilled/committed. Ran the twin-hazard drill
+  (`ps`+`who`+per-pts `sshd` — NOT orphaned, its ssh was live/just parked),
+  verified the on-disk work vs SPEC-035, user chose "adopt here", SIGTERM-reaped
+  the idle twin (sole writer), verify-don't-redo. THE WORK: SPEC-035
+  (docs/specs/artifact-storage.md, 5 mini-ADRs); compose `minio` + `createbuckets`
+  + `miniodata`; semaphore.Dockerfile bakes `mc`; bootstrap folds `MC_HOST_dbportal`
+  (jq @uri) + `MC_CONFIG_DIR` + `DBPORTAL_BUCKET` into pgtarget-env id 3; dump.yml
+  `mc cp` upload AFTER sha/size stat + `mc stat --json` size assert + emit
+  `location=s3://<bucket>/<name>` + best-effort staging `rm`; .env.example MINIO_*;
+  O-1 annotated RESOLVED. NO Go/FE change (the SPEC-034 result line already
+  carries `location`; only its value changed, opaque to the portal). Gate GREEN
+  (CHECK-EXIT:0, golangci 0, race pass, vitest 116/116). LIVE DRILL (isolated
+  portal :8099 + portal_drill035, semaphore engine, dump:3): AC-1 dump pgtarget →
+  success, registry `location=s3://dbportal-artifacts/appdb-…​.dump`, `mc cat|
+  sha256sum` == recorded sha (d1ad0cfe…​) mc-side, staging file cleaned, API
+  doesn't expose location; AC-2 minio stopped → dump FAILED at the `mc cp` step
+  (pg_dump ok, PLAY RECAP failed=1), ZERO artifact, mail "RUN-2 failed — dump on
+  pgtarget (dev)"; AC-3 pg_dump portal DB + portal log + BOTH task outputs → all
+  4 secrets (PG/token/webhook/minio) absent, mc masked the alias even on the
+  connection-refused path (SPEC-035 open-question resolved, no no_log needed).
+  Drill torn down (drill portal killed by the exact ss :8099 PID; portal_drill035
+  dropped); demo :8080 confirmed active + /healthz 200 + same PID throughout; dev
+  stack left up. All 3 AC + Verify met. Active → WU-036.
 - 2026-07-11 — WU-034 DONE (s19, 36d08ab slice a + slice b): the SAME portal
   drives a REAL pg_dump of a compose target through Semaphore, behind the
   unchanged engine.Adapter seam. slice (a) infra+playbook: compose `pgtarget`
@@ -328,27 +404,3 @@
   job_id = task id); run4 webhook-accelerated finalize (watcher parked 30s,
   webhook→success on the spot) + bad/no secret→401 zero-change. Drill torn down
   (portal stopped, portal_drill dropped); demo :8080 untouched. Active → WU-034.
-- 2026-07-11 — WU-031 DONE (s17, f2dcf2d backend + 270e665 UI): restore
-  workflow on MockEngine, all AC + Verify met. Backend (recovered from an
-  interrupted twin — see below): internal/restore recipe, catalog
-  Launchable/RetentionClass, runs.Start Internal launchable gate, finalize
-  retention stamping, GetArtifact, chain driver Internal, mock `verify` +
-  trimmed restore, POST /api/restore assembler, golden-flow Beat 10 (happy +
-  verify-fail halt/resume). UI (6th Sonnet delegation success): RestoreDrawer
-  from MyDatabases (source = entry instance; explicit target defaulting to
-  source only when non-prod; TARGET EnvBanner + typed-name ritual;
-  unconditional safety-dump plan preview, never a checkbox; success links to
-  the first step run or /activity), api.ts fetchArtifacts/startRestore, 10
-  vitest. AC-4 grep confirmed: Internal:true only in chain/driver.go, the
-  recipe is the sole op source. Gate green both stacks (vitest 116/116).
-  LIVE-DRILLED s17 (98fc2a8): demo rebuilt to 270e665, POST /api/restore drove
-  verify→safety_dump→restore to success over real HTTP + 'safety' artifact on
-  the target + prod-ritual 400s (no headless browser on VM, so SPA render not
-  automated). Active → WU-033.
-  RECOVERY DETAIL: the twin (ssh reset) left the backend prod code + SPEC-031
-  uncommitted and never checkpointed (STATE.md said "start fresh" — stale;
-  trust the tree). Reaped the idle twin (user-authorized), verified on-disk
-  code matched SPEC, then wrote the ENTIRE missing test layer + Beat 10. KEY
-  GOTCHA: `go build ./...` was green but the TEST TREE was red — the twin added
-  interface methods (GetArtifact, Create) without stubbing them; always
-  `go test -run NONE ./...` when recovering. See [[twin-session-hazard]].
