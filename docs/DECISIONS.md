@@ -130,7 +130,13 @@ target — gates that aren't THE gate rot. `docs/demo-m1.md` stays the human twi
 
 ## Open (inherited from architecture doc §10)
 
-- **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real)
+- **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real).
+  **RESOLVED 2026-07-12 (WU-035, SPEC-035 = docs/specs/artifact-storage.md):** S3-compatible object
+  store, minio in dev (compose `minio` + `createbuckets`). The dump playbook uploads the `.dump`
+  engine-side via `mc` after the checksum and records `location = s3://<bucket>/<name>`; upload
+  failure fails the run (no artifact). The portal never touches object bytes — it stores/passes
+  `location` strings (mini-ADR 1); object-store creds live engine-side only (ADR-004). Prod swaps
+  the `mc` alias + endpoint for a real S3 target — no portal code changes.
 - **O-3** maintenance-window source (rec: per-instance inventory field) — WU-010 adds the
   field; WU-023 gives it warn-only semantics (SPEC-023: `Day HH:MM-HH:MM`, server-local).
   Still open post-MVP: multi-window/holiday grammar, per-instance timezones, editing UI.

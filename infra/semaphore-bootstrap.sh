@@ -45,6 +45,16 @@ PGTARGET_DB_NAME="${PGTARGET_DB_NAME:-appdb}"
 PGTARGET_DB_USER="${PGTARGET_DB_USER:-appuser}"
 PGTARGET_DB_PASSWORD="${PGTARGET_DB_PASSWORD:-change-me-dev-only}"
 
+# WU-035 (SPEC-035): object-store connection for the dump upload. Folded into
+# the SAME pgtarget-env Environment so `mc` reads MC_HOST_dbportal from its
+# process env (ADR-004) — never named in the playbook, never in the portal DB.
+# Dev uses the minio root creds directly; PGHOST/endpoint are fixed compose
+# facts. Access/secret default to the compose root creds so .env only needs one.
+MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://minio:9000}"
+MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}"
+MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-change-me-dev-only}}"
+DBPORTAL_BUCKET="${DBPORTAL_BUCKET:-dbportal-artifacts}"
+
 COOKIE_JAR="$(mktemp)"
 trap 'rm -f "$COOKIE_JAR"' EXIT
 
@@ -145,12 +155,19 @@ else
     log "    exists: template id=${TEMPLATE_ID}"
 fi
 
-log "==> Ensuring environment '${PGTARGET_ENV_NAME}' (pgtarget connection, engine-side creds) ..."
-# The PG* libpq vars pg_dump reads. Built with jq so the password is escaped
-# correctly and never expanded into a log line.
+log "==> Ensuring environment '${PGTARGET_ENV_NAME}' (pgtarget + object-store connection, engine-side creds) ..."
+# The credentialed mc alias URL http://<access>:<secret>@minio:9000 — access
+# and secret URL-encoded (@uri) so special chars survive; built with jq so the
+# secret never expands into a log line (mini-ADR 4).
+MC_HOST=$(jq -nr --arg ep "$MINIO_ENDPOINT" --arg ak "$MINIO_ACCESS_KEY" --arg sk "$MINIO_SECRET_KEY" \
+    '($ak|@uri) as $u | ($sk|@uri) as $p | ($ep | sub("://"; "://\($u):\($p)@"))')
+# PG* (libpq, pg_dump) + MC_* (mc upload) + DBPORTAL_BUCKET (playbook var), all
+# engine-side. Built with jq so both secrets are escaped and never logged.
 PG_ENV_JSON=$(jq -nc \
     --arg u "$PGTARGET_DB_USER" --arg pw "$PGTARGET_DB_PASSWORD" --arg db "$PGTARGET_DB_NAME" \
-    '{PGHOST:"pgtarget",PGPORT:"5432",PGUSER:$u,PGPASSWORD:$pw,PGDATABASE:$db}')
+    --arg mch "$MC_HOST" --arg bkt "$DBPORTAL_BUCKET" \
+    '{PGHOST:"pgtarget",PGPORT:"5432",PGUSER:$u,PGPASSWORD:$pw,PGDATABASE:$db,
+      MC_HOST_dbportal:$mch,MC_CONFIG_DIR:"/tmp/.mc",DBPORTAL_BUCKET:$bkt}')
 PGTARGET_ENV_ID=$(curl_json GET "/api/project/${PROJECT_ID}/environment" | jq -r --arg n "$PGTARGET_ENV_NAME" '(. // [])[] | select(.name == $n) | .id' | head -n1)
 if [ -z "${PGTARGET_ENV_ID:-}" ]; then
     ENV_BODY=$(jq -nc --arg n "$PGTARGET_ENV_NAME" --argjson pid "$PROJECT_ID" --arg env "$PG_ENV_JSON" \

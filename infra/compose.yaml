@@ -81,6 +81,53 @@ services:
       timeout: 3s
       retries: 20
 
+  # WU-035 (SPEC-035): S3-compatible object store — the real home for dump
+  # artifact bytes (O-1). The dump playbook uploads here via `mc` after the
+  # checksum; the `artifacts` volume becomes staging only. Reachable by the
+  # Semaphore runner on the compose network as minio:9000 (creds injected
+  # engine-side into the "pgtarget-env" Environment as MC_HOST_dbportal by
+  # infra/semaphore-bootstrap.sh — ADR-004; the portal never sees them and
+  # never touches object bytes, mini-ADR 1). The official minio image is a
+  # minimal (shell-less, curl-less) image, so it carries NO compose
+  # healthcheck; the `createbuckets` one-shot below is the readiness gate (its
+  # retry loop waits for minio to accept connections, then exits 0).
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-dev-only}
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # web console
+    volumes:
+      - miniodata:/data
+
+  # WU-035: create the artifact bucket idempotently on stack up. minio/mc has a
+  # shell; it waits for minio (retry loop — minio has no healthcheck) then
+  # `mc mb --ignore-existing`. Runs to completion (exit 0); `--wait` is
+  # satisfied by the clean exit. `$$VAR` escapes compose interpolation so the
+  # shell expands the injected env at runtime.
+  createbuckets:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-dev-only}
+      DBPORTAL_BUCKET: ${DBPORTAL_BUCKET:-dbportal-artifacts}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          echo "waiting for minio ..."; sleep 1;
+        done
+        mc mb --ignore-existing "local/$$DBPORTAL_BUCKET"
+        echo "bucket ready: $$DBPORTAL_BUCKET"
+    restart: "no"
+
   # WU-034 (SPEC-034): a real Postgres for the dump playbook to back up.
   # Reachable by the Semaphore runner on the compose network as pgtarget:5432
   # (creds are injected engine-side into the Semaphore "pgtarget-env"
@@ -110,3 +157,4 @@ volumes:
   semaphore_config:
   artifacts:
   pgtargetdata:
+  miniodata:

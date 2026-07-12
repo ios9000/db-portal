@@ -21,6 +21,12 @@
 
   vars:
     artifact_dir: /artifacts
+    # WU-035 (SPEC-035): object-store target. The bucket name is not a secret;
+    # the credentialed alias lives ONLY in the Semaphore Environment as
+    # MC_HOST_dbportal, which `mc` reads from its process environment (ADR-004,
+    # mini-ADR 4) — this playbook names no credential.
+    mc_alias: dbportal
+    bucket: "{{ lookup('env', 'DBPORTAL_BUCKET') | default('dbportal-artifacts', true) }}"
 
   tasks:
     # Fail honestly (not cryptically inside pg_dump) if the Environment that
@@ -69,6 +75,42 @@
         fail_msg: "pg_dump produced no output at {{ artifact_path }}"
         quiet: true
 
+    # WU-035 (SPEC-035 mini-ADR 3): store the bytes in object storage. mc reads
+    # the credentialed MC_HOST_dbportal alias from the process environment
+    # (injected engine-side by the Semaphore Environment — no credential named
+    # here). A non-zero mc exit ABORTS the play: a dump that isn't stored must
+    # never reach the emit step, so it registers no artifact.
+    - name: upload the dump to object storage
+      ansible.builtin.command:
+        argv:
+          - mc
+          - cp
+          - "{{ artifact_path }}"
+          - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
+      changed_when: true
+
+    - name: stat the stored object
+      ansible.builtin.command:
+        argv:
+          - mc
+          - stat
+          - --json
+          - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
+      register: mcstat
+      changed_when: false
+
+    - name: preflight — stored object size matches the local dump
+      ansible.builtin.assert:
+        that:
+          - (mcstat.stdout | from_json).size | int == dumpstat.stat.size
+        fail_msg: >-
+          stored object size {{ (mcstat.stdout | from_json).size | default('?') }}
+          != dumped file size {{ dumpstat.stat.size }} — upload not verified
+        quiet: true
+
+    # Only now that the bytes are stored AND verified do we announce the
+    # artifact. location is the canonical object URL (mini-ADR 2), NOT the
+    # staging path — the volume is staging only from WU-035 on.
     - name: emit machine-readable result line
       ansible.builtin.debug:
         msg: >-
@@ -77,5 +119,15 @@
               'name': artifact_name,
               'size_bytes': dumpstat.stat.size,
               'sha256': dumpstat.stat.checksum,
-              'location': artifact_path
+              'location': 's3://' ~ bucket ~ '/' ~ artifact_name
             } | to_json | b64encode }}
+
+    # Staging cleanup (mini-ADR 5): the object store is the source of truth now;
+    # the local .dump was only a staging copy pg_dump had to write before mc
+    # could upload it. Best-effort — a cleanup failure must NOT fail a run whose
+    # artifact is already stored and announced.
+    - name: staging cleanup — remove the local dump
+      ansible.builtin.file:
+        path: "{{ artifact_path }}"
+        state: absent
+      failed_when: false
