@@ -1,0 +1,69 @@
+---
+# WU-036 (SPEC-036): the restore chain's step 1 — VERIFY. Fetch the source
+# artifact from object storage and sha256-verify it against the expected
+# checksum, touching the restore TARGET not at all. A mismatch fails the task,
+# so the chain halts at step 1 and the safety dump (step 2) + restore (step 3)
+# never fire (SPEC-031 mini-ADR 1) — the entire reason verify is its own step.
+#
+# CREDENTIALS (ADR-004): this playbook names NO credential and NO target. `mc`
+# reads the credentialed MC_HOST_dbportal alias from its process environment,
+# injected engine-side by the Semaphore "pgtarget-env" Environment. There is no
+# PG connection here — verify is a pure, read-only checksum gate.
+#
+# INPUTS (SPEC-036 mini-ADR 1): artifact_name (the object key) and checksum
+# (the expected sha256, hex) arrive as Ansible extra-vars that the
+# SemaphoreAdapter's StartJob forwards from the chain's verify-step params.
+
+- name: db-portal verify
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    mc_alias: dbportal
+    bucket: "{{ lookup('env', 'DBPORTAL_BUCKET') | default('dbportal-artifacts', true) }}"
+    # The fetch path is reconstructed from the engine-side bucket + the name
+    # param (SPEC-036 mini-ADR 3): the object key IS the artifact name, so this
+    # is exactly the path dump.yml uploaded to — location never crosses the seam.
+    object_path: "{{ mc_alias }}/{{ bucket }}/{{ artifact_name | default('') }}"
+
+  tasks:
+    # Fail honestly and locally if the artifact lineage wasn't forwarded — a
+    # wiring mistake surfaces here, BEFORE any object fetch (mini-ADR 6).
+    - name: preflight — artifact lineage is present
+      ansible.builtin.assert:
+        that:
+          - (artifact_name | default('')) | length > 0
+          - (checksum | default('')) | length > 0
+        fail_msg: >-
+          artifact_name/checksum not provided — the restore chain must forward
+          them as extra-vars (SPEC-036 mini-ADR 1).
+        quiet: true
+
+    # Read the object straight from storage and hash it in one stream — no
+    # staging file, no target contact. `mc` reads its credentialed alias from
+    # the environment; the pipe needs a shell. pipefail makes a failed `mc cat`
+    # (missing object / bad creds) fail the task instead of hashing empty input.
+    - name: fetch + sha256 the stored artifact
+      ansible.builtin.shell:
+        cmd: set -o pipefail; mc cat "{{ object_path }}" | sha256sum | cut -d' ' -f1
+        executable: /bin/sh
+      register: verifysum
+      changed_when: false
+
+    - name: assert the stored artifact matches the expected checksum
+      ansible.builtin.assert:
+        that:
+          - verifysum.stdout == checksum
+        fail_msg: >-
+          checksum mismatch for {{ artifact_name }} — stored sha256
+          {{ verifysum.stdout }} != expected {{ checksum }}. The artifact is
+          corrupt or was tampered; the restore is halted before the target is
+          touched.
+        quiet: true
+
+    # Human summary for the log + demo. Deliberately NOT the DBPORTAL_RESULT
+    # sentinel — verify registers no artifact (SPEC-036 mini-ADR 5).
+    - name: announce verify result
+      ansible.builtin.debug:
+        msg: "VERIFY OK: {{ artifact_name }} sha256={{ checksum }}"

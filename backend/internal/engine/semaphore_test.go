@@ -58,6 +58,40 @@ func TestSemaphoreStartJob(t *testing.T) {
 	require.Equal(t, "/api/project/7/tasks", gotPath, "task create is project-scoped")
 	require.Equal(t, "Bearer test-token", gotAuth)
 	require.EqualValues(t, 3, gotBody["template_id"], "the tag maps to its configured template id")
+	_, hasEnv := gotBody["environment"]
+	require.False(t, hasEnv, "a params-free op posts no environment key (byte-identical to WU-033/034)")
+}
+
+// StartJob forwards ONLY the allowlisted artifact lineage (artifact_name,
+// checksum) to Semaphore as extra-vars via the task `environment` field — the
+// restore/verify seam (SPEC-036 mini-ADR 1). Portal-only params (instance,
+// artifact_id) never cross.
+func TestSemaphoreStartJobForwardsAllowlistedVars(t *testing.T) {
+	var gotBody map[string]any
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":10,"status":"waiting"}`))
+	})
+	a := newSemaphore(t, h)
+
+	params := map[string]string{
+		"artifact_name": "appdb-20260714T120000Z-42.dump",
+		"checksum":      "d1ad0cfe",
+		"instance":      "pgtarget",
+		"artifact_id":   "7",
+	}
+	_, err := a.StartJob(context.Background(), "dump", params)
+	require.NoError(t, err)
+
+	env, ok := gotBody["environment"].(string)
+	require.True(t, ok, "the allowlisted params ride the environment field as a JSON string")
+	var vars map[string]string
+	require.NoError(t, json.Unmarshal([]byte(env), &vars))
+	require.Equal(t, map[string]string{
+		"artifact_name": "appdb-20260714T120000Z-42.dump",
+		"checksum":      "d1ad0cfe",
+	}, vars, "only artifact_name + checksum cross the seam — never instance/artifact_id")
 }
 
 func TestSemaphoreStartJobUnmappedTagFailsClosed(t *testing.T) {

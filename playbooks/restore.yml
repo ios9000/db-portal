@@ -1,0 +1,122 @@
+---
+# WU-036 (SPEC-036): the restore chain's step 3 — RESTORE. Fetch the source
+# artifact from object storage, RE-verify its sha256 (defense in depth — a
+# tampered object yields ZERO target writes even if it slipped past the verify
+# step), then pg_restore it onto the target with a fixed, vetted flag set.
+#
+# CREDENTIALS (ADR-004): this playbook names NO credential. `mc` reads the
+# credentialed MC_HOST_dbportal alias, and pg_restore reads the target
+# connection (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE), entirely from the
+# process environment injected engine-side by the Semaphore "pgtarget-env"
+# Environment. Nothing secret is referenced here.
+#
+# INPUTS (SPEC-036 mini-ADR 1): artifact_name (the object key) and checksum
+# (the expected sha256, hex) arrive as Ansible extra-vars forwarded by the
+# SemaphoreAdapter's StartJob from the chain's restore-step params.
+#
+# FLAGS (SPEC-036 mini-ADR 2): pg_restore --clean --if-exists --no-owner
+# --no-privileges --single-transaction into the LIVE target database. --clean
+# --if-exists drops-then-recreates each dumped object in place (no DROP
+# DATABASE); --no-owner --no-privileges mirror the dump; --single-transaction
+# makes the whole restore atomic — a mid-restore failure rolls back and the
+# target is left exactly as it was (no half-restored state).
+
+- name: db-portal restore
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    staging_dir: /artifacts
+    mc_alias: dbportal
+    bucket: "{{ lookup('env', 'DBPORTAL_BUCKET') | default('dbportal-artifacts', true) }}"
+    # Reconstructed from the engine-side bucket + the name param (mini-ADR 3) —
+    # exactly the path dump.yml uploaded to; location never crosses the seam.
+    object_path: "{{ mc_alias }}/{{ bucket }}/{{ artifact_name | default('') }}"
+    staging_path: "{{ staging_dir }}/restore-{{ artifact_name | default('artifact') }}"
+
+  tasks:
+    # Fail honestly and locally if the artifact lineage wasn't forwarded — a
+    # wiring mistake surfaces here, BEFORE any object fetch or target contact
+    # (mini-ADR 6).
+    - name: preflight — artifact lineage is present
+      ansible.builtin.assert:
+        that:
+          - (artifact_name | default('')) | length > 0
+          - (checksum | default('')) | length > 0
+        fail_msg: >-
+          artifact_name/checksum not provided — the restore chain must forward
+          them as extra-vars (SPEC-036 mini-ADR 1).
+        quiet: true
+
+    - name: preflight — target connection is configured
+      ansible.builtin.assert:
+        that:
+          - "lookup('env', 'PGHOST') | length > 0"
+          - "lookup('env', 'PGDATABASE') | length > 0"
+        fail_msg: >-
+          target connection not configured — the Semaphore Environment
+          (PGHOST/PGDATABASE/…) is missing. See infra/semaphore-bootstrap.sh.
+        quiet: true
+
+    # Fetch the object to a local staging file (pg_restore of a custom-format
+    # dump needs a seekable file, not a stream). `mc` reads its credentialed
+    # alias from the environment; a non-zero exit aborts the play.
+    - name: fetch the artifact from object storage
+      ansible.builtin.command:
+        argv:
+          - mc
+          - cp
+          - "{{ object_path }}"
+          - "{{ staging_path }}"
+        creates: "{{ staging_path }}"
+
+    - name: stat the fetched artifact (sha256)
+      ansible.builtin.stat:
+        path: "{{ staging_path }}"
+        checksum_algorithm: sha256
+      register: fetched
+
+    # RE-verify before touching the target (mini-ADR 4): even a tamper that
+    # passed the verify step must not reach pg_restore. On mismatch the play
+    # fails here — no pg_restore runs, so the target has ZERO writes.
+    - name: assert the fetched artifact matches the expected checksum
+      ansible.builtin.assert:
+        that:
+          - fetched.stat.exists
+          - fetched.stat.checksum == checksum
+        fail_msg: >-
+          checksum mismatch for {{ artifact_name }} — fetched sha256
+          {{ fetched.stat.checksum | default('?') }} != expected {{ checksum }}.
+          The artifact is corrupt or was tampered; the restore is aborted before
+          the target is touched.
+        quiet: true
+
+    # Restore into the live target database. --single-transaction makes this
+    # all-or-nothing: on any error the target rolls back to its prior state.
+    - name: run pg_restore (clean, in one transaction)
+      ansible.builtin.command:
+        argv:
+          - pg_restore
+          - --clean
+          - --if-exists
+          - --no-owner
+          - --no-privileges
+          - --single-transaction
+          - --dbname={{ lookup('env', 'PGDATABASE') }}
+          - "{{ staging_path }}"
+      changed_when: true
+
+    # Human summary for the log + demo. Deliberately NOT the DBPORTAL_RESULT
+    # sentinel — restore registers no artifact (SPEC-036 mini-ADR 5).
+    - name: announce restore result
+      ansible.builtin.debug:
+        msg: "RESTORE OK: {{ artifact_name }} -> {{ lookup('env', 'PGDATABASE') }}"
+
+    # Staging cleanup — best-effort; a cleanup failure must not fail a restore
+    # that already succeeded (dump.yml mini-ADR 5 pattern).
+    - name: staging cleanup — remove the fetched artifact
+      ansible.builtin.file:
+        path: "{{ staging_path }}"
+        state: absent
+      failed_when: false

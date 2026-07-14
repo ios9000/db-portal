@@ -74,20 +74,57 @@ type semOutputLine struct {
 	Output string    `json:"output"`
 }
 
+// forwardVars is the fail-closed allowlist of engine params that cross to
+// Semaphore as Ansible extra-vars (SPEC-036 mini-ADR 1). Only the artifact
+// lineage the restore/verify playbooks consume is forwarded — never the
+// portal-routing `instance` (the target is selected engine-side by the
+// template→Environment binding) or the bookkeeping `artifact_id`. A param
+// reaches the real engine only when it is listed here.
+var forwardVars = []string{"artifact_name", "checksum"}
+
 // StartJob creates a Semaphore task on the template mapped to the playbook
 // tag. An unmapped tag fails closed (mini-ADR 3): an operation with no
-// template must never run the wrong playbook. Params are not yet forwarded to
-// Semaphore (smoke needs none); real extra-vars mapping is WU-034.
-func (a *SemaphoreAdapter) StartJob(ctx context.Context, template string, _ map[string]string) (JobID, error) {
+// template must never run the wrong playbook. The allowlisted params ride the
+// task's `environment` field, which Semaphore forwards to ansible-playbook as
+// --extra-vars (SPEC-036) — so the restore/verify playbooks learn which object
+// to fetch. A params-free op (dump/safety_dump/smoke) posts no `environment`
+// key, an identical body to WU-033/034.
+func (a *SemaphoreAdapter) StartJob(ctx context.Context, template string, params map[string]string) (JobID, error) {
 	tmplID, ok := a.cfg.Templates[template]
 	if !ok {
 		return "", fmt.Errorf("engine: no Semaphore template mapped for %q", template)
 	}
+	body := map[string]any{"template_id": tmplID}
+	if env := extraVars(params); env != "" {
+		body["environment"] = env
+	}
 	var task semTask
-	if err := a.do(ctx, http.MethodPost, a.tasksPath(), map[string]any{"template_id": tmplID}, &task); err != nil {
+	if err := a.do(ctx, http.MethodPost, a.tasksPath(), body, &task); err != nil {
 		return "", fmt.Errorf("engine: semaphore start %q: %w", template, err)
 	}
 	return JobID(strconv.FormatInt(task.ID, 10)), nil
+}
+
+// extraVars renders the allowlisted, non-empty params as the JSON string
+// Semaphore forwards to ansible-playbook as --extra-vars (the task
+// `environment` field). Returns "" when none are present, so the task body is
+// byte-identical to the params-free WU-033/034 path. The forwarded values are a
+// dump name + a hex hash, never secrets.
+func extraVars(params map[string]string) string {
+	vars := make(map[string]string, len(forwardVars))
+	for _, k := range forwardVars {
+		if v, ok := params[k]; ok && v != "" {
+			vars[k] = v
+		}
+	}
+	if len(vars) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(vars)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // Status maps the Semaphore task status to a JobState. A task Semaphore

@@ -41,6 +41,16 @@ PLAYBOOK_FILE="smoke.yml"
 PGTARGET_ENV_NAME="pgtarget-env"
 DUMP_TEMPLATE_NAME="dump"
 DUMP_PLAYBOOK_FILE="dump.yml"
+
+# WU-036 (SPEC-036): the restore chain's real playbooks. verify.yml (step 1,
+# read-only checksum gate) and restore.yml (step 3, pg_restore) both run on the
+# SAME pgtarget-env Environment — verify needs the MC_* object-store creds;
+# restore needs those plus the PG* libpq creds. safety_dump (step 2) reuses the
+# `dump` template above, so it needs no template of its own.
+VERIFY_TEMPLATE_NAME="verify"
+VERIFY_PLAYBOOK_FILE="verify.yml"
+RESTORE_TEMPLATE_NAME="restore"
+RESTORE_PLAYBOOK_FILE="restore.yml"
 PGTARGET_DB_NAME="${PGTARGET_DB_NAME:-appdb}"
 PGTARGET_DB_USER="${PGTARGET_DB_USER:-appuser}"
 PGTARGET_DB_PASSWORD="${PGTARGET_DB_PASSWORD:-change-me-dev-only}"
@@ -193,6 +203,26 @@ else
     log "    exists: template id=${DUMP_TEMPLATE_ID}"
 fi
 
+log "==> Ensuring template '${VERIFY_TEMPLATE_NAME}' -> ${VERIFY_PLAYBOOK_FILE} ..."
+VERIFY_TEMPLATE_ID=$(curl_json GET "/api/project/${PROJECT_ID}/templates" | jq -r --arg n "$VERIFY_TEMPLATE_NAME" '(. // [])[] | select(.name == $n) | .id' | head -n1)
+if [ -z "${VERIFY_TEMPLATE_ID:-}" ]; then
+    VERIFY_TEMPLATE_ID=$(curl_json POST "/api/project/${PROJECT_ID}/templates" \
+        "{\"name\":\"${VERIFY_TEMPLATE_NAME}\",\"project_id\":${PROJECT_ID},\"inventory_id\":${INVENTORY_ID},\"repository_id\":${REPO_ID},\"environment_id\":${PGTARGET_ENV_ID},\"playbook\":\"${VERIFY_PLAYBOOK_FILE}\",\"app\":\"ansible\"}" | jq -r '.id')
+    log "    created template id=${VERIFY_TEMPLATE_ID}"
+else
+    log "    exists: template id=${VERIFY_TEMPLATE_ID}"
+fi
+
+log "==> Ensuring template '${RESTORE_TEMPLATE_NAME}' -> ${RESTORE_PLAYBOOK_FILE} ..."
+RESTORE_TEMPLATE_ID=$(curl_json GET "/api/project/${PROJECT_ID}/templates" | jq -r --arg n "$RESTORE_TEMPLATE_NAME" '(. // [])[] | select(.name == $n) | .id' | head -n1)
+if [ -z "${RESTORE_TEMPLATE_ID:-}" ]; then
+    RESTORE_TEMPLATE_ID=$(curl_json POST "/api/project/${PROJECT_ID}/templates" \
+        "{\"name\":\"${RESTORE_TEMPLATE_NAME}\",\"project_id\":${PROJECT_ID},\"inventory_id\":${INVENTORY_ID},\"repository_id\":${REPO_ID},\"environment_id\":${PGTARGET_ENV_ID},\"playbook\":\"${RESTORE_PLAYBOOK_FILE}\",\"app\":\"ansible\"}" | jq -r '.id')
+    log "    created template id=${RESTORE_TEMPLATE_ID}"
+else
+    log "    exists: template id=${RESTORE_TEMPLATE_ID}"
+fi
+
 log "==> Creating an API token for the portal ..."
 # NOTE: not skip-if-exists like the objects above. GET /api/user/tokens only
 # ever returns a TRUNCATED id (Semaphore masks it, like a GitHub PAT list) —
@@ -209,7 +239,12 @@ log "Bootstrap complete."
 log "  Project:     ${PROJECT_NAME} (id ${PROJECT_ID})"
 log "  Template:    ${TEMPLATE_NAME} (id ${TEMPLATE_ID})   <- PORTAL_SEMAPHORE_TEMPLATES=smoke:${TEMPLATE_ID}"
 log "  Template:    ${DUMP_TEMPLATE_NAME} (id ${DUMP_TEMPLATE_ID})   <- add dump:${DUMP_TEMPLATE_ID} to PORTAL_SEMAPHORE_TEMPLATES"
+log "  Template:    ${VERIFY_TEMPLATE_NAME} (id ${VERIFY_TEMPLATE_ID})   <- add verify:${VERIFY_TEMPLATE_ID} (restore chain step 1)"
+log "  Template:    ${RESTORE_TEMPLATE_NAME} (id ${RESTORE_TEMPLATE_ID})   <- add restore:${RESTORE_TEMPLATE_ID} (restore chain step 3)"
+log "  Restore chain needs all of: verify:${VERIFY_TEMPLATE_ID},dump:${DUMP_TEMPLATE_ID},restore:${RESTORE_TEMPLATE_ID} in PORTAL_SEMAPHORE_TEMPLATES"
 log "=================================================================="
 printf 'SEMAPHORE_TEMPLATE_ID=%s\n' "$TEMPLATE_ID"
 printf 'SEMAPHORE_DUMP_TEMPLATE_ID=%s\n' "$DUMP_TEMPLATE_ID"
+printf 'SEMAPHORE_VERIFY_TEMPLATE_ID=%s\n' "$VERIFY_TEMPLATE_ID"
+printf 'SEMAPHORE_RESTORE_TEMPLATE_ID=%s\n' "$RESTORE_TEMPLATE_ID"
 printf 'PORTAL_SEMAPHORE_API_TOKEN=%s\n' "$API_TOKEN"
