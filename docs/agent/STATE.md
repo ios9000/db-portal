@@ -5,37 +5,47 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **WU-036 (Restore playbook — real + M3 rehearsal, M)
-  IN PROGRESS: slice (a) DONE (868425a), slice (b) IS NEXT** (the LAST M3 WU;
-  then the M3 gate review). SPEC-036 = `docs/specs/restore-playbook.md`.
-  **WU-035 (O-1 storage: minio, S) DONE s20** (fe70fbc impl + closeout) — dump
-  artifact bytes now live in object storage; all 3 AC + Verify met, live drill
-  passed on the VM (object in minio, mc-side hash match, injected upload
-  failure, no-secrets). SPEC-035 = `docs/specs/artifact-storage.md`.
-  **WU-034 (Dump playbook — real) DONE s19.** Execution order 030 → 032 → 031 →
-  033 → 034 → 035 → **036**.
-- **Status (s22, WU-036 slice (a) CHECKPOINTED — bookkeeping recovery):** s21
-  (2026-07-14) implemented + committed slice (a) as 868425a but an **ssh
-  connection reset killed it before it could checkpoint** — STATE/JOURNAL had no
-  s21 entry and the commit sat unpushed. s22 recovered the bookkeeping ONLY: no
-  code written, tree was clean (no stash, no wip branch, no surviving twin — `ps`
-  + ancestry checked per [[twin-session-hazard]]). Slice (a) RE-VERIFIED at s22,
-  not taken on the commit message's word: `npm run check` CHECK-EXIT:0 (vitest
-  116/116 fresh; Go pkgs cached — tree unchanged since 868425a) and
-  verify/restore/dump `.yml` each `ansible-playbook --syntax-check` EXIT:0 in
-  `dbportal-semaphore:v2.17.39-pg16`. Pushed to origin/main. SLICE (a) SHIPPED:
-  SPEC-036 (6 mini-ADRs); `playbooks/verify.yml` (chain step 1 — `mc cat |
-  sha256sum` vs expected checksum, ZERO target contact, mismatch → chain halts
-  before the safety dump); `playbooks/restore.yml` (step 3 — `mc cp` → RE-verify
-  sha256 → `pg_restore --clean --if-exists --no-owner --no-privileges
-  --single-transaction` into the live target); `semaphore.go` `StartJob` forwards
-  the fail-closed allowlist `forwardVars = {artifact_name, checksum}` as the task
-  `environment` (ansible `--extra-vars`) — `instance`/`artifact_id` never cross,
-  params-free ops (dump/smoke) post a byte-identical body (+2 tests);
-  `semaphore-bootstrap.sh` creates verify + restore templates on pgtarget-env
-  (id 3) and prints their ids. NO migration, NO UI, NO chain/catalog/recipe
-  change; MockEngine + all tests untouched (ADR-002). NOT YET DONE = slice (b):
-  the live drill + `docs/demo-m3.md` + the 3 AC.
+- **Active:** PHASE 3 (M3) — **WU-036 DONE (s21 slice a + s22 slice b). M3 IS
+  FEATURE-COMPLETE. NEXT = the M3 GATE REVIEW** (multi-agent, the M1/M2 pattern
+  — see the m1-gate-review / m2-gate-review skills), then its fix WUs, and only
+  then any Phase-4 WU. Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036
+  → **M3 gate**.
+- **Status (s22, WU-036 CLOSED — the product's loop is closed):** the SAME portal
+  drives a REAL `pg_restore` of a REAL dump onto a live Postgres target through
+  the `verify → safety_dump → restore` chain, behind the UNCHANGED engine.Adapter
+  seam. SPEC-036 = `docs/specs/restore-playbook.md`; human twin + M3 exit evidence
+  = **`docs/demo-m3.md`** (8 beats, 13.5 min budgeted ≤ the 15-min AC).
+  **SPEC-036's open question is RESOLVED: Semaphore DOES forward the task
+  `environment` as ansible `--extra-vars`** (mini-ADR 1 holds; the
+  `lookup('env',…)` fallback dropped; no code change) — pinned by running verify
+  first as the extra-vars smoke test, plus both mini-ADR 6 failure paths (no
+  environment → preflight fails with ok=0; wrong checksum → assert fails, zero
+  target contact). Bootstrap now yields **verify=4, restore=5** (dump 3, smoke 1).
+  Rehearsal (isolated portal :8099, release binary): dump pgtarget → `DROP TABLE
+  widget` → POST /api/restore → chain success → **widget back, 4 rows, original
+  timestamps**; the `'safety'` artifact is itself `pg_restore --list`-restorable
+  and its minio sha == its registry checksum. Tamper → chain HALTS at verify with
+  steps 2+3 `run_id: null` (never created), target untouched, exactly ONE chain
+  mail; fix + resume → success. Mock-vs-semaphore: same binary, same chain, only
+  `location` differs (NULL vs `s3://…`). All 5 secrets absent from DB/log/task
+  output. O-4 annotated RESOLVED in DECISIONS.md (dump half WU-034 + restore half
+  WU-036) — a SPEC-036 scope item slice (a) had missed. Gate CHECK-EXIT:0
+  (docs-only session, no Go/FE change). Drill torn down; demo :8080 untouched
+  (same PID 2506685, healthz 200).
+- **s22 also recovered s21's lost bookkeeping:** s21 committed slice (a) as
+  868425a and an **ssh reset killed it before it could checkpoint** (no
+  STATE/JOURNAL entry, commit unpushed). Tree was clean, no twin (`ps` + ancestry
+  per [[twin-session-hazard]]); slice (a) re-verified rather than trusted (gate
+  CHECK-EXIT:0 + `--syntax-check` EXIT:0 on all 3 playbooks), then pushed.
+  SLICE (a) = SPEC-036 (6 mini-ADRs); `playbooks/verify.yml` (step 1 — `mc cat |
+  sha256sum` vs expected checksum, ZERO target contact); `playbooks/restore.yml`
+  (step 3 — `mc cp` → RE-verify sha256 → `pg_restore --clean --if-exists
+  --no-owner --no-privileges --single-transaction`); `semaphore.go` `StartJob`
+  forwards the fail-closed allowlist `forwardVars = {artifact_name, checksum}` as
+  the task `environment` — `instance`/`artifact_id` never cross, params-free ops
+  post a byte-identical body (+2 tests); `semaphore-bootstrap.sh` creates the
+  verify + restore templates. NO migration, NO UI, NO chain/catalog/recipe change;
+  MockEngine + all tests untouched (ADR-002).
 - **Status (s20, WU-035 CLOSED):** the SAME portal now stores a REAL pg_dump in
   object storage. Twin-recovery session (see checkpoint log): adopted ~82 min of
   a parked twin's uncommitted, coherent WU-035 work after `ps`/`who`/per-pts
@@ -85,41 +95,33 @@
 
 ## Next action (be exact)
 
-1. **WU-036 slice (b) — the live drill + `docs/demo-m3.md`.** Slice (a) (the
-   playbooks + the extra-vars seam) is committed + pushed + re-verified; do NOT
-   redo it. Read: SPEC-036 (`docs/specs/restore-playbook.md`) — esp. the "Live
-   drill recipe" §, the 6 mini-ADRs, and **the OPEN QUESTION below**; SPEC-031
-   (chain assembly + verify-step semantics); docs/demo-m1.md (rehearsal-doc
-   pattern); playbooks/{verify,restore,dump}.yml.
-   - **RESOLVE THE OPEN QUESTION FIRST (SPEC-036, owner: agent):** does Semaphore
-     forward the task `environment` field to `ansible-playbook` as `--extra-vars`
-     (so `{{ artifact_name }}`/`{{ checksum }}` resolve), or as PROCESS ENV? The
-     whole slice-a seam assumes extra-vars (mini-ADR 1). **Run the verify step
-     FIRST as the extra-vars smoke test** — the mini-ADR 6 preflight assert makes
-     a wrong assumption fail fast, locally, with ZERO target writes. Fallback if
-     it lands in process env: playbooks read `lookup('env','artifact_name')`
-     instead — one line per playbook, the Go allowlist + interface unchanged.
-   - Then write `docs/demo-m3.md` (human twin of the M3 exit): seed → portal dump
-     → destroy a table → portal restore (verify→safety_dump→restore chain) → data
-     verified back + `'safety'` artifact registered; halt+resume on injected
-     failure; mock-vs-semaphore same-code beat. AC: live rehearsal ≤15 min on the
-     VM release binary, every M3 exit criterion ticked INSIDE the doc;
-     checksum-tamper (corrupt the object) → chain halts at verify, target
-     untouched, mail, fix+resume → success; the safety-dump artifact is itself
-     `pg_restore --list`-restorable. Verify: rehearsal transcript in the journal;
-     `npm run check` green. Then WU-036 closeout → the M3 gate review.
-   - Dev facts carried: semaphore project 1, dump template **3**, pgtarget-env
-     **3**, smoke template 1; **verify + restore template ids = whatever the
-     re-run bootstrap PRINTS** (slice (a) added them; ids not yet observed — the
-     drill's `PORTAL_SEMAPHORE_TEMPLATES=verify:<v>,restore:<r>,dump:3,smoke:1`
-     needs them). pgtarget host-port 5433, seeded appdb; the minio bucket
-     `dbportal-artifacts` (:9000) holds REAL dumps to restore from; `.env` has
-     the Semaphore token + `PGTARGET_*` + `MINIO_*`. Persistent `.env` STAYS
-     `PORTAL_ENGINE_NONPROD=mock`; drills use an isolated portal (see the WU-035
-     drill recipe below / [[live-drill-isolation]]). Reset pgtarget between runs
-     with SQL (`docker compose restart pgtarget` re-seeds only on a fresh volume).
-   - Dev stack was UP + healthy at s22 (mailpit/minio/pgtarget/postgres/semaphore;
-     minio + semaphore up 3d, pgtarget 4d) — re-check before drilling.
+1. **START THE M3 GATE REVIEW** — M3 is feature-complete (030–036 all DONE); the
+   ROADMAP gates Phase 4 behind it: *"multi-agent review gate (the M1/M2 pattern)
+   + fix WUs before any Phase-4 WU."* Precedent: the `m1-gate-review` /
+   `m2-gate-review` skills (multi Sonnet reviewers over the phase's code, the
+   architect verifies each finding inline before it becomes a fix WU — findings
+   are adversarially checked, not taken at face value). Scope = Phase 3 code:
+   `internal/chain`, `internal/restore`, `internal/engine/semaphore.go` (+ the
+   webhook + `ReconcileByJobID`), `internal/artifact`/registry + the finalize
+   dual-write, `server/webhook_http.go` + `chains_http.go` + `restore` route, the
+   three playbooks + bootstrap + compose infra. Specs to hand reviewers:
+   SPEC-030/031/032/033/034/035/036. Expect an `m3-gate-review` skill in the M1/M2
+   shape (write it if absent). Then: file the fix WUs it finds, land them, and
+   only then groom Phase 4 (M4 = hardening; BACKLOG says "groom at M3 close").
+   - Organizational note now reached (BACKLOG + ROADMAP): the **security vetting
+     package** (ARCHITECTURE §8.2) becomes submittable at M3 exit.
+   - Dev facts carried: semaphore project 1, templates **dump:3, verify:4,
+     restore:5, smoke:1**, pgtarget-env **3**; pgtarget host-port 5433, seeded
+     appdb (reset = `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` + replay
+     `infra/fixtures/pgtarget-init.sql` — the init only auto-runs on a fresh
+     volume); minio bucket `dbportal-artifacts` (:9000); `.env` has the Semaphore
+     token + `PGTARGET_*` + `MINIO_*`. Persistent `.env` STAYS
+     `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
+     use an isolated portal ([[live-drill-isolation]]) — full recipe now in
+     **docs/demo-m3.md** (setup + reset §§), which supersedes the WU-035 recipe
+     below for restore work.
+   - Dev stack was UP + healthy at s22 (mailpit/minio/pgtarget/postgres/semaphore)
+     — re-check before any live work.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -127,6 +129,18 @@
 ## Blocked / needs user
 
 - Nothing.
+- HEADS-UP (WU-036 DONE, s22): the Semaphore catalog now has **verify (id 4)** +
+  **restore (id 5)** templates alongside dump (3) + smoke (1), all pinned to
+  `pgtarget-env` (id 3); the bootstrap creates them idempotently and prints the
+  ids. The **full drill/rehearsal recipe now lives in `docs/demo-m3.md`** (setup
+  + reset §§) — prefer it over the WU-035 recipe below for anything restore-shaped.
+  Two drill leftovers, both harmless: the bucket holds a handful of drill dumps
+  incl. ONE permanently-corrupt object (`appdb-20260716T021530Z-80914329.dump` —
+  s22 tampered it before a failed backup; nothing can match its recorded
+  checksum again; no retention until M4), and `pgtarget` currently sits in the
+  RESTORED state (widget 4 / ledger 200) rather than a freshly-seeded volume —
+  identical content, but if a future test needs pristine, replay the reset in
+  demo-m3.md. Scratch DBs `portal_drill036`/`portal_drill036m` were dropped.
 - HEADS-UP (WU-035 DONE, s20): the dev stack now also runs **`minio`**
   (dbportal-dev-minio-1, 127.0.0.1:9000 API / :9001 console) with the artifact
   bucket **`dbportal-artifacts`** (created idempotently by the `createbuckets`
@@ -219,6 +233,27 @@
   object bytes — it stores/passes `location` strings; GET /api/artifacts does
   NOT expose `location` (SPEC-030). WU-036 restore reads `location` and fetches
   engine-side the same way.
+- **Real restore (WU-036, SPEC-036 = docs/specs/restore-playbook.md; human twin
+  = docs/demo-m3.md):** the WU-031 restore chain's three steps now have REAL
+  playbooks under the opt-in Semaphore adapter — mock→semaphore same code, seam
+  UNCHANGED. `playbooks/verify.yml` (step 1) = `mc cat | sha256sum` vs the
+  expected checksum, names NO PG connection ⇒ ZERO target contact; a mismatch
+  halts the chain BEFORE the safety dump. Step 2 `safety_dump` reuses `dump.yml`
+  unchanged (registers its `'safety'` artifact). `playbooks/restore.yml` (step 3)
+  = `mc cp` → RE-verify sha256 (defense in depth) → `pg_restore --clean
+  --if-exists --no-owner --no-privileges --single-transaction` into the LIVE
+  target (atomic: a mid-restore failure rolls back, no half-restored target;
+  O-4 RESOLVED). Neither emits `DBPORTAL_RESULT` — verify/restore register no
+  artifact, so the task status IS their outcome (only dump/safety_dump emit the
+  sentinel). The fetch path is RECONSTRUCTED engine-side from `DBPORTAL_BUCKET` +
+  the `artifact_name` var — **`location` never crosses the seam**. Go: ONE change
+  — `semaphore.go` `StartJob` forwards the fail-closed allowlist `forwardVars =
+  {artifact_name, checksum}` as the task `environment`, which **Semaphore
+  forwards to ansible-playbook as `--extra-vars` (VERIFIED s22, task 2147483617
+  — mini-ADR 1 holds)**; `instance`/`artifact_id` never cross; a params-free op
+  posts NO `environment` key ⇒ byte-identical body to WU-033/034. Both playbooks
+  preflight-assert the lineage (mini-ADR 6) so a mis-wire fails locally with zero
+  target contact. Templates: verify **4**, restore **5**.
 - **Chain engine (WU-032, SPEC-032 = docs/specs/chains.md):** chains are
   portal-assembled ONLY (no client create API; 031's restore POST is the
   first assembler). internal/chain imports catalog/runs, NEVER engine —
@@ -353,6 +388,39 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-15 — **WU-036 DONE (s22, slice b) → M3 FEATURE-COMPLETE**: the SAME
+  portal drives a REAL `pg_restore` of a REAL dump onto a live target through the
+  verify→safety_dump→restore chain, behind the unchanged engine seam. Open
+  question RESOLVED FIRST as spec'd (verify run = the extra-vars smoke test):
+  Semaphore forwards the task `environment` as ansible `--extra-vars` (task
+  2147483617 success, `VERIFY OK:` printed, both vars resolved) — mini-ADR 1
+  holds, fallback dropped, no code change; both mini-ADR 6 failure paths pinned
+  (no environment → preflight fails ok=0; wrong checksum → assert fails, zero
+  target contact). Bootstrap → verify=4, restore=5. REHEARSAL (release binary,
+  isolated portal :8099 + portal_drill036, semaphore engine; demo :8080 untouched
+  — same PID 2506685, healthz 200): dump pgtarget → artifact 5382 B sha 3068bc7a…
+  in minio → `DROP TABLE widget CASCADE` → POST /api/restore → chain 1
+  verify(2)/safety_dump(3)/restore(4) all success → **widget back: 4 rows,
+  ORIGINAL timestamps, ledger_totals 200/30150.00**. AC-3: the `'safety'`
+  artifact (id 2, 3912 B — smaller BECAUSE it snapshotted the post-DROP state,
+  correct) hashes 49506fd5… == its registry checksum and `pg_restore --list`s a
+  real TOC (no widget, correctly). AC-2: corrupt the object → chain 2 HALTED at
+  verify(6), steps 2+3 `run_id: null` = safety dump + restore NEVER CREATED,
+  widget still absent, mailpit 6→7 = exactly ONE "CHAIN-2 halted" mail; re-upload
+  good bytes → resume → verify(7)/safety_dump(8)/restore(9) success, widget back
+  (failed run 6 superseded, keeps history). Mock-vs-semaphore: same binary, same
+  chain, both success; only `location` differs (NULL vs `s3://…`). Secrets: all 5
+  = 0 hits across drill DB + log + 23 KB of task output (control grep proves the
+  sweep reads). MY MISTAKE (recovered, journaled): `mc cp` backup into a
+  root-owned mount failed silently as uid 1001 and my `&&` swallowed it — I
+  corrupted artifact 1 before verifying the backup, so its original bytes are
+  unrecoverable (drill data only; the bucket still holds that permanently-corrupt
+  object — harmless, no retention until M4). Redone with a host-side stdout backup
+  asserted against the registry BEFORE tampering. DELIVERED: docs/demo-m3.md (M3
+  exit evidence, 8 beats / 13.5 min ≤ the 15-min AC, rough edges named); SPEC-036
+  open question annotated RESOLVED; O-4 annotated RESOLVED in DECISIONS.md (a
+  SPEC-036 scope item slice (a) had missed). Gate CHECK-EXIT:0 (docs-only). All 3
+  AC + Verify met. Active → **M3 gate review**.
 - 2026-07-15 — WU-036 slice (a) CHECKPOINTED (s22, bookkeeping recovery, no new
   code): s21 (2026-07-14) committed slice (a) as 868425a and was then killed by
   an **ssh connection reset** before checkpointing — no STATE/JOURNAL entry, the

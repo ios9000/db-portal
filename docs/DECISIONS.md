@@ -140,5 +140,18 @@ target — gates that aren't THE gate rot. `docs/demo-m1.md` stays the human twi
 - **O-3** maintenance-window source (rec: per-instance inventory field) — WU-010 adds the
   field; WU-023 gives it warn-only semantics (SPEC-023: `Day HH:MM-HH:MM`, server-local).
   Still open post-MVP: multi-window/holiday grammar, per-instance timezones, editing UI.
-- **O-4** dump options matrix (rec: `pg_dump -Fc`, small vetted option set) — WU-034
+- **O-4** dump options matrix (rec: `pg_dump -Fc`, small vetted option set) — WU-034.
+  **RESOLVED 2026-07-15 (dump half WU-034/SPEC-034, restore half WU-036/SPEC-036 mini-ADR 2):**
+  ZERO user-facing options — both flag sets are fixed in the playbooks, not exposed in the UI or
+  the API. Dump = `pg_dump --format=custom --no-owner --no-privileges` (custom format so
+  `pg_restore` can read it directly and order drops reverse-dependency). Restore =
+  `pg_restore --clean --if-exists --no-owner --no-privileges --single-transaction` into the LIVE
+  target database: `--clean --if-exists` drops-then-recreates each dumped object in place (no DROP
+  DATABASE — you cannot drop the one you are connected to, and that path needs a maintenance DB +
+  terminating every other connection); `--no-owner --no-privileges` mirror the dump, since the
+  runner role does not own the objects; `--single-transaction` makes the restore atomic, so a
+  mid-restore failure rolls back and leaves the target exactly as it was. Rejected for MVP:
+  DROP/CREATE DATABASE restore (post-MVP), `--jobs` parallel restore (incompatible with
+  `--single-transaction`; an M4 load-test concern). Live-rehearsed 2026-07-15 (docs/demo-m3.md,
+  JOURNAL s22): a real dropped table restored onto the compose target with its rows intact.
 - **O-5** workshop "Wrap" section never received — confirm no extra decisions outstanding

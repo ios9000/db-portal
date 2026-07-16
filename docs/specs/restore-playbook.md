@@ -239,12 +239,23 @@ secret → absent. Demo :8080 untouched.
 
 ## Open questions
 
-- **Does Semaphore forward the task `environment` field to `ansible-playbook`
-  as `--extra-vars` (so `{{ artifact_name }}` resolves), or as process env?**
-  The interface above assumes extra-vars (mini-ADR 1); the preflight assert
-  (mini-ADR 6) makes a wrong assumption fail fast and locally in the drill, with
-  ZERO target writes. Fallback if it lands in process env: have the playbooks
-  read `lookup('env','artifact_name')` instead — a one-line change per playbook,
-  the interface and the Go allowlist unchanged. Pinned in the live drill (run
-  the verify step FIRST as the extra-vars smoke test). Owner: agent.
+- ~~**Does Semaphore forward the task `environment` field to `ansible-playbook`
+  as `--extra-vars` (so `{{ artifact_name }}` resolves), or as process env?**~~
+  **RESOLVED s22 (2026-07-15): extra-vars — mini-ADR 1's assumption HOLDS, no
+  code change needed.** Pinned exactly as planned, by running the verify step
+  first as the extra-vars smoke test. Evidence, direct Semaphore task on
+  template 4 (`verify`), no portal — POST `/api/project/1/tasks` with the
+  byte-identical body `StartJob` builds
+  (`{"template_id":4,"environment":"{\"artifact_name\":\"appdb-20260712T204935Z-95618185.dump\",\"checksum\":\"d1ad0cfe…\"}"}`):
+  task 2147483617 → **success**, `ok=4 failed=0`, both `{{ artifact_name }}` and
+  `{{ checksum }}` resolved, and the play printed
+  `VERIFY OK: appdb-20260712T204935Z-95618185.dump sha256=d1ad0cfe…` against the
+  REAL stored object. The `lookup('env','artifact_name')` fallback is therefore
+  NOT needed and is dropped. Both mini-ADR 6 failure paths pinned in the same
+  pass: template 4 with NO `environment` → task 2147483616 error, preflight
+  assert `(artifact_name | default('')) | length > 0` fails with the honest
+  message and `ok=0` (nothing fetched, nothing touched); template 4 with a WRONG
+  checksum → task 2147483615 error, fails at `verifysum.stdout == checksum`
+  (`ok=2 failed=1`) reporting stored `d1ad0cfe…` != expected `deadbeef…`, ZERO
+  target contact. Owner: agent.
 </invoke>

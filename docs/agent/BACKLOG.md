@@ -725,7 +725,7 @@ interrupted twin (see JOURNAL s20).
 playbooks/dump.yml; internal/engine/semaphore.go (result parsing);
 migration 0009 (location column: dormant → live).
 
-### WU-036 · Restore playbook (real) + M3 rehearsal — M · `todo` *(NEW at grooming)*
+### WU-036 · Restore playbook (real) + M3 rehearsal — M · `done` *(s21 slice a + s22 slice b)*
 Close the loop the product exists for: a real restore of a real dump on the
 compose target through the full portal chain — plus the scripted rehearsal that
 IS the M3 exit evidence. `playbooks/restore.yml`: fetch artifact from location
@@ -738,13 +738,31 @@ dump → destroy a table → portal restore (verify → safety dump → restore 
 injected failure; mock-vs-semaphore same-code beat. Patroni-aware sequencing
 stays OUT (ARCHITECTURE §7; iceboxed).
 **AC:**
-- [ ] Live rehearsal passes start-to-finish on the VM release binary, human
+- [x] Live rehearsal passes start-to-finish on the VM release binary, human
       pace ≤ 15 min; every M3 exit criterion checked off inside the doc.
-- [ ] Checksum tamper (corrupt the object) → chain halts at verify, target
+      *(s22: docs/demo-m3.md, 8 beats budgeted 13.5 min; run live on the release
+      binary via an isolated portal :8099 — dump pgtarget → `DROP TABLE widget`
+      → POST /api/restore → chain 1 verify(2)/safety_dump(3)/restore(4) all
+      success → widget back with its 4 rows + original timestamps, ledger_totals
+      200/30150.00.)*
+- [x] Checksum tamper (corrupt the object) → chain halts at verify, target
       untouched, notify mail; fix + resume → success.
-- [ ] The rehearsal's safety-dump artifact is itself restorable
+      *(s22: chain 2 halted at verify(run 6) with steps 2+3 `run_id: null` — the
+      safety dump and restore were never created; widget still absent; mailpit
+      6→7 = exactly ONE mail "[db-portal] CHAIN-2 halted — restore on pgtarget
+      (dev)". Good bytes re-uploaded → resume → verify(7)/safety_dump(8)/
+      restore(9) success, widget back.)*
+- [x] The rehearsal's safety-dump artifact is itself restorable
       (`pg_restore --list`).
+      *(s22: artifact 2 fetched from minio hashes to 49506fd5… == its registry
+      checksum; `pg_restore --list` shows ledger + sequence + ledger_totals view
+      + TABLE DATA + pkey + index, and correctly no widget.)*
 **Verify:** rehearsal transcript in journal; `npm run check` green.
+*(s22: both — JOURNAL s22 carries the transcript; gate CHECK-EXIT:0.)*
+**Also delivered (s22):** SPEC-036's open question RESOLVED — Semaphore DOES
+forward the task `environment` as ansible `--extra-vars` (mini-ADR 1 holds; the
+`lookup('env',…)` fallback dropped); O-4 annotated RESOLVED in DECISIONS.md
+(dump half WU-034 + restore half WU-036).
 **Context brief:** ARCHITECTURE §3 (restore) + §7 (do-not-discover-twice);
 SPEC-031 (chain assembly + verify-step semantics); playbooks/dump.yml;
 docs/demo-m1.md (rehearsal doc pattern); infra/compose.yaml.
