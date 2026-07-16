@@ -892,7 +892,7 @@ diagnosis); a genuinely corrupt object still halts at verify; `ansible-playbook
 + staging_path + the mismatch message); playbooks/dump.yml (staging); STATE note "the
 artifacts volume is STAGING ONLY now"; docs/demo-m3.md (drill recipe).
 
-### WU-040 · M3-gate fix: LOW bundle (parse/backfill/job_id) — S · `todo`
+### WU-040 · M3-gate fix: LOW bundle (parse/backfill/job_id) — S · `done (2026-07-16, s26)`
 The three re-graded-down LOWs (gate items 5, 6, 7) — real, cheap, each needs a dev-only
 trigger or has no consumer yet (M1 precedent: the low bundle rode one S WU). (5)
 `parseResultLine` (semaphore.go:209-212) validates `Name` but not `SHA256`/`SizeBytes`, so a

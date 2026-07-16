@@ -23,8 +23,17 @@ COMMENT ON COLUMN artifact.location IS
 -- three artifact_* columns are only ever written together (finalize), so
 -- requiring all three skips nothing real. ON CONFLICT is belt-and-braces:
 -- goose applies this once, the clause covers manual re-runs.
-INSERT INTO artifact (run_id, name, size_bytes, checksum, created_at)
+--
+-- retention_class is derived from the run's operation, mirroring finalize
+-- (SPEC-031 mini-ADR 2): a safety_dump is 'safety', everything else
+-- 'standard'. Omitting it (as this backfill originally did, pre-safety-dump)
+-- lets every row fall to the column DEFAULT 'standard' — harmless on a
+-- fresh-clone forward replay (the run table is empty), but a goose down→up
+-- walk on a DB already holding 'safety' artifacts would silently reclassify
+-- them 'standard' (M3-gate item 6).
+INSERT INTO artifact (run_id, name, size_bytes, checksum, retention_class, created_at)
 SELECT r.id, r.artifact_name, r.artifact_size_bytes, r.artifact_checksum,
+       CASE WHEN r.operation = 'safety_dump' THEN 'safety' ELSE 'standard' END,
        COALESCE(r.finished_at, r.updated_at)
 FROM run r
 WHERE r.state = 'success'

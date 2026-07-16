@@ -48,9 +48,14 @@ func TestMigrateUpDown(t *testing.T) {
 	require.True(t, tableExists(t, pool, "artifact"), "0009 up must create the artifact registry")
 	require.True(t, tableExists(t, pool, "chain"), "0010 up must create the chain table")
 	require.True(t, tableExists(t, pool, "chain_step"), "0010 up must create the chain_step table")
+	require.True(t, indexExists(t, pool, "run_job_id_unique"), "0011 up must add the partial job_id unique index")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, indexExists(t, pool, "run_job_id_unique"), "0011 down must drop the job_id unique index")
+	require.True(t, tableExists(t, pool, "chain"), "0010 must survive 0011 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, tableExists(t, pool, "chain"), "0010 down must remove the chain tables")
 	require.False(t, tableExists(t, pool, "chain_step"))
@@ -142,30 +147,34 @@ func TestArtifactBackfillWalk(t *testing.T) {
 		clusterID).Scan(&instanceID))
 
 	finished := time.Date(2026, 7, 1, 3, 0, 0, 0, time.UTC)
-	insertRun := func(state string, withArtifact bool) int64 {
+	insertRun := func(operation, state string, withArtifact bool) int64 {
 		t.Helper()
 		var name, checksum *string
 		var size *int64
 		if withArtifact {
-			n, sz, sum := "billing-test.dump.tgz", int64(1234), "abc123"
+			n, sz, sum := "billing-test."+operation+".tgz", int64(1234), "abc123"
 			name, size, checksum = &n, &sz, &sum
 		}
 		var id int64
 		require.NoError(t, pool.QueryRow(ctx, `
 			INSERT INTO run (instance_id, operation, environment, engine_class, playbook_tag,
 				state, artifact_name, artifact_size_bytes, artifact_checksum, finished_at)
-			VALUES ($1, 'dump', 'test', 'nonprod', 'dump', $2, $3, $4, $5, $6)
+			VALUES ($1, $2, 'test', 'nonprod', 'dump', $3, $4, $5, $6, $7)
 			RETURNING id`,
-			instanceID, state, name, size, checksum, finished).Scan(&id))
+			instanceID, operation, state, name, size, checksum, finished).Scan(&id))
 		return id
 	}
-	dumped := insertRun("success", true)
-	insertRun("success", false) // artifact-less success: nothing to register
-	insertRun("failed", true)   // non-success never registers
+	dumped := insertRun("dump", "success", true)
+	// A safety dump's class must survive the down→up walk (M3-gate item 6):
+	// the backfill derives it from run.operation, not the column DEFAULT.
+	safety := insertRun("safety_dump", "success", true)
+	insertRun("dump", "success", false) // artifact-less success: nothing to register
+	insertRun("dump", "failed", true)   // non-success never registers
 
 	for range 2 {
-		// goose down steps one migration; 0010 (chains) sits above 0009 now,
-		// so reaching below the registry takes two.
+		// goose down steps one migration; 0011 (job_id index) + 0010 (chains)
+		// sit above 0009 now, so reaching below the registry takes three.
+		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.False(t, tableExists(t, pool, "artifact"))
@@ -188,13 +197,63 @@ func TestArtifactBackfillWalk(t *testing.T) {
 		rows.Close()
 		require.NoError(t, rows.Err())
 
-		require.Len(t, got, 1, "exactly the one historical successful dump")
+		require.Len(t, got, 2, "the historical successful dump + safety dump, once each")
 		require.Equal(t, dumped, got[0].runID)
 		require.Equal(t, "billing-test.dump.tgz", got[0].name)
 		require.Equal(t, "standard", got[0].class)
 		require.Equal(t, finished, got[0].createdAt.UTC(),
 			"backfilled created_at is the run's finished_at, not migration time")
+		require.Equal(t, safety, got[1].runID)
+		require.Equal(t, "safety", got[1].class,
+			"the safety dump keeps its class across a down→up walk (M3-gate item 6)")
 	}
+}
+
+// TestJobIDUniqueConstraint pins 0011: the partial UNIQUE index rejects a
+// reused non-null job_id (hardening ReconcileByJobID against a Semaphore
+// task-id wipe replaying ids while a run is in-flight) while permitting many
+// NULLs, so queued runs — which carry no id yet — are unaffected.
+func TestJobIDUniqueConstraint(t *testing.T) {
+	ctx := context.Background()
+	dsn := scratchDSN(t)
+	require.NoError(t, db.Migrate(ctx, dsn, "up"))
+
+	pool, err := db.NewPool(ctx, dsn)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	var clusterID, instanceID int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO cluster (name, platform) VALUES ('c1', 'vm') RETURNING id`).Scan(&clusterID))
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO instance (name, cluster_id, env, pg_version, owner)
+		VALUES ('billing-test', $1, 'test', '16.3', 'team') RETURNING id`,
+		clusterID).Scan(&instanceID))
+
+	insert := func(jobID *string) error {
+		_, err := pool.Exec(ctx, `
+			INSERT INTO run (instance_id, operation, environment, engine_class, playbook_tag, state, job_id)
+			VALUES ($1, 'dump', 'test', 'nonprod', 'dump', 'running', $2)`,
+			instanceID, jobID)
+		return err
+	}
+
+	// Multiple NULL job_ids coexist — PG treats NULLs as distinct, so queued
+	// runs (no id assigned yet) are never blocked.
+	require.NoError(t, insert(nil))
+	require.NoError(t, insert(nil))
+
+	// The first non-null id inserts; a second run reusing it is rejected by
+	// the partial unique index.
+	id := "task-77"
+	require.NoError(t, insert(&id))
+	err = insert(&id)
+	require.Error(t, err, "a duplicate non-null job_id must violate run_job_id_unique")
+	require.Contains(t, err.Error(), "run_job_id_unique")
+
+	// A different non-null id is still free to insert.
+	other := "task-78"
+	require.NoError(t, insert(&other))
 }
 
 func tableExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
@@ -212,6 +271,15 @@ func columnExists(t *testing.T, pool *pgxpool.Pool, table, column string) bool {
 	err := pool.QueryRow(context.Background(),
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
 		 WHERE table_name = $1 AND column_name = $2)`, table, column).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func indexExists(t *testing.T, pool *pgxpool.Pool, name string) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = $1)", name).Scan(&exists)
 	require.NoError(t, err)
 	return exists
 }

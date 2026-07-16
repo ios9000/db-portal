@@ -190,8 +190,11 @@ func (a *SemaphoreAdapter) fetchArtifact(ctx context.Context, id JobID) *Artifac
 
 // parseResultLine scans task output (newest task last) for the sentinel,
 // base64-decodes it, and unmarshals the JSON. A missing sentinel, bad base64,
-// bad JSON, or an empty name all yield nil — the adapter never fabricates an
-// artifact from a malformed line.
+// bad JSON, an empty name, an empty sha256, or a non-positive size all yield
+// nil — the function exists precisely to not trust the playbook's line, so it
+// registers a restorable artifact only when name/checksum/size are all present
+// (M3-gate item 5: a name-only line must not register an empty-checksum,
+// un-restorable row).
 func parseResultLine(lines []semOutputLine) *Artifact {
 	for i := len(lines) - 1; i >= 0; i-- {
 		m := dbportalResultRE.FindStringSubmatch(lines[i].Output)
@@ -206,7 +209,7 @@ func parseResultLine(lines []semOutputLine) *Artifact {
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return nil
 		}
-		if r.Name == "" {
+		if r.Name == "" || r.SHA256 == "" || r.SizeBytes <= 0 {
 			return nil
 		}
 		return &Artifact{Name: r.Name, SizeBytes: r.SizeBytes, Checksum: r.SHA256, Location: r.Location}

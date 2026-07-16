@@ -5,12 +5,35 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-039 DONE (s26) —
-  restore.yml re-fetch footgun.** NEXT = **WU-040 (last M3-gate fix)**, THEN groom +
-  start Phase 4. WU-036 (s21 a + s22 b) closed M3 feature-complete; the gate (s23,
-  recovered s24) passed with fix WUs, NO criticals (full record
-  `docs/agent/reviews/m3-gate.md`). Execution order 030 → 032 → 031 → 033 → 034 →
-  035 → 036 → **M3 gate ✓** → **037 ✓** → **038 ✓** → **039 ✓** → 040 → Phase 4.
+- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; ALL FIX WUs LANDED. WU-040 DONE (s26) —
+  the LOW bundle (items 5/6/7), the LAST M3-gate fix.** NEXT = **groom + start Phase 4**
+  (M1/M2 protocol: land every fix WU before any Phase-4 WU — now satisfied). WU-036 (s21
+  a + s22 b) closed M3 feature-complete; the gate (s23, recovered s24) passed with fix
+  WUs, NO criticals (full record `docs/agent/reviews/m3-gate.md`; item 8 → M4). Execution
+  order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓** → **037 ✓** → **038 ✓** →
+  **039 ✓** → **040 ✓** → **Phase 4**.
+- **Status (s26, WU-040 DONE — LOW bundle, items 5/6/7; ALL M3-gate fixes landed):**
+  three real-but-cheap defects in ONE S WU (M1 precedent). Go-test-shaped, no live stack.
+  (5) `parseResultLine` (semaphore.go) rejected an empty `Name` but returned the Artifact
+  with `r.SHA256`/`r.SizeBytes` UNCHECKED → a name-only line registered a dead
+  empty-checksum, un-restorable row; the guard is now
+  `Name=="" || SHA256=="" || SizeBytes<=0 → nil` (run still succeeds, nil = no registry
+  row). LOW because verify.yml:37 already fail-closes on an empty checksum (dead row, not
+  a dangerous restore). (6) 0009's backfill omitted `retention_class` → a `goose
+  down`→`up` walk silently reclassified every `'safety'` row `'standard'`; FIXED IN PLACE
+  in 0009 (safe — goose won't re-run an applied migration on prod; only a dev/test
+  down→up re-runs it) with in-SQL `CASE WHEN r.operation='safety_dump' THEN 'safety' ELSE
+  'standard' END`, mirroring finalize's catalog stamp (service.go:399-402) exactly. (7)
+  `job_id text` (0003) had no uniqueness → NEW migration **0011_job_id_unique.sql** =
+  `CREATE UNIQUE INDEX run_job_id_unique ON run (job_id) WHERE job_id IS NOT NULL` (0003
+  can't be retro-edited; PG NULLs distinct → queued runs unaffected). TESTS: 3 cases →
+  TestSemaphoreSuccessNoArtifact; TestArtifactBackfillWalk now adds a safety_dump row +
+  asserts 'safety' preserved across the walk (down-count 2→3, 0011+0010 above 0009); new
+  TestJobIDUniqueConstraint (dup non-null rejected w/ "run_job_id_unique", multiple NULLs
+  OK); TestMigrateUpDown pins 0011 up/down (new `indexExists` helper). Gate GREEN:
+  CHECK-EXIT:0 (golangci 0, go test -race all pkgs FRESH incl. db/engine/runs, golden
+  flow not-skipped 2.04s, vitest 116/116). Diff = 4 files + 1 migration, 100 insertions.
+  No UI, no seam/API change; MockEngine untouched (ADR-002).
 - **Status (s26, WU-039 DONE — restore.yml re-fetch footgun):** the MEDIUM
   playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
   {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
@@ -179,24 +202,28 @@
 
 ## Next action (be exact)
 
-1. **START WU-040** (M3-gate fix — the LOW bundle, items 5/6/7, LAST M3 fix; BACKLOG
-   WU-040). Three re-graded-down LOWs, all cheap, Go-test-shaped (M1 precedent: the low
-   bundle rides one S WU): (5) `parseResultLine` (semaphore.go:209-212) validates `Name`
-   but not `SHA256`/`SizeBytes` → a name-only result line registers an empty-checksum,
-   un-restorable artifact; reject empty sha256 + non-positive size → nil (run still
-   succeeds). (6) migration 0009's backfill (0009_artifact_registry.sql:26-34) omits
-   `retention_class`, so a `goose down`→`up` on a DB holding safety artifacts silently
-   reclassifies every `'safety'` row `'standard'`; derive the class by joining
-   `run.operation` (`'safety'` when `operation='safety_dump'`). (7) `job_id` is bare
-   `text` (0003_runs_audit.sql:14) with no uniqueness → add a partial `UNIQUE (job_id)
-   WHERE job_id IS NOT NULL` (PG allows multiple NULLs, queued runs unaffected) to
-   harden ReconcileByJobID against a reused id after an engine BoltDB wipe. **Verify:**
-   name-only result line registers NO artifact (run still success); up→down→up walk
-   PRESERVES `'safety'`; the job_id constraint rejects a duplicate non-null id + permits
-   multiple NULLs; new migration walks clean both ways; `npm run check` green. Needs a
-   new migration (0011) + engine/db tests — Go-test-shaped, no live stack. After 040,
-   ALL M3-gate fixes are landed → **groom + start Phase 4** (M1/M2 protocol: land every
-   fix WU before any Phase-4 WU).
+1. **GROOM PHASE 4 (M4 — Hardening), then start its first WU.** ALL M3-gate fixes are
+   landed (037→038→039→040); the M1/M2 protocol — land every fix WU before any Phase-4 WU
+   — is now satisfied, so Phase 4 is UNBLOCKED. Grooming = size the M4 backlog into
+   context-window WUs against ROADMAP M4 exit criteria and file them in BACKLOG.md. M4
+   scope already sketched (BACKLOG "Phase 4" §): concurrency/locking (cluster/instance TTL
+   locks), load test (25–50 concurrent mock dumps), staging seed, retention job (1y
+   audit), cold-start + docs-reconciliation audit, packaging. **Two deferred items MUST
+   fold into M4 grooming:** (a) M3-gate finding 8 — dump.yml's best-effort staging `rm`
+   sits AFTER `mc cp`/`mc stat`, so any post-`pg_dump` failure orphans the real dump bytes
+   on `/artifacts` forever (fix when M4 touches retention: wrap post-dump tasks in
+   `block:` + `always: file state=absent`); (b) the **artifact retention ENFORCEMENT job**
+   (registry stores class only; delete/expire is M4 policy) — WU-040 item 6 just made the
+   'safety'/'standard' classification survive a down→up walk, so an enforcement job can now
+   trust it. Also decide milestone bookkeeping: mark M3 EXIT in ROADMAP.md and confirm the
+   demo-m3.md twin is the M3 exit evidence.
+   - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
+     package** (ARCHITECTURE §8.2) becomes submittable at M3 exit — surface to the user.
+   - WU-040 (s26) is DONE — the LOW bundle. If revisiting: item 5 = the
+     `Name/SHA256/SizeBytes` guard in `parseResultLine` (semaphore.go); item 6 = the
+     in-place `CASE … safety_dump …` in 0009's backfill (edited the applied migration on
+     purpose — only a down→up re-runs it); item 7 = new migration **0011_job_id_unique.sql**
+     (partial unique index `run_job_id_unique`). Tests in semaphore_test.go + migrate_test.go.
    - WU-039 (s26) is DONE — restore.yml re-fetch footgun. If revisiting: the fix is the
      `clear any stale staging file` task + dropped `creates:` in restore.yml's fetch;
      dump.yml/verify.yml were confirmed footgun-free (not changed). Live-drilled on
@@ -211,8 +238,6 @@
      helper is duplicated in runs/service.go + chain/driver.go (packages stay
      decoupled by design); `MaxStatusErrors`/`MaxReadErrors` are Service fields
      tests dial low for fast give-up.
-   - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
-     package** (ARCHITECTURE §8.2) becomes submittable at M3 exit.
    - Dev facts carried: semaphore project 1, templates **dump:3, verify:4,
      restore:5, smoke:1**, pgtarget-env **3**; pgtarget host-port 5433, seeded
      appdb (reset = `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` + replay
@@ -222,10 +247,13 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - WU-040 is Go-test-shaped — no live stack needed. Dev stack confirmed UP at s26
-     (mailpit/minio/pgtarget/postgres/semaphore all healthy; the WU-039 drill ran on
-     it). pgtarget currently sits RESTORED (widget 4 / ledger 200); minio holds the
-     WU-039 drill artifacts (harmless, no retention until M4).
+   - Dev stack was UP through s26 (mailpit/minio/pgtarget/postgres/semaphore all
+     healthy; WU-040 used only scratch DBs via `MigratedDB`/`scratchDSN`, no live drill).
+     pgtarget sits RESTORED (widget 4 / ledger 200); minio holds the WU-039 drill
+     artifacts (harmless, no retention until M4). The dev DB is at 0010 — WU-040 added
+     0011 to the binary but never migrated the persistent dev DB (all tests use fresh
+     scratch DBs that get 0011 on `up`); migrate it with `cd backend && go run
+     ./cmd/portal migrate up` only if a future live drill on it needs 0011.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -492,6 +520,23 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-16 — **WU-040 DONE (s26) — LOW bundle (M3-gate items 5/6/7); ALL M3-gate
+  fixes landed**: three cheap defects in one S WU, Go-test-shaped, no live stack.
+  (5) `parseResultLine` (semaphore.go) registered a name-only result line as a dead
+  empty-checksum artifact — guard now rejects empty `SHA256`/non-positive `SizeBytes`
+  → nil (run still succeeds); LOW because verify.yml:37 already fail-closes on it.
+  (6) 0009's backfill omitted `retention_class`, so a `goose down`→`up` walk
+  silently reclassified `'safety'` rows `'standard'` — FIXED IN PLACE in 0009 (only a
+  dev/test down→up re-runs an applied migration) with in-SQL
+  `CASE WHEN operation='safety_dump' THEN 'safety' ELSE 'standard'`, mirroring
+  finalize. (7) `job_id text` had no uniqueness — NEW migration
+  **0011_job_id_unique.sql** = partial `UNIQUE (job_id) WHERE job_id IS NOT NULL`
+  (PG NULLs distinct → queued runs unaffected). TESTS: 3 cases →
+  TestSemaphoreSuccessNoArtifact; TestArtifactBackfillWalk adds a safety row + asserts
+  'safety' preserved (down-count 2→3); new TestJobIDUniqueConstraint; TestMigrateUpDown
+  pins 0011 (new `indexExists`). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs
+  incl. db/engine/runs FRESH, golden flow not-skipped 2.04s, vitest 116/116). No
+  UI/seam change; MockEngine untouched. Active → **groom + start Phase 4**.
 - 2026-07-16 — **WU-039 DONE (s26) — restore.yml re-fetch footgun**: the MEDIUM
   playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
   {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
@@ -521,17 +566,3 @@
   proves no failed create writes a row. GATE: CHECK-EXIT:0 (golangci 0, schedule
   pkg FRESH -race 10.3s, golden flow not-skipped, vitest 116/116). No migration/
   UI/seam change; Go-test-shaped, no live stack. Active → **WU-039**.
-- 2026-07-16 — **WU-037 DONE (s25) — transient-error resilience, both M3-gate
-  HIGHs**: one mock-to-real root cause fixed in two places. `runs.Service.watch`
-  now finalizes failed ONLY on `engine.ErrUnknownJob`; every other Status error is
-  transient → bounded retry+backoff (`MaxStatusErrors`, cap 30s) then an honest
-  give-up ("engine status unavailable after N attempts"), killing the lying "engine
-  lost the job" on every blip. `chain.drive` retries all three DB reads
-  (load/next/step-watch) up to `MaxReadErrors` (cap 15s) then **halts + notifies**
-  rather than silently exiting and wedging the chain `running` forever (Resume works,
-  DBA mailed). Chose bounded-retry-then-halt over a periodic sweep (self-halts
-  promptly, symmetric with the watcher, main.go UNCHANGED; boot sweep still covers
-  process death). 5 new -race tests drive the real watch/drive goroutines with
-  injected transient errors. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs,
-  golden flow not-skipped, vitest 116/116). No UI/migration/seam change. Active →
-  **WU-038**.

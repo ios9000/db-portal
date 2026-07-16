@@ -276,6 +276,12 @@ func TestSemaphoreSuccessNoArtifact(t *testing.T) {
 		{"sentinel, unparseable base64", "DBPORTAL_RESULT=abc"}, // matches the regex, decode fails
 		{"decoded is not json", "DBPORTAL_RESULT=" + b64("this is not json")},
 		{"json without a name", "DBPORTAL_RESULT=" + b64(`{"size_bytes":5,"sha256":"x"}`)},
+		// M3-gate item 5: a name but no checksum, or a non-positive size, is a
+		// dead un-restorable artifact — reject it rather than register a row
+		// verify.yml would later fail-close on.
+		{"name but empty sha256", "DBPORTAL_RESULT=" + b64(`{"name":"appdb-x.dump","size_bytes":5,"sha256":""}`)},
+		{"name and sha256 but zero size", "DBPORTAL_RESULT=" + b64(`{"name":"appdb-x.dump","size_bytes":0,"sha256":"abc"}`)},
+		{"name and sha256 but negative size", "DBPORTAL_RESULT=" + b64(`{"name":"appdb-x.dump","size_bytes":-1,"sha256":"abc"}`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
