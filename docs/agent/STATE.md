@@ -5,12 +5,31 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-038 DONE (s26) —
-  schedule.Create launchable gate.** NEXT = **WU-039 → 040**, THEN groom + start Phase 4.
-  WU-036 (s21 a + s22 b) closed M3 feature-complete; the gate (s23, recovered s24)
-  passed with fix WUs, NO criticals (full record `docs/agent/reviews/m3-gate.md`).
-  Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓** →
-  **037 ✓** → **038 ✓** → 039 → 040 → Phase 4.
+- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-039 DONE (s26) —
+  restore.yml re-fetch footgun.** NEXT = **WU-040 (last M3-gate fix)**, THEN groom +
+  start Phase 4. WU-036 (s21 a + s22 b) closed M3 feature-complete; the gate (s23,
+  recovered s24) passed with fix WUs, NO criticals (full record
+  `docs/agent/reviews/m3-gate.md`). Execution order 030 → 032 → 031 → 033 → 034 →
+  035 → 036 → **M3 gate ✓** → **037 ✓** → **038 ✓** → **039 ✓** → 040 → Phase 4.
+- **Status (s26, WU-039 DONE — restore.yml re-fetch footgun):** the MEDIUM
+  playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
+  {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
+  volume — an interrupted fetch (timeout / runner restart / killed container) leaves a
+  PARTIAL file there; the next attempt saw it exists → SKIPPED the fetch → hashed the
+  partial → checksum mismatch → the operator told their GOOD backup is "tampered",
+  worst on the product's own Resume-after-halt path. FIX (playbook-only): dropped the
+  `creates:` guard and added a `clear any stale staging file` task (`file: state:
+  absent`) BEFORE the fetch, so the fetch always runs and a partial can never
+  masquerade as the fetched artifact. `dump.yml`/`verify.yml` confirmed footgun-free
+  (dump staging name = `now()`+`random`, unique per run, no `creates:`; verify streams
+  `mc cat | sha256sum`, no staging file). All 3 playbooks `--syntax-check` EXIT:0 in the
+  runner image. LIVE DRILL (isolated portal :8099 + portal_drill039, semaphore engine;
+  demo :8080 untouched): planted a 2000-byte partial at `/artifacts/restore-<name>` →
+  restore → **chain SUCCESS**, restore task `ok=9 changed=4 skipped=0` (clear→changed,
+  fetch→changed NOT skipped, checksum assert→ok), widget back 4 rows; corrupt object →
+  chain HALTED at verify (steps 2+3 run_id null, target untouched, ONE mail); fix +
+  resume → SUCCESS. GATE GREEN: CHECK-EXIT:0 (regression, no Go/FE change; vitest
+  116/116). No migration, no UI, no seam change. Drill torn down, scratch DB dropped.
 - **Status (s26, WU-038 DONE — schedule.Create launchable gate):** the MEDIUM
   guardrail-honesty fix. `schedule.Create` (schedule.go) tested catalog EXISTENCE
   only (`catalog.ByID`, which finds the non-launchable restore-chain steps too), so
@@ -160,23 +179,30 @@
 
 ## Next action (be exact)
 
-1. **START WU-039** (M3-gate fix — item 4, MEDIUM; BACKLOG WU-039). `restore.yml`'s
-   fetch uses `creates: {{ staging_path }}` (restore.yml:65) on a DETERMINISTIC path
-   on the persistent shared `/artifacts` volume: an interrupted fetch (task timeout,
-   runner restart, killed container) leaves a partial file; the next attempt sees the
-   path exists, SKIPS the fetch, hashes the partial, and the sha256 compare fails →
-   the operator is told their GOOD backup is "tampered" — worst on the product's own
-   advertised Resume-after-halt path. Fix: don't gate the fetch on `creates:` for a
-   deterministic shared path (remove-first / unique-or-per-run temp path / always
-   re-fetch); apply the same scrutiny to dump.yml's staging if it shares the pattern.
-   **WU-039 WANTS A LIVE RESTORE DRILL** (demo-m3.md recipe) — re-check the dev stack
-   is up first (was UP at s22: mailpit/minio/pgtarget/postgres/semaphore; NOT touched
-   s23-s26). Verify: leftover partial `restore-<name>` on staging → re-fetches full +
-   verifies clean (NOT a false "tampered"); genuinely corrupt object still halts at
-   verify; `ansible-playbook --syntax-check` clean; live restore drill still passes
-   end-to-end. Then **040** (LOW bundle: parseResultLine sha/size + 0009 backfill
-   retention_class + job_id uniqueness — dev-only triggers, Go-test-shaped). Land ALL
-   before any Phase-4 WU (M1/M2 protocol). ONLY then groom + start Phase 4.
+1. **START WU-040** (M3-gate fix — the LOW bundle, items 5/6/7, LAST M3 fix; BACKLOG
+   WU-040). Three re-graded-down LOWs, all cheap, Go-test-shaped (M1 precedent: the low
+   bundle rides one S WU): (5) `parseResultLine` (semaphore.go:209-212) validates `Name`
+   but not `SHA256`/`SizeBytes` → a name-only result line registers an empty-checksum,
+   un-restorable artifact; reject empty sha256 + non-positive size → nil (run still
+   succeeds). (6) migration 0009's backfill (0009_artifact_registry.sql:26-34) omits
+   `retention_class`, so a `goose down`→`up` on a DB holding safety artifacts silently
+   reclassifies every `'safety'` row `'standard'`; derive the class by joining
+   `run.operation` (`'safety'` when `operation='safety_dump'`). (7) `job_id` is bare
+   `text` (0003_runs_audit.sql:14) with no uniqueness → add a partial `UNIQUE (job_id)
+   WHERE job_id IS NOT NULL` (PG allows multiple NULLs, queued runs unaffected) to
+   harden ReconcileByJobID against a reused id after an engine BoltDB wipe. **Verify:**
+   name-only result line registers NO artifact (run still success); up→down→up walk
+   PRESERVES `'safety'`; the job_id constraint rejects a duplicate non-null id + permits
+   multiple NULLs; new migration walks clean both ways; `npm run check` green. Needs a
+   new migration (0011) + engine/db tests — Go-test-shaped, no live stack. After 040,
+   ALL M3-gate fixes are landed → **groom + start Phase 4** (M1/M2 protocol: land every
+   fix WU before any Phase-4 WU).
+   - WU-039 (s26) is DONE — restore.yml re-fetch footgun. If revisiting: the fix is the
+     `clear any stale staging file` task + dropped `creates:` in restore.yml's fetch;
+     dump.yml/verify.yml were confirmed footgun-free (not changed). Live-drilled on
+     :8099/portal_drill039 (planted-partial → chain success; corrupt → halt; resume →
+     success). The M3-gate finding 8 (dump.yml staging `rm` after `mc cp` orphans bytes
+     on failure) is deferred to M4, NOT this WU.
    - WU-038 (s26) is DONE — the schedule launchable gate. If revisiting: the fix is
      `schedule.go` Create's opening gate (`!ok || !op.Launchable`); the schedules
      handler already maps `runs.ErrUnknownOperation` → 400 (no handler change was
@@ -196,9 +222,10 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - WU-040 is Go-test-shaped (may not need the live stack); WU-039 wants a live
-     restore drill. Dev stack was UP + healthy at s22
-     (mailpit/minio/pgtarget/postgres/semaphore) — re-check before any live work.
+   - WU-040 is Go-test-shaped — no live stack needed. Dev stack confirmed UP at s26
+     (mailpit/minio/pgtarget/postgres/semaphore all healthy; the WU-039 drill ran on
+     it). pgtarget currently sits RESTORED (widget 4 / ledger 200); minio holds the
+     WU-039 drill artifacts (harmless, no retention until M4).
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -465,6 +492,21 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-16 — **WU-039 DONE (s26) — restore.yml re-fetch footgun**: the MEDIUM
+  playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
+  {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
+  volume — an interrupted fetch leaves a partial file, the next attempt SKIPS the
+  fetch and hashes the partial → the operator told their GOOD backup is "tampered"
+  (worst on the Resume-after-halt path). FIX (playbook-only): dropped `creates:` and
+  added a `clear any stale staging file` task before the fetch so a partial can never
+  masquerade as the artifact. dump.yml/verify.yml confirmed footgun-free (not changed).
+  All 3 playbooks `--syntax-check` EXIT:0. LIVE DRILL (isolated :8099 +
+  portal_drill039, semaphore engine; demo :8080 untouched): planted a 2000-byte
+  partial at the staging path → restore → CHAIN SUCCESS (restore task
+  `ok=9 changed=4 skipped=0`: clear→changed, fetch→changed NOT skipped, checksum
+  assert→ok), widget back; corrupt object → HALTED at verify (target untouched, ONE
+  mail); fix + resume → SUCCESS. GATE: CHECK-EXIT:0 (regression, no Go/FE change,
+  vitest 116/116). Drill torn down, scratch DB dropped. Active → **WU-040**.
 - 2026-07-16 — **WU-038 DONE (s26) — schedule.Create launchable gate**: the
   MEDIUM guardrail-honesty fix (M3-gate item 3). `schedule.Create` tested catalog
   EXISTENCE only, so `POST /api/schedules {operation:"restore"}` (or verify/
@@ -493,19 +535,3 @@
   injected transient errors. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs,
   golden flow not-skipped, vitest 116/116). No UI/migration/seam change. Active →
   **WU-038**.
-- 2026-07-16 — **M3 GATE PASSED — recovered s23's uncommitted review (s24)**:
-  session `36caf224` (s23, today) ran the multi-agent M3 gate — workflow
-  `wf_49ca1969-37a`, 5 Sonnet reviewers, 605k tok / ~19.4 min, architect-verified
-  inline → **8 findings, 8 confirmed, 0 refuted, 4 re-graded down, NO criticals →
-  GATE PASSES with fix WUs** (`docs/agent/reviews/m3-gate.md`). An ssh reset killed
-  s23 before checkpoint (doc + `.claude/workflows/m3-gate-review.js` uncommitted,
-  STATE/JOURNAL unwritten). s24 recovered it: no twin (`ps`: one `claude`, pts/1);
-  confirmed the workflow completed (5 subagent transcripts under 36caf224) + BOTH
-  HIGHs spot-verified against real code (service.go:267-272 finalizes on ANY
-  `Status` err; driver.go:31-33/50-54/108-112 wedges the chain `running` on any
-  transient DB err) → real. Committed the artifacts (**3a76918**); filed WU-037 (2
-  HIGH — transient-error resilience) / WU-038 (schedule launchable gate) / WU-039
-  (restore.yml re-fetch) / WU-040 (LOW bundle); finding 8 → M4. Every guardrail
-  invariant HELD. No Go/FE change (docs-only recovery). Also s24: pre-approved all
-  Bash in the gitignored `.claude/settings.local.json` (bare `Bash` allow; deny +
-  ask guardrails kept). Active → **WU-037**.

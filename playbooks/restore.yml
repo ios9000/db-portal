@@ -59,9 +59,24 @@
           (PGHOST/PGDATABASE/…) is missing. See infra/semaphore-bootstrap.sh.
         quiet: true
 
+    # Clear any stale staging file BEFORE fetching (WU-039). staging_path is a
+    # DETERMINISTIC path on the persistent, shared /artifacts volume, so an
+    # earlier interrupted fetch (task timeout, runner restart, killed container)
+    # can leave a PARTIAL file right here. Gating the fetch on `creates:` would
+    # then skip the re-fetch, the stat below would hash the partial, and the
+    # checksum assert would report a valid backup as "tampered" — worst of all on
+    # the product's own Resume-after-halt recovery path. Start from a clean slate.
+    - name: clear any stale staging file from an interrupted fetch
+      ansible.builtin.file:
+        path: "{{ staging_path }}"
+        state: absent
+
     # Fetch the object to a local staging file (pg_restore of a custom-format
     # dump needs a seekable file, not a stream). `mc` reads its credentialed
-    # alias from the environment; a non-zero exit aborts the play.
+    # alias from the environment; a non-zero exit aborts the play. NO `creates:`
+    # guard — the fetch runs every time so a partial leftover can never
+    # masquerade as the fetched artifact (WU-039); the clear above makes it a
+    # fresh, complete copy.
     - name: fetch the artifact from object storage
       ansible.builtin.command:
         argv:
@@ -69,7 +84,6 @@
           - cp
           - "{{ object_path }}"
           - "{{ staging_path }}"
-        creates: "{{ staging_path }}"
 
     - name: stat the fetched artifact (sha256)
       ansible.builtin.stat:

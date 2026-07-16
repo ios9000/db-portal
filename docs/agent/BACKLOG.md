@@ -856,7 +856,24 @@ schedule_test.go's `TestCreateValidation` to cover the existing-but-non-launchab
 + executor.go:148/166-168; internal/catalog/catalog.go (ByID vs All / Launchable);
 internal/runs/service.go:126 (the canonical gate); docs/specs/restore.md:172-175.
 
-### WU-039 · M3-gate fix: restore.yml re-fetch footgun — S · `todo`
+### WU-039 · M3-gate fix: restore.yml re-fetch footgun — S · `done (2026-07-16, s26)`
+**Evidence:** playbook-only fix — `restore.yml`'s fetch dropped its `creates: {{ staging_path }}`
+guard and gained a `clear any stale staging file` task (`file: state: absent`) BEFORE the
+fetch, so a partial leftover on the deterministic shared `/artifacts` path can never
+masquerade as the fetched artifact. `dump.yml`/`verify.yml` confirmed footgun-free (dump's
+staging name embeds `now()`+`random` = unique per run, no `creates:`; verify streams via
+`mc cat | sha256sum`, no staging file). All 3 playbooks `ansible-playbook --syntax-check`
+EXIT:0 in `dbportal-semaphore:v2.17.39-pg16`. LIVE DRILL (isolated portal :8099 +
+portal_drill039, semaphore engine; demo :8080 untouched): dump pgtarget → artifact 1 (sha
+d71cc20e…) → DROP widget → **planted a 2000-byte partial at `/artifacts/restore-<name>`
+(sha e6f64801… ≠ expected)** → POST /api/restore → **chain SUCCESS**, restore task
+`ok=9 changed=4 failed=0 skipped=0` with `clear…→changed`, `fetch…→changed` (NOT skipped),
+`assert checksum→ok`, widget back 4 rows — under the old `creates:` guard this partial would
+have been hashed and reported "tampered". Regression: genuinely corrupt object → chain HALTED
+at verify (run 5 failed), safety_dump+restore `run_id:null` never created, widget ABSENT
+(target untouched), exactly ONE mail; fix bytes + resume → SUCCESS (verify 6/safety_dump 7/
+restore 8, failed run 5 superseded). `npm run check` CHECK-EXIT:0 (regression-green, no Go/FE
+change). Drill torn down, scratch DB dropped, demo :8080 healthz 200.
 Gate item 4 (MEDIUM). `restore.yml`'s fetch uses `creates: {{ staging_path }}`
 (restore.yml:65) on a **deterministic path on the persistent shared `/artifacts` volume**.
 An interrupted fetch (task timeout, runner restart, killed container) leaves a partial file;
