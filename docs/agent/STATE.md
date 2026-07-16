@@ -5,13 +5,29 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; ALL FIX WUs LANDED. WU-040 DONE (s26) —
-  the LOW bundle (items 5/6/7), the LAST M3-gate fix.** NEXT = **groom + start Phase 4**
-  (M1/M2 protocol: land every fix WU before any Phase-4 WU — now satisfied). WU-036 (s21
-  a + s22 b) closed M3 feature-complete; the gate (s23, recovered s24) passed with fix
-  WUs, NO criticals (full record `docs/agent/reviews/m3-gate.md`; item 8 → M4). Execution
-  order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓** → **037 ✓** → **038 ✓** →
-  **039 ✓** → **040 ✓** → **Phase 4**.
+- **Active:** M3 CLOSED (gate passed, ALL fix WUs landed 037→040). **PHASE 4 (M4 —
+  Hardening) GROOMED (s26).** NEXT = **START WU-041** (staging seed — realistic estate
+  fixture, S, the first M4 WU). M4 order = **041 → 042 → 043 → 044 → 045 → 046 → 047**
+  (seed → concurrency locks → load test → retention/GC → docs-recon+CI → packaging →
+  retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in
+  its header note. M4 exit deliverables = the pilot-deployable build (046) + the
+  experiment retrospective (047); close with an M4 gate review (author `m4-gate-review`
+  mirroring m3). Phase-3 execution order was 030 → 032 → 031 → 033 → 034 → 035 → 036 →
+  **M3 gate ✓** → **037 ✓** → **038 ✓** → **039 ✓** → **040 ✓**.
+- **Status (s26, PHASE 4 GROOMED — M4 decomposed into 7 WUs):** with all M3-gate
+  fixes landed, groomed the M4 "Hardening" phase against the ROADMAP M4 exit criteria +
+  the icebox debt. Filed **WU-041** (staging seed, S) → **WU-042** (concurrency locks:
+  instance TTL lock across all launch paths + portal self-target ban + naive-replica
+  block, M — generalizes the scheduler's instance-only overlap probe) → **WU-043** (load
+  test, 25–50 concurrent mock dumps, M — validates 042 scales) → **WU-044** (maintenance
+  & retention: audit 1y + artifact enforcement preserving 'safety' + session GC + dump.yml
+  finding-8 orphan fix, M) → **WU-045** (docs-vs-reality reconciliation + cold-start + CI
+  hardening — folds the CI/supply-chain + .env-walk + token-reconcile + demo-m1-header
+  icebox debt, M) → **WU-046** (packaging for pilot: systemd unit + .env template + deploy
+  runbook + break-glass mail alarm, M) → **WU-047** (experiment retrospective, STRATEGY §8,
+  S — strictly last). Promoted icebox items annotated `→ WU-0xx` in place. M4 exit gate =
+  a milestone review (author `m4-gate-review` skill mirroring the m3 pattern) after 047.
+  Docs-only session; no Go/FE change (BACKLOG/STATE/JOURNAL only).
 - **Status (s26, WU-040 DONE — LOW bundle, items 5/6/7; ALL M3-gate fixes landed):**
   three real-but-cheap defects in ONE S WU (M1 precedent). Go-test-shaped, no live stack.
   (5) `parseResultLine` (semaphore.go) rejected an empty `Name` but returned the Artifact
@@ -202,21 +218,20 @@
 
 ## Next action (be exact)
 
-1. **GROOM PHASE 4 (M4 — Hardening), then start its first WU.** ALL M3-gate fixes are
-   landed (037→038→039→040); the M1/M2 protocol — land every fix WU before any Phase-4 WU
-   — is now satisfied, so Phase 4 is UNBLOCKED. Grooming = size the M4 backlog into
-   context-window WUs against ROADMAP M4 exit criteria and file them in BACKLOG.md. M4
-   scope already sketched (BACKLOG "Phase 4" §): concurrency/locking (cluster/instance TTL
-   locks), load test (25–50 concurrent mock dumps), staging seed, retention job (1y
-   audit), cold-start + docs-reconciliation audit, packaging. **Two deferred items MUST
-   fold into M4 grooming:** (a) M3-gate finding 8 — dump.yml's best-effort staging `rm`
-   sits AFTER `mc cp`/`mc stat`, so any post-`pg_dump` failure orphans the real dump bytes
-   on `/artifacts` forever (fix when M4 touches retention: wrap post-dump tasks in
-   `block:` + `always: file state=absent`); (b) the **artifact retention ENFORCEMENT job**
-   (registry stores class only; delete/expire is M4 policy) — WU-040 item 6 just made the
-   'safety'/'standard' classification survive a down→up walk, so an enforcement job can now
-   trust it. Also decide milestone bookkeeping: mark M3 EXIT in ROADMAP.md and confirm the
-   demo-m3.md twin is the M3 exit evidence.
+1. **START WU-041** (staging seed — realistic estate fixture, S; BACKLOG "Phase 4" §).
+   The first M4 WU and a prerequisite for the load test (043) + cold-start (045): a
+   deterministic, idempotent generator that populates the ~500-instance estate across all
+   envs + ≥5 clusters (prod slice non-empty for ritual coverage), via the WU-010 `portal
+   import` path or a thin `portal seed` subcommand — no new schema, small test fixtures
+   untouched. Write SPEC-041 just-in-time at start (specs stay JIT — ROADMAP sequencing
+   rule). Delegation candidate: tight-brief, Sonnet-implementable per the delegation model.
+   Then proceed 041 → 042 → 043 → 044 → 045 → 046 → 047; M4 exit = pilot build (046) +
+   retrospective (047), closed by an `m4-gate-review`.
+   - Phase 4 is GROOMED (s26): all 7 WUs have ACs + context briefs in BACKLOG; the header
+     note there carries the execution-order rationale. Promoted icebox debt is annotated
+     `→ WU-0xx` in place.
+   - Milestone bookkeeping still open: mark M3 EXIT in ROADMAP.md (demo-m3.md is the exit
+     twin) when convenient; not blocking WU-041.
    - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
      package** (ARCHITECTURE §8.2) becomes submittable at M3 exit — surface to the user.
    - WU-040 (s26) is DONE — the LOW bundle. If revisiting: item 5 = the
@@ -520,6 +535,18 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-16 — **PHASE 4 GROOMED (s26)**: with M3 closed (all fix WUs landed), decomposed
+  the M4 "Hardening" phase into 7 WUs against the ROADMAP M4 exit criteria + icebox debt,
+  each with ACs + context brief in BACKLOG "Phase 4" §. Order 041 (staging seed, S) → 042
+  (concurrency locks: instance TTL lock across all launch paths + self-target ban + naive-
+  replica block, M — generalizes the scheduler's instance-only overlap probe) → 043 (load
+  test 25–50 concurrent mock dumps, M — validates 042) → 044 (maintenance/retention: audit
+  1y + artifact enforcement preserving 'safety' + session GC + dump.yml finding-8 orphan
+  fix, M) → 045 (docs-vs-reality reconciliation + cold-start + CI hardening, M) → 046
+  (packaging for pilot: systemd unit + .env template + deploy runbook + break-glass mail
+  alarm, M) → 047 (experiment retrospective, STRATEGY §8, S — last). Promoted icebox items
+  annotated `→ WU-0xx`. M4 exit = pilot build (046) + retrospective (047), closed by an
+  `m4-gate-review` (author, mirroring m3). Docs-only; no Go/FE change. Active → **WU-041**.
 - 2026-07-16 — **WU-040 DONE (s26) — LOW bundle (M3-gate items 5/6/7); ALL M3-gate
   fixes landed**: three cheap defects in one S WU, Go-test-shaped, no live stack.
   (5) `parseResultLine` (semaphore.go) registered a name-only result line as a dead
@@ -552,17 +579,3 @@
   assert→ok), widget back; corrupt object → HALTED at verify (target untouched, ONE
   mail); fix + resume → SUCCESS. GATE: CHECK-EXIT:0 (regression, no Go/FE change,
   vitest 116/116). Drill torn down, scratch DB dropped. Active → **WU-040**.
-- 2026-07-16 — **WU-038 DONE (s26) — schedule.Create launchable gate**: the
-  MEDIUM guardrail-honesty fix (M3-gate item 3). `schedule.Create` tested catalog
-  EXISTENCE only, so `POST /api/schedules {operation:"restore"}` (or verify/
-  safety_dump) returned 201 where SPEC-031 promises 400 — the guardrail HELD
-  (executor.fire never sets Internal → runs.Start rejected the fire) but the
-  schedule was permanently, silently broken (every tick → `last_fire_status='error'`,
-  no run, no mail, next_fire_at advancing forever). FIX: one line — Create mirrors
-  runs.Start's `!op.Launchable` gate (`op, ok := catalog.ByID; if !ok ||
-  !op.Launchable → runs.ErrUnknownOperation`); the schedules handler already maps
-  that to 400 "unknown operation" (no handler change). `TestCreateValidation`
-  extended to the three existing-but-non-launchable ids; the `count==0` assertion
-  proves no failed create writes a row. GATE: CHECK-EXIT:0 (golangci 0, schedule
-  pkg FRESH -race 10.3s, golden flow not-skipped, vitest 116/116). No migration/
-  UI/seam change; Go-test-shaped, no live stack. Active → **WU-039**.

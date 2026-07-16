@@ -913,40 +913,217 @@ clean both directions; `npm run check` green.
 209-212; internal/db/migrations/0009_artifact_registry.sql + 0003_runs_audit.sql;
 playbooks/verify.yml:37 (the fail-closed checksum-length assert that makes item 5 a LOW).
 
-## Phase 4 — Hardening (M4) — groom at M3 close
+## Phase 4 — Hardening (M4)
 
-Concurrency/locking (cluster/instance TTL locks), load test (25–50 concurrent mock dumps),
-staging seed, retention job (1y audit), cold-start + docs reconciliation audit, packaging.
-M3-gate finding 8 (docs/agent/reviews/m3-gate.md): dump.yml's best-effort staging `rm` sits
-AFTER the `mc cp`/`mc stat`, so any failure after `pg_dump` orphans the real dump bytes on
-the shared `/artifacts` volume forever (unbounded growth) — fix when M4 touches retention:
-wrap the post-dump tasks in `block:` with an `always: file state=absent`.
+> Groomed 2026-07-16 (s26, M3 close). **Execution order: 041 → 042 → 043 → 044 → 045 →
+> 046 → 047.** Rationale: the estate seed (041) is a prerequisite for both the load test
+> and a realistic cold-start/pilot, so it lands first; concurrency locks (042) are the
+> headline correctness hardening and the load test (043) exists to PROVE the fix scales
+> (the gap is already known analytically — the scheduler's overlap probe is instance-only
+> and the button/chain paths are unguarded — so we build the lock, then load-test to
+> validate, not the other way round). Retention/GC (044) is independent and can slot
+> anywhere after 041; it's placed here so the load test's artifact churn gives it real
+> data to reap. Reconciliation + packaging (045/046) describe and ship the FINISHED
+> system, so they come after the hardening lands; the retrospective (047) needs the whole
+> experiment done and is strictly last. **M4 exit gate:** after 047, run a milestone gate
+> review (M3 precedent: a 5-reviewer pass with inline architect verification — author an
+> `m4-gate-review` skill mirroring m3) before declaring M4 done; the two ROADMAP exit
+> deliverables are the **pilot-deployable build (046)** and the **experiment retrospective
+> (047)**. Specs stay just-in-time (written at WU start, not now). MockEngine stays the
+> default for dev + ALL tests (ADR-002) — the load test drives mock, not Semaphore.
+>
+> **Organizational track (not a WU):** the security-vetting package (ARCHITECTURE §8.2)
+> becomes submittable at M3 exit — surface to the user; it runs in parallel and gates the
+> real-estate rollout, not the M4 code.
+
+### WU-041 · Staging seed — realistic estate fixture — S · `todo`
+The prerequisite tooling for the load test (043), cold-start (045), and a realistic pilot
+(046): a deterministic generator that populates the ~500-instance estate the product
+targets (CLAUDE.md), across all envs and multiple clusters, so guardrail/window/lock
+behavior is exercised at scale. Rides the existing WU-010 inventory path (`portal import`)
+or adds a thin `portal seed --instances N [--seed S]` subcommand that emits/loads a
+synthetic CSV; idempotent (re-run leaves no duplicates — natural key is instance name);
+env mix realistic (a prod slice so prod-ritual paths get load coverage, the rest non-prod).
+No new schema — inventory tables already exist (WU-010). Keep the tiny 8-row test fixtures
+(`instances.csv`/`dev-targets.csv`) untouched; the big estate is a separate, opt-in fixture.
+**AC:**
+- [ ] Seeding N≈500 instances yields rows across every env value + ≥5 clusters; the prod
+      slice is non-empty (prod-ritual coverage) and the non-prod slice dominates.
+- [ ] Deterministic for a given seed; idempotent (a second run adds zero rows, errors none).
+- [ ] `portal seed`/`import` exits 0; a count query confirms the distribution; does NOT
+      disturb the existing small test fixtures or the golden flow.
+**Verify:** run the seed against a scratch DB, assert counts by env/cluster; `npm run
+check` green (no regression); paste the distribution into the journal.
+**Context brief:** WU-010 (internal/inventory, `portal import` idempotency), infra/fixtures/
+instances.csv + dev-targets.csv, backend/cmd/portal (subcommand wiring), migrations 0002.
+
+### WU-042 · Concurrency locks — instance TTL locks + self-target ban — M · `todo`
+The core correctness hardening. Today only the scheduler refuses a fire when a run is live
+on the instance (executor.go:118, instance-scoped, skip-visibly) — the button and chain
+paths can still launch a second operation on the SAME instance concurrently, and two
+concurrent restores (or a dump racing a restore) on one target is a real hazard on a
+500-instance estate with multiple DBAs. Generalize the overlap notion into a real lock
+enforced at `runs.Service.Start` across ALL launch paths (button, chain step, schedule),
+with a TTL so a crashed/leaked holder self-heals (symmetric with SweepOrphans, not a wedge).
+Fold two research gotchas: **#2 portal self-target ban** — refuse any op whose target is the
+portal's own DB (enforce in the inventory/runs layer); **#1 Patroni-awareness** — at minimum
+document + block a naive dump/restore against a replica (full leader/replica sequencing is
+post-MVP, route via DECISIONS.md). Guardrails/audit/ritual paths UNCHANGED — the lock is a
+new gate in front of them, not a rewrite. Decide advisory-lock vs lock-table in the SPEC
+(pg advisory locks are cheap but process-scoped; a lock row survives restarts + carries the
+TTL + is auditable — likely the lock table).
+**AC:**
+- [ ] Two concurrent Start on one instance → exactly one proceeds; the other gets a clear
+      409/conflict on the button AND chain AND schedule paths (the scheduler's existing
+      skip-visibly semantics preserved or subsumed).
+- [ ] The lock releases on terminal finalize; a holder that died is reaped after TTL so the
+      instance is never permanently wedged (test the reap).
+- [ ] A portal-self-target op is refused with a distinct error; audit records the denial.
+- [ ] Guardrails, ritual, audit attribution, and the golden flow are unchanged/green.
+**Verify:** -race contention tests (N goroutines Start same instance → 1 success + N-1
+conflict; TTL reap; self-target refusal); golden flow green; `npm run check` green.
+**Context brief:** schedule/executor.go (overlap probe :80-132), runs/service.go (Start,
+finalize, SweepOrphans), migrations head, research gotchas #1/#2 (STATE "Standing context"
++ icebox), ARCHITECTURE §concurrency; architect-implemented (concurrency-sensitive).
+
+### WU-043 · Load test — 25–50 concurrent mock dumps — M · `todo`
+The ROADMAP M4 load-test exit item, and the proof WU-042's locks scale. A harness that
+drives 25–50 concurrent dumps through MockEngine against the seeded estate (041) and
+validates: exactly-once finalize per run (WU-016 holds under contention), per-instance lock
+serialization correct (042), zero orphaned `state='running'` rows after settle, the runs
+watcher + notify + DB pool don't melt, and the scheduler boot-stampede (coalesced catch-ups
+after downtime — icebox) behaves. Findings the harness surfaces (pool sizing, stampede
+spreading) get FILED and fixed IF they threaten the pilot; the WU's own deliverable is the
+harness + a clean run + numbers, not a fix for every finding. MockEngine only (ADR-002) —
+`MockConfig.StepDelay` throttles to force overlap.
+**AC:**
+- [ ] 25–50 concurrent mock dumps across the seeded estate complete with exactly-once
+      finalize each and consistent audit rows; no lost or double finalize.
+- [ ] Per-instance operations serialize under the 042 lock (concurrent same-instance →
+      queued/conflict, never two live); cross-instance runs proceed in parallel.
+- [ ] Zero orphaned `running` rows once the harness settles; documented throughput + a DB
+      pool-size recommendation; any load-only finding filed (stampede, pool) with a verdict.
+**Verify:** the harness run pasted into the journal (counts, timing, zero-orphan assertion);
+`npm run check` green (the harness is skip-gated like the itest if it needs the dev stack).
+**Context brief:** WU-016 single-finalizer + runs watcher, config (pool size), WU-042 lock,
+engine MockConfig (StepDelay), schedule tick loop (stampede), 041 seed.
+
+### WU-044 · Maintenance & retention jobs — M · `todo`
+The periodic-sweep subsystem a long-running deployment needs, on the existing scheduler/tick
+lifecycle. Four cohesive sweeps: **(a) audit retention (1y)** — expire/archive `audit_event`
+per a documented policy (default likely archive-not-hard-delete given append-only intent —
+decide in SPEC + DECISIONS); **(b) artifact retention enforcement** — expire `standard`
+artifacts past policy from BOTH the registry and the object store (engine-side delete),
+PRESERVING `safety` (trustworthy after WU-040 item 6) — the icebox "retention ENFORCEMENT
+job"; **(c) session GC sweep** — reap expired `session` rows (TTL is read-enforced only
+today — icebox); **(d) M3-gate finding 8** — wrap dump.yml's post-`pg_dump` tasks in a
+`block:` with `always: file state=absent` so an upload/stat failure never orphans real dump
+bytes on `/artifacts` (playbook-only, cheap bundled slice). May checkpoint mid-WU between
+the Go sweeps and the playbook fix.
+**AC:**
+- [ ] Audit rows past retention handled per the documented policy; the append-only trigger
+      (0003) and audit integrity are respected (no silent mutation).
+- [ ] `standard` artifacts past policy removed from the registry AND the object store;
+      `safety` artifacts NEVER reaped; the deletion is audited.
+- [ ] Expired sessions reaped on a schedule; a live session is never reaped.
+- [ ] dump.yml orphans no bytes on a post-dump failure (block/always) — re-drilled or
+      syntax-checked; each sweep has a -race test; golden flow green.
+**Verify:** -race tests per sweep (retention boundaries, safety-preservation, session TTL);
+dump.yml `--syntax-check` EXIT:0 (+ optional live orphan drill); `npm run check` green.
+**Context brief:** SPEC-014 (notify/retention), WU-030 artifact registry + object-store
+delete (`mc rm` engine-side, ADR-004), SPEC-020 sessions, schedule tick loop, playbooks/
+dump.yml, icebox retention/GC items, docs/agent/reviews/m3-gate.md finding 8.
+
+### WU-045 · Docs-vs-reality reconciliation + cold-start + CI hardening — M · `todo`
+The ROADMAP M4 "docs-vs-reality reconciliation" exit item plus the accumulated CI/supply-
+chain debt. **Cold-start:** from a clean clone on a fresh host/container, install → migrate
+→ `npm run check` → `build:release` → run, pasted as evidence (the M0/M1 cold-start
+precedent). **Reconcile:** walk every SPEC/DECISIONS/ARCHITECTURE/STATE claim against the
+code and resolve drifts; refresh the stale demo-m1.md header ("live-verified 2026-07-08" —
+carried housekeeping); reconcile WU-004 token hex vs `docs/specs/design-brief.md`; fix
+`config.LocateDotenv`'s upward `.env` walk to stop at a repo marker + log the resolved file
+(M1-gate item 16). **CI:** add a Postgres service to check.yml so DB tests + the golden flow
+stop skipping (ADR-011 gap); pin the golangci-lint installer to v2.12.2 instead of `curl|sh`
+from HEAD (M1-gate item 14 — supply-chain); bump the GH Actions versions + fix the setup-go
+cache path. May checkpoint between the reconciliation report and the CI changes.
+**AC:**
+- [ ] Cold-start runbook passes on a fresh environment with pasted evidence (each step exit 0).
+- [ ] A reconciliation report enumerates doc/code drifts and each is resolved or filed;
+      demo-m1.md header refreshed; the `.env`-walk footgun closed.
+- [ ] CI runs DB-backed tests + the golden flow (no longer skipped); golangci pinned to
+      2.12.2; actions bumped; a CI run is green.
+**Verify:** the cold-start transcript + a green CI run link in the journal; `npm run check`
+green locally and in CI.
+**Context brief:** docs/agent/SESSION-PROTOCOL.md (cold-start), .github/workflows/check.yml,
+internal/config (LocateDotenv), docs/specs/design-brief.md + frontend/src/index.css tokens,
+icebox CI items, M1-gate items 14/16.
+
+### WU-046 · Packaging for a pilot deployment — M · `todo`
+The ROADMAP M4 exit deliverable: turn the `build:release` binary (ADR-010) into something a
+pilot operator can deploy on a fresh host and trust. A real (non-transient) **systemd unit**
+generalizing the demo unit (survives reboot; env from a file, not inline); a **config/.env
+template** documenting every required var (shape only, NO secrets — mirrors `.env.example`
+discipline); a **deploy runbook** (fresh host → migrate → running portal serving SPA+API
+with auth ON + guardrails ON + notify wired); **production-readiness hardening**: the
+break-glass mail alarm (icebox — break-glass currently alarms audit + log only, not mail)
+and explicit CookieSecure/TLS-in-front guidance (the SPEC-020 boot Warn made honest for
+pilot). A versioned release artifact. Exit: pilot-deployable build.
+**AC:**
+- [ ] Following the runbook on a fresh host yields a working portal (auth on, prod ritual on,
+      failure mail wired) from the release artifact; the systemd unit survives a reboot.
+- [ ] The `.env` template lists every required var by shape with no secret values; a missing
+      required var fails closed with a clear message.
+- [ ] Break-glass use sends a mail alarm (not just the audit action + log line); CookieSecure/
+      TLS guidance documented and the boot Warn behaves for the pilot config.
+**Verify:** the deploy runbook executed on a fresh host/container, pasted; reboot-survival
+shown; a break-glass login produces a mailpit alarm; `npm run check` green.
+**Context brief:** ADR-010 (build:release), infra/bootstrap-vm.sh + the demo systemd recipe
+(JOURNAL s16), internal/config (required-var handling), SPEC-020 (break-glass, CookieSecure
+Warn) + notify, ARCHITECTURE §deployment, `.env.example`.
+
+### WU-047 · Experiment retrospective (STRATEGY §8 metrics) — S · `todo`
+The second ROADMAP M4 exit deliverable, and the true last WU. Docs-only: write the
+AI-agent-driven-development retrospective against STRATEGY.md §8's metrics — what the harness
+rules (repo-is-memory, one-WU-per-session, verify-don't-claim, the gate) actually bought;
+the session-loss failure modes that recurred (ssh reset killing pre-checkpoint work, the
+twin-session hazard) and the mitigations that worked (tmux persistence, ps/tty twin checks,
+recover-don't-redo); the architect/implementer delegation outcomes + cost; and what to
+change for the next experiment. Ground every claim in JOURNAL evidence and the memory files.
+**AC:**
+- [ ] The retrospective is written (STRATEGY.md §8 filled or a linked `docs/agent/
+      RETROSPECTIVE.md`) and covers each §8 metric with JOURNAL-cited evidence.
+- [ ] The recurring failure modes + their mitigations are named; concrete "next time" changes
+      listed.
+**Verify:** the doc exists and each §8 metric is addressed; links resolve; `npm run check`
+green (docs-only).
+**Context brief:** docs/agent/STRATEGY.md §8, JOURNAL.md, the memory files ([[twin-session-
+hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS ADRs.
 
 ---
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
-- CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today)
-- Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`)
-- CI: pin the golangci-lint installer to the VM's v2.12.2 instead of `curl | sh` from HEAD (M1-gate item 14 — supply-chain + silent lint drift; check.yml:18)
-- config.LocateDotenv: stop the upward .env walk at a repo marker (.git/go.mod) or explicit path, and log the resolved file at startup (M1-gate item 16 — foreign-.env footgun)
+- CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today) — **→ WU-045**
+- Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`) — **→ WU-045**
+- CI: pin the golangci-lint installer to the VM's v2.12.2 instead of `curl | sh` from HEAD (M1-gate item 14 — supply-chain + silent lint drift; check.yml:18) — **→ WU-045**
+- config.LocateDotenv: stop the upward .env walk at a repo marker (.git/go.mod) or explicit path, and log the resolved file at startup (M1-gate item 16 — foreign-.env footgun) — **→ WU-045**
 - frontend test hygiene (found by WU-019 delegation agent): pre-existing React act() warning on several RunDetail tests (likely IS_REACT_ACT_ENVIRONMENT missing in src/test/setup.ts); jsdom "navigation to another Document" noise when tests click the CSV export anchor — both cosmetic, tests green
-- Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07)
+- Reconcile WU-004 token hex values vs design brief §Design system — brief now ON the VM at `docs/specs/design-brief.md` (unblocked 2026-07-07) — **→ WU-045**
 
 - Activity: date-range filter + pagination past 50 + server-side audit export (SPEC-014 deferred; client CSV caps at the view)
 - Inventory: UI/API upload + import-history screen (MVP import is `portal import` CLI — SPEC-010)
 - Inventory: Excel/.xlsx ingestion (MVP is CSV-only — SPEC-010)
-- Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too)
+- Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too) — **partial → WU-042** (block naive replica ops; full leader/replica sequencing stays post-MVP via DECISIONS)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
-- Portal self-target ban (research gotcha #2) — enforce in inventory layer when real targets exist
+- Portal self-target ban (research gotcha #2) — enforce in inventory layer when real targets exist — **→ WU-042**
 - Bulk/rolling operations (Screen 2 sticky bar); saved views
 - 5-year audit shipping to object storage; SIEM export
-- AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming)
+- AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming) — **→ WU-044**
 - AuthZ: denial-rate alarm — a spike of `authz.denied` should mail the DBA list, not sit silently in auth_event
-- AuthN: break-glass use should ALSO send a mail alarm via notify (today: alarmed audit action + log line only)
+- AuthN: break-glass use should ALSO send a mail alarm via notify (today: alarmed audit action + log line only) — **→ WU-046**
 - Role admin CLI (`portal role grant|revoke|list`) — role grants happen only at boot per auth mode today
 - Schedules UI: cron×window hint — flag when a schedule's upcoming fires fall outside the instance's maintenance window (needs window eval over future fire times)
 - Run read model: expose `window_warned` on the run API (audit-only today) so the UI can show the flag post-hoc
-- Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory)
+- Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory) — **→ WU-043**
 - Schedule-change ledger — schedule rows are mutable with no edit history; consider audit_event actions or a ledger table
-- Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work)
+- Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work) — **→ WU-044**
