@@ -120,7 +120,14 @@ func scanSchedule(row pgx.Row) (Schedule, error) {
 // Reuses the runs error vocabulary where the check is the same one Start
 // performs, so the handlers answer identically.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (Schedule, error) {
-	if _, ok := catalog.ByID(req.Operation); !ok {
+	// The launchable gate, mirroring runs.Start (SPEC-031 mini-ADR 3): a
+	// non-launchable chain step (verify/safety_dump/restore) is not a
+	// schedulable operation. A schedule can never set Internal, so a
+	// non-launchable op looks like an unknown one — same 400 as launch
+	// (restore.md behavior 5). Existence alone (ByID finds chain steps too)
+	// would write a permanently broken schedule that errors on every tick.
+	op, ok := catalog.ByID(req.Operation)
+	if !ok || !op.Launchable {
 		return Schedule{}, fmt.Errorf("%w: %q", runs.ErrUnknownOperation, req.Operation)
 	}
 	spec, err := cron.ParseStandard(req.CronSpec)

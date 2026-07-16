@@ -829,7 +829,16 @@ rather than wedging `running`; a genuinely lost job still surfaces; `npm run che
 asUnknownJob, the four non-404 error surfaces); internal/chain/driver.go + chain.go
 (Resume's halted guard, SweepOrphans); cmd/portal/main.go (sweep call site — no ticker).
 
-### WU-038 · M3-gate fix: schedule.Create launchable gate — S · `todo`
+### WU-038 · M3-gate fix: schedule.Create launchable gate — S · `done (2026-07-16, s26)`
+**Evidence:** one-line fix — `schedule.Create` now mirrors runs.Start's gate
+(`!ok || !op.Launchable` → `runs.ErrUnknownOperation`, the handler already maps to
+400 "unknown operation"), so a `POST /api/schedules` for restore/verify/safety_dump is
+refused at the door instead of writing a permanently-broken schedule. `TestCreateValidation`
+extended: all three existing-but-non-launchable ids → ErrUnknownOperation (dump still 201,
+"explode" still unknown, and the existing `count==0` assertion proves no failed create
+leaves a row). `npm run check` CHECK-EXIT:0 (golangci 0, schedule pkg ran FRESH under
+`-race` 10.3s, golden flow TestGoldenFlow PASS not-skipped, vitest 116/116). No migration,
+no UI, no seam change; Go-test-shaped, no live stack needed.
 Gate item 3 (MEDIUM). `schedule.Create` (schedule.go:123) tests catalog **existence
 only** (`catalog.ByID`, which deliberately finds non-launchable ops), so a
 `POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returns **201** where

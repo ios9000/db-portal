@@ -60,6 +60,17 @@ func TestCreateValidation(t *testing.T) {
 	})
 	require.ErrorIs(t, err, runs.ErrUnknownOperation)
 
+	// WU-038: an EXISTING but non-launchable op (a restore-chain step) is not
+	// schedulable — it looks like an unknown operation, same as the button
+	// path (restore.md behavior 5). Existence alone would have written a
+	// schedule that errors on every tick with no run and no mail.
+	for _, op := range []string{"restore", "verify", "safety_dump"} {
+		_, err = svc.Create(ctx, schedule.CreateRequest{
+			Instance: "billing-test", Operation: op, CronSpec: "* * * * *", CreatedBy: testOwner,
+		})
+		require.ErrorIs(t, err, runs.ErrUnknownOperation, "operation=%q", op)
+	}
+
 	_, err = svc.Create(ctx, createReq("nope-db", "* * * * *"))
 	require.ErrorIs(t, err, runs.ErrUnknownInstance)
 

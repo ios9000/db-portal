@@ -5,12 +5,29 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-037 DONE (s25) —
-  both HIGHs fixed.** NEXT = **WU-038 → 039 → 040**, THEN groom + start Phase 4.
+- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-038 DONE (s26) —
+  schedule.Create launchable gate.** NEXT = **WU-039 → 040**, THEN groom + start Phase 4.
   WU-036 (s21 a + s22 b) closed M3 feature-complete; the gate (s23, recovered s24)
   passed with fix WUs, NO criticals (full record `docs/agent/reviews/m3-gate.md`).
   Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓** →
-  **037 ✓** → 038 → 039 → 040 → Phase 4.
+  **037 ✓** → **038 ✓** → 039 → 040 → Phase 4.
+- **Status (s26, WU-038 DONE — schedule.Create launchable gate):** the MEDIUM
+  guardrail-honesty fix. `schedule.Create` (schedule.go) tested catalog EXISTENCE
+  only (`catalog.ByID`, which finds the non-launchable restore-chain steps too), so
+  `POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returned 201
+  where SPEC-031 behavior 5 promises 400. The guardrail HELD (executor.fire never
+  sets Internal → runs.Start rejected the fire) but the schedule was permanently,
+  silently broken: every tick → fire()'s `default:` branch → `last_fire_status='error'`,
+  no run, no chain, no mail, next_fire_at advancing forever. FIX: one line — Create now
+  mirrors runs.Start's `!op.Launchable` gate (`op, ok := catalog.ByID; if !ok ||
+  !op.Launchable → runs.ErrUnknownOperation`); the schedules handler already maps that
+  to 400 "unknown operation", so a non-launchable op is refused at the door, same as
+  the button path. `TestCreateValidation` extended to cover the three existing-but-non-
+  launchable ids (previously only the absent "explode"); the entry's `count==0`
+  assertion already proves no failed create writes a row. Gate GREEN: CHECK-EXIT:0
+  (golangci 0, schedule pkg FRESH under -race 10.3s, golden flow TestGoldenFlow PASS
+  not-skipped, vitest 116/116). No migration, no UI, no seam change. Go-test-shaped,
+  no live stack touched (dev stack still up from s22).
 - **Status (s25, WU-037 DONE — transient-error resilience):** the two M3-gate
   HIGHs are one mock-to-real root cause, fixed together — an assumption true under
   MockEngine ("any engine error == job lost") that a real adapter behind the
@@ -143,21 +160,27 @@
 
 ## Next action (be exact)
 
-1. **START WU-038** (M3-gate fix — item 3, MEDIUM; BACKLOG WU-038). One-liner
-   guardrail-honesty fix: `schedule.Create` (schedule.go:123) tests catalog
-   EXISTENCE only (`catalog.ByID`, which finds non-launchable ops), so
-   `POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returns 201
-   where SPEC-031 behavior 5 (restore.md:172-175) promises 400 — the guardrail
-   HOLDS (executor.fire never sets Internal, runs.Start rejects the fire) but the
-   schedule is permanently, silently broken (every tick → `last_fire_status='error'`,
-   no run, no mail). Fix: `schedule.Create` mirrors runs.Start's
-   `!op.Launchable && !req.Internal` gate → 400. Extend `TestCreateValidation` to
-   cover the EXISTING-but-non-launchable ids (today it only exercises the absent
-   "explode"). Go-test-shaped, no live stack. Small — architect-implement, or a
-   tight Sonnet brief. Then **039 → 040** in order (039 = restore.yml `creates:`
-   re-fetch footgun, wants a live restore drill per demo-m3.md; 040 = LOW bundle
-   parseResultLine sha/size + 0009 backfill retention_class + job_id uniqueness).
-   Land ALL before any Phase-4 WU (M1/M2 protocol). ONLY then groom + start Phase 4.
+1. **START WU-039** (M3-gate fix — item 4, MEDIUM; BACKLOG WU-039). `restore.yml`'s
+   fetch uses `creates: {{ staging_path }}` (restore.yml:65) on a DETERMINISTIC path
+   on the persistent shared `/artifacts` volume: an interrupted fetch (task timeout,
+   runner restart, killed container) leaves a partial file; the next attempt sees the
+   path exists, SKIPS the fetch, hashes the partial, and the sha256 compare fails →
+   the operator is told their GOOD backup is "tampered" — worst on the product's own
+   advertised Resume-after-halt path. Fix: don't gate the fetch on `creates:` for a
+   deterministic shared path (remove-first / unique-or-per-run temp path / always
+   re-fetch); apply the same scrutiny to dump.yml's staging if it shares the pattern.
+   **WU-039 WANTS A LIVE RESTORE DRILL** (demo-m3.md recipe) — re-check the dev stack
+   is up first (was UP at s22: mailpit/minio/pgtarget/postgres/semaphore; NOT touched
+   s23-s26). Verify: leftover partial `restore-<name>` on staging → re-fetches full +
+   verifies clean (NOT a false "tampered"); genuinely corrupt object still halts at
+   verify; `ansible-playbook --syntax-check` clean; live restore drill still passes
+   end-to-end. Then **040** (LOW bundle: parseResultLine sha/size + 0009 backfill
+   retention_class + job_id uniqueness — dev-only triggers, Go-test-shaped). Land ALL
+   before any Phase-4 WU (M1/M2 protocol). ONLY then groom + start Phase 4.
+   - WU-038 (s26) is DONE — the schedule launchable gate. If revisiting: the fix is
+     `schedule.go` Create's opening gate (`!ok || !op.Launchable`); the schedules
+     handler already maps `runs.ErrUnknownOperation` → 400 (no handler change was
+     needed). Test lives in `TestCreateValidation` (schedule_test.go).
    - WU-037 (s25) is DONE — the two HIGHs. If revisiting: the shared `backoff`
      helper is duplicated in runs/service.go + chain/driver.go (packages stay
      decoupled by design); `MaxStatusErrors`/`MaxReadErrors` are Service fields
@@ -173,8 +196,8 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - WU-037/038/040 are Go-test-shaped (may not need the live stack); WU-039 wants
-     a live restore drill. Dev stack was UP + healthy at s22
+   - WU-040 is Go-test-shaped (may not need the live stack); WU-039 wants a live
+     restore drill. Dev stack was UP + healthy at s22
      (mailpit/minio/pgtarget/postgres/semaphore) — re-check before any live work.
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
@@ -442,6 +465,20 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-16 — **WU-038 DONE (s26) — schedule.Create launchable gate**: the
+  MEDIUM guardrail-honesty fix (M3-gate item 3). `schedule.Create` tested catalog
+  EXISTENCE only, so `POST /api/schedules {operation:"restore"}` (or verify/
+  safety_dump) returned 201 where SPEC-031 promises 400 — the guardrail HELD
+  (executor.fire never sets Internal → runs.Start rejected the fire) but the
+  schedule was permanently, silently broken (every tick → `last_fire_status='error'`,
+  no run, no mail, next_fire_at advancing forever). FIX: one line — Create mirrors
+  runs.Start's `!op.Launchable` gate (`op, ok := catalog.ByID; if !ok ||
+  !op.Launchable → runs.ErrUnknownOperation`); the schedules handler already maps
+  that to 400 "unknown operation" (no handler change). `TestCreateValidation`
+  extended to the three existing-but-non-launchable ids; the `count==0` assertion
+  proves no failed create writes a row. GATE: CHECK-EXIT:0 (golangci 0, schedule
+  pkg FRESH -race 10.3s, golden flow not-skipped, vitest 116/116). No migration/
+  UI/seam change; Go-test-shaped, no live stack. Active → **WU-039**.
 - 2026-07-16 — **WU-037 DONE (s25) — transient-error resilience, both M3-gate
   HIGHs**: one mock-to-real root cause fixed in two places. `runs.Service.watch`
   now finalizes failed ONLY on `engine.ErrUnknownJob`; every other Status error is
@@ -472,36 +509,3 @@
   invariant HELD. No Go/FE change (docs-only recovery). Also s24: pre-approved all
   Bash in the gitignored `.claude/settings.local.json` (bare `Bash` allow; deny +
   ask guardrails kept). Active → **WU-037**.
-- 2026-07-15 — **WU-036 DONE (s22, slice b) → M3 FEATURE-COMPLETE**: the SAME
-  portal drives a REAL `pg_restore` of a REAL dump onto a live target through the
-  verify→safety_dump→restore chain, behind the unchanged engine seam. Open
-  question RESOLVED FIRST as spec'd (verify run = the extra-vars smoke test):
-  Semaphore forwards the task `environment` as ansible `--extra-vars` (task
-  2147483617 success, `VERIFY OK:` printed, both vars resolved) — mini-ADR 1
-  holds, fallback dropped, no code change; both mini-ADR 6 failure paths pinned
-  (no environment → preflight fails ok=0; wrong checksum → assert fails, zero
-  target contact). Bootstrap → verify=4, restore=5. REHEARSAL (release binary,
-  isolated portal :8099 + portal_drill036, semaphore engine; demo :8080 untouched
-  — same PID 2506685, healthz 200): dump pgtarget → artifact 5382 B sha 3068bc7a…
-  in minio → `DROP TABLE widget CASCADE` → POST /api/restore → chain 1
-  verify(2)/safety_dump(3)/restore(4) all success → **widget back: 4 rows,
-  ORIGINAL timestamps, ledger_totals 200/30150.00**. AC-3: the `'safety'`
-  artifact (id 2, 3912 B — smaller BECAUSE it snapshotted the post-DROP state,
-  correct) hashes 49506fd5… == its registry checksum and `pg_restore --list`s a
-  real TOC (no widget, correctly). AC-2: corrupt the object → chain 2 HALTED at
-  verify(6), steps 2+3 `run_id: null` = safety dump + restore NEVER CREATED,
-  widget still absent, mailpit 6→7 = exactly ONE "CHAIN-2 halted" mail; re-upload
-  good bytes → resume → verify(7)/safety_dump(8)/restore(9) success, widget back
-  (failed run 6 superseded, keeps history). Mock-vs-semaphore: same binary, same
-  chain, both success; only `location` differs (NULL vs `s3://…`). Secrets: all 5
-  = 0 hits across drill DB + log + 23 KB of task output (control grep proves the
-  sweep reads). MY MISTAKE (recovered, journaled): `mc cp` backup into a
-  root-owned mount failed silently as uid 1001 and my `&&` swallowed it — I
-  corrupted artifact 1 before verifying the backup, so its original bytes are
-  unrecoverable (drill data only; the bucket still holds that permanently-corrupt
-  object — harmless, no retention until M4). Redone with a host-side stdout backup
-  asserted against the registry BEFORE tampering. DELIVERED: docs/demo-m3.md (M3
-  exit evidence, 8 beats / 13.5 min ≤ the 15-min AC, rough edges named); SPEC-036
-  open question annotated RESOLVED; O-4 annotated RESOLVED in DECISIONS.md (a
-  SPEC-036 scope item slice (a) had missed). Gate CHECK-EXIT:0 (docs-only). All 3
-  AC + Verify met. Active → **M3 gate review**.
