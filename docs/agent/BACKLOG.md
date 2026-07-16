@@ -773,10 +773,110 @@ Semaphore behind the adapter. Then: multi-agent review gate (the M1/M2
 pattern) + fix WUs before any Phase-4 WU. Organizational note when reached:
 security vetting package (arch doc §8.2) becomes submittable.
 
+### M3-gate review fixes (2026-07-16, s23) — land BEFORE any Phase-4 WU
+
+> Multi-agent gate review DONE 2026-07-16 (workflow wf_49ca1969-37a, 5 Sonnet
+> reviewers, architect-verified inline — recovered + checkpointed s24 after an ssh
+> reset killed s23 pre-checkpoint): 8 findings, 8 confirmed, 0 refuted, 4 re-graded
+> down, **NO criticals — GATE PASSES with fix WUs**. Full scenarios + fix sketches:
+> `docs/agent/reviews/m3-gate.md`. Both HIGHs are the same root cause — a mock-to-real
+> transient-error assumption that was true under MockEngine and silently stopped being
+> true behind the real Semaphore seam; neither shows on the demo-m3 happy/deliberate
+> paths, both need a *transient* fault (dropped conn, proxy 5xx, DB failover). Order
+> 037 (both HIGHs) → 038 → 039 → 040. Finding 8 (staging-cleanup orphan) routed to M4.
+
+### WU-037 · M3-gate fix: transient-error resilience (Status + chain driver) — M · `todo`
+The two HIGHs (gate items 1+2), one root cause, fixed together.
+(1) `runs.Service.watch` (service.go:267-272) finalizes a run **permanently FAILED**
+on ANY `adapter.Status` error, not just `ErrUnknownJob` — under MockEngine "any error"
+== "job lost", but `SemaphoreAdapter.Status` passes connection-refused / 5xx / timeout /
+decode errors through verbatim (only 404/400 → ErrUnknownJob via `asUnknownJob`). The
+result: a false, uncorrectable FAILED with a lying "engine lost the job" message on a
+mainline flow, and — because a halted chain offers Resume — a path to re-fire `pg_restore`
+while the first is genuinely still running. Fix: only `ErrUnknownJob` → finalize-failed;
+other errors are transient → log + backoff + retry (the state-mirror UPDATE 15 lines below
+already treats a DB error as retryable — mirror that), with a bounded ceiling before giving
+up honestly. (2) `chain.drive` (driver.go:50-54, 108-112) exits the goroutine on ANY read
+error and leaves the chain `state='running'` forever: `SweepOrphans` is boot-only (no
+ticker; main.go:128), `Resume` guards `state='halted'` so a wedged running chain → 409
+forever, and no mail fires. Fix: distinguish transient read errors (retry w/ backoff) from
+fatal, AND/OR add a periodic orphan-chain sweep (not boot-only) so a wedged chain self-heals;
+consider a force-halt path. Update driver.go's rationale comment (:31-33) accordingly.
+**Verify:** a stubbed adapter returning a non-ErrUnknownJob error on Status does NOT
+permanently fail the run (retries, then recovers when Status succeeds); ErrUnknownJob still
+finalizes failed; a chain driver hitting a transient read error self-heals (or is swept)
+rather than wedging `running`; a genuinely lost job still surfaces; `npm run check` green.
+**Context brief:** docs/agent/reviews/m3-gate.md items 1+2; internal/runs/service.go
+(watch/finalize + the mirror UPDATE asymmetry); internal/engine/semaphore.go (Status,
+asUnknownJob, the four non-404 error surfaces); internal/chain/driver.go + chain.go
+(Resume's halted guard, SweepOrphans); cmd/portal/main.go (sweep call site — no ticker).
+
+### WU-038 · M3-gate fix: schedule.Create launchable gate — S · `todo`
+Gate item 3 (MEDIUM). `schedule.Create` (schedule.go:123) tests catalog **existence
+only** (`catalog.ByID`, which deliberately finds non-launchable ops), so a
+`POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returns **201** where
+SPEC-031 behavior 5 (restore.md:172-175, "likewise POST /api/schedules") promises **400**.
+The guardrail itself HOLDS (executor.fire never sets Internal, so runs.Start rejects the
+fire) — but the schedule is **permanently, silently broken**: every tick hits fire()'s
+`default:` branch → `last_fire_status='error'`, no run, no chain, **no mail**, `next_fire_at`
+advancing forever. Fix: `schedule.Create` rejects a non-launchable operation up front (mirror
+runs.Start's `!op.Launchable && !req.Internal` gate) → 400 unknown/again-non-launchable op.
+**Verify:** `POST /api/schedules` with an EXISTING non-launchable id (restore/verify/
+safety_dump) → 400, no row written; a launchable op (dump) still 201; extend
+schedule_test.go's `TestCreateValidation` to cover the existing-but-non-launchable ids
+(today it only exercises the absent id "explode"); `npm run check` green.
+**Context brief:** docs/agent/reviews/m3-gate.md item 3; internal/schedule/schedule.go:123
++ executor.go:148/166-168; internal/catalog/catalog.go (ByID vs All / Launchable);
+internal/runs/service.go:126 (the canonical gate); docs/specs/restore.md:172-175.
+
+### WU-039 · M3-gate fix: restore.yml re-fetch footgun — S · `todo`
+Gate item 4 (MEDIUM). `restore.yml`'s fetch uses `creates: {{ staging_path }}`
+(restore.yml:65) on a **deterministic path on the persistent shared `/artifacts` volume**.
+An interrupted fetch (task timeout, runner restart, killed container) leaves a partial file;
+the next attempt sees the path exists, **skips the fetch**, hashes the partial file, and the
+sha256 compare fails → the operator is told **their good backup is "tampered"** — worst on
+the product's own advertised Resume-after-halt recovery path (teaching a DBA to distrust a
+valid backup mid-incident). Fix: don't gate the fetch on `creates:` for a deterministic
+shared path — remove any leftover first / fetch to a unique or per-run temp path / always
+re-fetch, so a partial leftover can never masquerade as a checksum mismatch. Apply the same
+scrutiny to dump.yml's staging if it shares the pattern.
+**Verify:** simulate a leftover partial `restore-<name>` file on the staging volume, run the
+restore path → it re-fetches the full object and verifies clean (NOT a false "tampered"
+diagnosis); a genuinely corrupt object still halts at verify; `ansible-playbook
+--syntax-check` clean; a live restore drill (demo-m3.md recipe) still passes end-to-end.
+**Context brief:** docs/agent/reviews/m3-gate.md item 4; playbooks/restore.yml (fetch task
++ staging_path + the mismatch message); playbooks/dump.yml (staging); STATE note "the
+artifacts volume is STAGING ONLY now"; docs/demo-m3.md (drill recipe).
+
+### WU-040 · M3-gate fix: LOW bundle (parse/backfill/job_id) — S · `todo`
+The three re-graded-down LOWs (gate items 5, 6, 7) — real, cheap, each needs a dev-only
+trigger or has no consumer yet (M1 precedent: the low bundle rode one S WU). (5)
+`parseResultLine` (semaphore.go:209-212) validates `Name` but not `SHA256`/`SizeBytes`, so a
+result line with a name but no sha256 registers an **empty-checksum** artifact (harmless —
+verify.yml fail-closes on it — but a dead un-restorable registry row); reject empty sha256
+(and non-positive size) → nil, run still succeeds. (6) migration 0009's backfill
+(0009_artifact_registry.sql:26-34) omits `retention_class`, so a `goose down`→`up` walk on a
+DB holding safety artifacts silently reclassifies every `'safety'` row as `'standard'`; derive
+the class in the backfill by joining `run.operation` (`'safety'` when `operation='safety_dump'`).
+(7) `job_id` is a bare `text` (0003_runs_audit.sql:14) with no uniqueness — add a partial
+`UNIQUE (job_id) WHERE job_id IS NOT NULL` (PG allows multiple NULLs, so queued runs are
+unaffected) to harden ReconcileByJobID against a reused id after an engine BoltDB wipe.
+**Verify:** a result line with name but empty sha256 registers NO artifact (run still
+success); an up→down→up migration walk preserves `'safety'` classification; the job_id
+constraint rejects a duplicate non-null id and permits multiple NULLs; new migration walks
+clean both directions; `npm run check` green.
+**Context brief:** docs/agent/reviews/m3-gate.md items 5, 6, 7; internal/engine/semaphore.go:
+209-212; internal/db/migrations/0009_artifact_registry.sql + 0003_runs_audit.sql;
+playbooks/verify.yml:37 (the fail-closed checksum-length assert that makes item 5 a LOW).
+
 ## Phase 4 — Hardening (M4) — groom at M3 close
 
 Concurrency/locking (cluster/instance TTL locks), load test (25–50 concurrent mock dumps),
 staging seed, retention job (1y audit), cold-start + docs reconciliation audit, packaging.
+M3-gate finding 8 (docs/agent/reviews/m3-gate.md): dump.yml's best-effort staging `rm` sits
+AFTER the `mc cp`/`mc stat`, so any failure after `pg_dump` orphans the real dump bytes on
+the shared `/artifacts` volume forever (unbounded growth) — fix when M4 touches retention:
+wrap the post-dump tasks in `block:` with an `always: file state=absent`.
 
 ---
 
