@@ -126,6 +126,13 @@ type Service struct {
 	// first use (tests use ~1ms).
 	PollInterval time.Duration
 
+	// MaxReadErrors bounds how many consecutive TRANSIENT read failures the
+	// driver tolerates on any of its DB polls before giving up honestly —
+	// halting the chain (which notifies) rather than silently wedging it
+	// 'running' with no self-heal short of a restart (WU-037 / m3-gate
+	// finding 2). Set before first use.
+	MaxReadErrors int
+
 	// Notifier, when non-nil, is told about halts after the guarded
 	// transition commits. Best-effort: errors are logged, never propagated.
 	// Set before first use.
@@ -135,7 +142,10 @@ type Service struct {
 }
 
 func New(pool *pgxpool.Pool, r Runs, log *slog.Logger) *Service {
-	return &Service{pool: pool, runs: r, log: log, PollInterval: 500 * time.Millisecond}
+	return &Service{
+		pool: pool, runs: r, log: log,
+		PollInterval: 500 * time.Millisecond, MaxReadErrors: defaultMaxReadErrors,
+	}
 }
 
 // Wait blocks until every driver and notify goroutine has finished. Test

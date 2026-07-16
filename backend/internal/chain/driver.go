@@ -23,33 +23,45 @@ type driveStep struct {
 	runState  *string
 }
 
+// defaultMaxReadErrors is the driver's tolerance for consecutive transient DB
+// read failures before an honest give-up (WU-037). Backing off toward
+// readBackoffCap, it spans a multi-minute portal-DB blip/failover so a chain
+// rides through one, bounded so a sustained outage self-halts (with mail +
+// resume) instead of wedging 'running' forever.
+const defaultMaxReadErrors = 30
+
+// readBackoffCap ceilings the driver's exponential retry delay during an outage.
+const readBackoffCap = 15 * time.Second
+
 // drive advances one chain to success or halt: fire the current step
 // through runs.Start, watch its run to terminal, repeat (SPEC-032 mini-ADR
 // 6 — create and resume share this loop; mover is whoever set THIS pass in
 // motion, so step runs audit as chain:<creator> or chain:<resumer>).
 // Fire-time errors halt visibly instead of surfacing to a caller — the
-// scheduler's last_fire_status='error' posture. DB errors exit the loop and
-// leave the chain `running` for the boot sweep to repair; there is no safe
-// in-process retry that can't also fail.
+// scheduler's last_fire_status='error' posture. A transient DB read error is
+// retried with backoff (WU-037): under a real deployment the portal DB can
+// blip or fail over mid-chain, and the boot sweep is boot-ONLY (no ticker) —
+// so exiting the loop on the first read error left the chain wedged 'running'
+// with no alert and no resume path (Resume guards state='halted'); m3-gate
+// finding 2. When retries are exhausted the driver halts the chain honestly
+// (which notifies and re-enables Resume), never a silent exit. A crash still
+// leaves the chain for the boot sweep — that path is unchanged.
 func (s *Service) drive(chainID int64, mover string) {
 	defer s.wg.Done()
 	ctx := context.Background() // outlives the creating/resuming request
 
-	var instance, confirm string
-	var reason *string
-	err := s.pool.QueryRow(ctx, `
-		SELECT i.name, c.confirm, c.reason
-		FROM chain c JOIN instance i ON i.id = c.instance_id
-		WHERE c.id = $1`, chainID).Scan(&instance, &confirm, &reason)
+	instance, confirm, reason, err := s.loadChain(ctx, chainID)
 	if err != nil {
-		s.log.Error("chain: driver load failed", "chain", chainID, "err", err.Error())
+		s.log.Error("chain: driver load failed after retries, halting", "chain", chainID, "err", err.Error())
+		s.haltLogged(ctx, chainID)
 		return
 	}
 
 	for {
-		step, status, err := s.next(ctx, chainID)
+		step, status, err := s.nextRetry(ctx, chainID)
 		if err != nil {
-			s.log.Error("chain: next step lookup failed", "chain", chainID, "err", err.Error())
+			s.log.Error("chain: next step lookup failed after retries, halting", "chain", chainID, "err", err.Error())
+			s.haltLogged(ctx, chainID)
 			return
 		}
 		if status == driveStopped {
@@ -104,22 +116,94 @@ func (s *Service) drive(chainID int64, mover string) {
 			runID = run.ID
 		}
 
-		for {
-			run, err := s.runs.Get(ctx, runID)
-			if err != nil {
-				s.log.Error("chain: step watch failed", "chain", chainID, "run", runID, "err", err.Error())
-				return
-			}
-			if runTerminal(run.State) {
-				if run.State != runSuccess {
-					s.haltLogged(ctx, chainID)
-					return
-				}
-				break // next step
-			}
-			time.Sleep(s.PollInterval)
+		runState, err := s.watchRun(ctx, runID)
+		if err != nil {
+			s.log.Error("chain: step watch failed after retries, halting", "chain", chainID, "run", runID, "err", err.Error())
+			s.haltLogged(ctx, chainID)
+			return
+		}
+		if runState != runSuccess {
+			s.haltLogged(ctx, chainID)
+			return
 		}
 	}
+}
+
+// loadChain reads the driver's per-chain constants (target, stored ritual
+// confirm, reason), retrying transient DB errors with backoff up to
+// MaxReadErrors (WU-037).
+func (s *Service) loadChain(ctx context.Context, chainID int64) (instance, confirm string, reason *string, err error) {
+	for attempt := 1; ; attempt++ {
+		err = s.pool.QueryRow(ctx, `
+			SELECT i.name, c.confirm, c.reason
+			FROM chain c JOIN instance i ON i.id = c.instance_id
+			WHERE c.id = $1`, chainID).Scan(&instance, &confirm, &reason)
+		if err == nil || attempt >= s.MaxReadErrors {
+			return instance, confirm, reason, err
+		}
+		s.log.Warn("chain: driver load failed, retrying", "chain", chainID, "attempt", attempt, "err", err.Error())
+		time.Sleep(backoff(s.PollInterval, readBackoffCap, attempt))
+	}
+}
+
+// nextRetry wraps next() with the same transient-read tolerance: a DB error
+// (not a driveStopped/driveComplete verdict, which carry a nil error) retries
+// with backoff before the driver gives up and halts (WU-037).
+func (s *Service) nextRetry(ctx context.Context, chainID int64) (driveStep, driveStatus, error) {
+	for attempt := 1; ; attempt++ {
+		step, status, err := s.next(ctx, chainID)
+		if err == nil {
+			return step, status, nil
+		}
+		if attempt >= s.MaxReadErrors {
+			return driveStep{}, driveStopped, err
+		}
+		s.log.Warn("chain: next step lookup failed, retrying", "chain", chainID, "attempt", attempt, "err", err.Error())
+		time.Sleep(backoff(s.PollInterval, readBackoffCap, attempt))
+	}
+}
+
+// watchRun polls one step's run to a terminal state, returning that state. A
+// transient read error retries with backoff (a successful read resets the
+// counter, so blips don't accumulate across a long step); MaxReadErrors
+// consecutive failures return the error so the driver halts honestly (WU-037).
+func (s *Service) watchRun(ctx context.Context, runID int64) (string, error) {
+	errs := 0
+	for {
+		run, err := s.runs.Get(ctx, runID)
+		if err != nil {
+			errs++
+			if errs >= s.MaxReadErrors {
+				return "", err
+			}
+			s.log.Warn("chain: step watch read failed, retrying", "run", runID, "attempt", errs, "err", err.Error())
+			time.Sleep(backoff(s.PollInterval, readBackoffCap, errs))
+			continue
+		}
+		errs = 0
+		if runTerminal(run.State) {
+			return run.State, nil
+		}
+		time.Sleep(s.PollInterval)
+	}
+}
+
+// backoff returns base, doubled once per prior attempt, ceilinged at limit —
+// the retry cadence for transient reads (WU-037). attempt is 1-based (attempt
+// 1 waits base). Overflow-safe: it returns limit as soon as the doubling
+// reaches it. (A twin of runs.backoff; the packages stay decoupled by design.)
+func backoff(base, limit time.Duration, attempt int) time.Duration {
+	d := base
+	for i := 1; i < attempt; i++ {
+		if d >= limit {
+			return limit
+		}
+		d *= 2
+	}
+	if d > limit {
+		return limit
+	}
+	return d
 }
 
 // driveStatus is next()'s verdict on the chain's advance.

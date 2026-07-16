@@ -64,6 +64,14 @@ type Service struct {
 	// first use (tests use ~1ms; default suits the dev mock).
 	PollInterval time.Duration
 
+	// MaxStatusErrors bounds how many consecutive TRANSIENT engine Status
+	// failures the watcher tolerates before giving up honestly (finalize
+	// failed with an accurate message). A real adapter's Status returns
+	// conn-refused / 5xx / timeout / decode errors that MockEngine never
+	// did (WU-037 / m3-gate finding 1); those are retried with backoff, not
+	// mistaken for a permanent "job lost". Set before first use.
+	MaxStatusErrors int
+
 	// Notifier, when non-nil, is told about failed/canceled runs after
 	// they finalize. Best-effort: errors are logged, never propagated.
 	// Set before first use.
@@ -83,7 +91,10 @@ type Service struct {
 }
 
 func NewService(pool *pgxpool.Pool, registry *engine.Registry, log *slog.Logger) *Service {
-	return &Service{pool: pool, registry: registry, log: log, PollInterval: 500 * time.Millisecond}
+	return &Service{
+		pool: pool, registry: registry, log: log,
+		PollInterval: 500 * time.Millisecond, MaxStatusErrors: defaultMaxStatusErrors,
+	}
 }
 
 // Wait blocks until every watcher goroutine has finished. Test helper;
@@ -257,19 +268,56 @@ func (s *Service) recordJobID(ctx context.Context, runID int64, jobID engine.Job
 	return err
 }
 
+// defaultMaxStatusErrors is the watcher's tolerance for consecutive transient
+// engine Status failures before an honest give-up (WU-037). With the semaphore
+// poll cadence (3s) backing off toward statusBackoffCap, this spans a
+// multi-minute engine/proxy outage — long enough that a brief blip or failover
+// never falsely fails a run, bounded so a genuinely unreachable engine still
+// resolves the run rather than watching forever.
+const defaultMaxStatusErrors = 30
+
+// statusBackoffCap ceilings the exponential retry delay during an outage so the
+// watcher keeps probing often enough to notice recovery.
+const statusBackoffCap = 30 * time.Second
+
 // watch polls the engine until the job is terminal, mirroring state into
 // the run row, then finalizes (run + audit `run.finished`).
 func (s *Service) watch(runID int64, adapter engine.Adapter, jobID engine.JobID) {
 	defer s.wg.Done()
 	ctx := context.Background() // outlives the submitting request
 
+	statusErrs := 0
 	for {
 		st, err := adapter.Status(ctx, jobID)
 		if err != nil {
-			s.finalizeLogged(ctx, runID, string(engine.StateFailed),
-				"engine lost the job: "+err.Error(), nil, nil, nil)
-			return
+			// ErrUnknownJob is a permanent, correct failure — the job the
+			// engine genuinely no longer knows (the mock's ONLY error, and a
+			// real adapter's 404/400). Any OTHER error is transient
+			// (conn-refused, a 5xx, a timeout, a decode failure): under
+			// MockEngine "any error == job lost" held, but a real engine behind
+			// the unchanged seam turned a single blip into a FALSE, permanent,
+			// uncorrectable FAILED with a lying "engine lost the job" message
+			// (m3-gate finding 1). Retry those with backoff — mirroring the
+			// state-mirror UPDATE below, which already tolerates a DB error —
+			// giving up honestly only after a sustained outage.
+			if errors.Is(err, engine.ErrUnknownJob) {
+				s.finalizeLogged(ctx, runID, string(engine.StateFailed),
+					"engine lost the job: "+err.Error(), nil, nil, nil)
+				return
+			}
+			statusErrs++
+			if statusErrs >= s.MaxStatusErrors {
+				s.finalizeLogged(ctx, runID, string(engine.StateFailed),
+					fmt.Sprintf("engine status unavailable after %d attempts: %s", statusErrs, err.Error()),
+					nil, nil, nil)
+				return
+			}
+			s.log.Warn("run status poll failed, retrying",
+				"run", runID, "attempt", statusErrs, "err", err.Error())
+			time.Sleep(backoff(s.PollInterval, statusBackoffCap, statusErrs))
+			continue
 		}
+		statusErrs = 0 // a reachable engine resets the outage counter
 		if st.State.Terminal() {
 			s.finalizeLogged(ctx, runID, string(st.State), st.Error,
 				timePtr(st.Started), timePtr(st.Finished), st.Artifact)
@@ -503,4 +551,22 @@ func timePtr(t time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// backoff returns base, doubled once per prior attempt, ceilinged at limit —
+// the retry cadence for transient engine errors (WU-037). attempt is 1-based
+// (attempt 1 waits base). Overflow-safe: it returns limit as soon as the
+// doubling reaches it.
+func backoff(base, limit time.Duration, attempt int) time.Duration {
+	d := base
+	for i := 1; i < attempt; i++ {
+		if d >= limit {
+			return limit
+		}
+		d *= 2
+	}
+	if d > limit {
+		return limit
+	}
+	return d
 }

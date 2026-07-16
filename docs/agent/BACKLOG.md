@@ -785,7 +785,25 @@ security vetting package (arch doc §8.2) becomes submittable.
 > paths, both need a *transient* fault (dropped conn, proxy 5xx, DB failover). Order
 > 037 (both HIGHs) → 038 → 039 → 040. Finding 8 (staging-cleanup orphan) routed to M4.
 
-### WU-037 · M3-gate fix: transient-error resilience (Status + chain driver) — M · `todo`
+### WU-037 · M3-gate fix: transient-error resilience (Status + chain driver) — M · `done (2026-07-16, s25)`
+**Evidence:** `npm run check` CHECK-EXIT:0 (golangci 0 issues, format clean, go test
+-race all pkgs incl. golden flow TestGoldenFlow PASS not-skipped, vitest 116/116).
+Five new -race tests drive the real watch/drive goroutines with injected transient
+errors: (runs) `TestWatchRetriesTransientStatusError` — a non-ErrUnknownJob Status
+error retries then recovers to success (not a false FAILED); `TestWatchUnknownJobFinalizesFailed`
+— ErrUnknownJob still finalizes failed, one poll, honest "engine lost the job";
+`TestWatchGivesUpAfterSustainedOutage` — a sustained outage finalizes failed HONESTLY
+("engine status unavailable after N attempts", NEVER "engine lost the job"), exactly at
+the ceiling. (chain) `TestDriveRetriesTransientRunRead` — a transient step-run read
+self-heals to success rather than wedging 'running'; `TestDriveHaltsOnSustainedReadOutage`
+— a sustained read outage halts the chain honestly (one mail) and is resumable (leg 2/3
+of finding 2 closed). Fix: `watch()` treats only ErrUnknownJob as fatal, every other
+error transient (bounded retry + backoff via new `MaxStatusErrors`/`backoff`); `chain.drive`
+retries all three DB reads (load/next/step-watch) up to `MaxReadErrors`, then halts+notifies
+instead of silently exiting — so a wedged 'running' can't survive a blip, and Resume works.
+NO periodic sweep added (chose bounded-retry-then-halt: self-halts promptly, symmetric with
+the watcher, no ticker/lifecycle surface; boot sweep still covers process death). No UI/migration.
+
 The two HIGHs (gate items 1+2), one root cause, fixed together.
 (1) `runs.Service.watch` (service.go:267-272) finalizes a run **permanently FAILED**
 on ANY `adapter.Status` error, not just `ErrUnknownJob` — under MockEngine "any error"

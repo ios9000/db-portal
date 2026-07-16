@@ -5,13 +5,33 @@
 
 ## Now
 
-- **Active:** PHASE 3 (M3) — **M3 GATE REVIEW DONE (s23, recovered + checkpointed
-  s24): GATE PASSES with fix WUs, NO criticals.** NEXT = land the fix WUs
-  **037 → 038 → 039 → 040** (filed in BACKLOG; full record
-  `docs/agent/reviews/m3-gate.md`), THEN groom + start Phase 4. WU-036 (s21 a +
-  s22 b) closed M3 feature-complete; the gate was the last thing between M3 and
-  Phase 4. Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓**
-  → 037 → 038 → 039 → 040 → Phase 4.
+- **Active:** PHASE 3 (M3) — **M3 GATE PASSED; fix WUs landing. WU-037 DONE (s25) —
+  both HIGHs fixed.** NEXT = **WU-038 → 039 → 040**, THEN groom + start Phase 4.
+  WU-036 (s21 a + s22 b) closed M3 feature-complete; the gate (s23, recovered s24)
+  passed with fix WUs, NO criticals (full record `docs/agent/reviews/m3-gate.md`).
+  Execution order 030 → 032 → 031 → 033 → 034 → 035 → 036 → **M3 gate ✓** →
+  **037 ✓** → 038 → 039 → 040 → Phase 4.
+- **Status (s25, WU-037 DONE — transient-error resilience):** the two M3-gate
+  HIGHs are one mock-to-real root cause, fixed together — an assumption true under
+  MockEngine ("any engine error == job lost") that a real adapter behind the
+  unchanged seam quietly broke. (1) `runs.Service.watch` (service.go) now treats
+  ONLY `engine.ErrUnknownJob` as a fatal finalize-failed; every other Status error
+  (conn-refused / 5xx / timeout / decode) is transient → bounded retry with
+  exponential backoff (new field `MaxStatusErrors` default 30, cap 30s) then an
+  HONEST give-up ("engine status unavailable after N attempts", never the old lying
+  "engine lost the job"). The "engine lost the job" message now means EXACTLY a lost
+  job. (2) `chain.drive` (driver.go) no longer exits its goroutine on the first DB
+  read error and wedges the chain `state='running'` forever — all three reads (load
+  / `next()` / step-watch) retry via `loadChain`/`nextRetry`/`watchRun` up to
+  `MaxReadErrors` (default 30, cap 15s), then **halt + notify** (Resume works,
+  the DBA is mailed) instead of a silent exit. Chose bounded-retry-then-halt over a
+  periodic sweep (self-halts promptly, symmetric with the watcher, no ticker/lifecycle
+  surface added to main.go; the boot sweep still covers process death — main.go
+  UNCHANGED). 5 new -race tests drive the real goroutines with injected transient
+  errors (2 runs recover/give-up, 1 ErrUnknownJob, 2 chain self-heal/honest-halt).
+  Gate GREEN: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, golden flow
+  TestGoldenFlow PASS not-skipped, vitest 116/116). No UI, no migration, no seam
+  change. Dev stack still up (mailpit/postgres 9d, minio/pgtarget/semaphore 3-4d).
 - **Status (s24, M3 GATE RECOVERED + CHECKPOINTED):** s23 (session `36caf224`,
   today 2026-07-16) ran the multi-agent M3 gate — workflow `wf_49ca1969-37a`, 5
   Sonnet reviewers, 605k tok / 205 calls / ~19.4 min, findings verified INLINE by
@@ -123,22 +143,25 @@
 
 ## Next action (be exact)
 
-1. **START WU-037** (M3-gate fix — the two HIGHs; BACKLOG WU-037 +
-   `docs/agent/reviews/m3-gate.md` items 1+2). ONE root cause in two places, a
-   mock-to-real transient-error assumption: (1) `runs.Service.watch`
-   (service.go:267-272) finalizes a run **permanently FAILED** on ANY
-   `adapter.Status` error — should be `ErrUnknownJob` only; treat transient
-   conn-refused / 5xx / timeout / decode as retryable (the state-mirror UPDATE 15
-   lines below already does), bounded before an honest give-up. (2) `chain.drive`
-   (driver.go:50-54, 108-112) wedges a chain `state='running'` forever on any
-   transient read error — the sweep is boot-only (main.go:128, no ticker), Resume
-   guards `state='halted'` → 409 forever, no mail. Add transient/fatal
-   discrimination and/or a periodic orphan-chain sweep; fix the lying "engine lost
-   the job" message. **Architect-implement** (concurrency + lifecycle + a
-   false-failure guardrail — not delegation material). Then **038 → 039 → 040** in
-   order (038 = schedule.Create launchable gate; 039 = restore.yml `creates:`
-   re-fetch footgun; 040 = LOW bundle parse/backfill/job_id). Land ALL before any
-   Phase-4 WU (M1/M2 protocol). ONLY then groom + start Phase 4.
+1. **START WU-038** (M3-gate fix — item 3, MEDIUM; BACKLOG WU-038). One-liner
+   guardrail-honesty fix: `schedule.Create` (schedule.go:123) tests catalog
+   EXISTENCE only (`catalog.ByID`, which finds non-launchable ops), so
+   `POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returns 201
+   where SPEC-031 behavior 5 (restore.md:172-175) promises 400 — the guardrail
+   HOLDS (executor.fire never sets Internal, runs.Start rejects the fire) but the
+   schedule is permanently, silently broken (every tick → `last_fire_status='error'`,
+   no run, no mail). Fix: `schedule.Create` mirrors runs.Start's
+   `!op.Launchable && !req.Internal` gate → 400. Extend `TestCreateValidation` to
+   cover the EXISTING-but-non-launchable ids (today it only exercises the absent
+   "explode"). Go-test-shaped, no live stack. Small — architect-implement, or a
+   tight Sonnet brief. Then **039 → 040** in order (039 = restore.yml `creates:`
+   re-fetch footgun, wants a live restore drill per demo-m3.md; 040 = LOW bundle
+   parseResultLine sha/size + 0009 backfill retention_class + job_id uniqueness).
+   Land ALL before any Phase-4 WU (M1/M2 protocol). ONLY then groom + start Phase 4.
+   - WU-037 (s25) is DONE — the two HIGHs. If revisiting: the shared `backoff`
+     helper is duplicated in runs/service.go + chain/driver.go (packages stay
+     decoupled by design); `MaxStatusErrors`/`MaxReadErrors` are Service fields
+     tests dial low for fast give-up.
    - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
      package** (ARCHITECTURE §8.2) becomes submittable at M3 exit.
    - Dev facts carried: semaphore project 1, templates **dump:3, verify:4,
@@ -419,6 +442,20 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-16 — **WU-037 DONE (s25) — transient-error resilience, both M3-gate
+  HIGHs**: one mock-to-real root cause fixed in two places. `runs.Service.watch`
+  now finalizes failed ONLY on `engine.ErrUnknownJob`; every other Status error is
+  transient → bounded retry+backoff (`MaxStatusErrors`, cap 30s) then an honest
+  give-up ("engine status unavailable after N attempts"), killing the lying "engine
+  lost the job" on every blip. `chain.drive` retries all three DB reads
+  (load/next/step-watch) up to `MaxReadErrors` (cap 15s) then **halts + notifies**
+  rather than silently exiting and wedging the chain `running` forever (Resume works,
+  DBA mailed). Chose bounded-retry-then-halt over a periodic sweep (self-halts
+  promptly, symmetric with the watcher, main.go UNCHANGED; boot sweep still covers
+  process death). 5 new -race tests drive the real watch/drive goroutines with
+  injected transient errors. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs,
+  golden flow not-skipped, vitest 116/116). No UI/migration/seam change. Active →
+  **WU-038**.
 - 2026-07-16 — **M3 GATE PASSED — recovered s23's uncommitted review (s24)**:
   session `36caf224` (s23, today) ran the multi-agent M3 gate — workflow
   `wf_49ca1969-37a`, 5 Sonnet reviewers, 605k tok / ~19.4 min, architect-verified
@@ -468,16 +505,3 @@
   open question annotated RESOLVED; O-4 annotated RESOLVED in DECISIONS.md (a
   SPEC-036 scope item slice (a) had missed). Gate CHECK-EXIT:0 (docs-only). All 3
   AC + Verify met. Active → **M3 gate review**.
-- 2026-07-15 — WU-036 slice (a) CHECKPOINTED (s22, bookkeeping recovery, no new
-  code): s21 (2026-07-14) committed slice (a) as 868425a and was then killed by
-  an **ssh connection reset** before checkpointing — no STATE/JOURNAL entry, the
-  commit unpushed. s22 found the tree CLEAN (no stash, no wip branch) and no
-  surviving twin (`ps` + own-ancestry trace, pts/0 = me — [[twin-session-hazard]]
-  drill). Did NOT trust the commit message: re-ran the gate → CHECK-EXIT:0
-  (vitest 116/116 fresh, Go pkgs cached — tree unchanged since 868425a), and
-  re-ran `ansible-playbook --syntax-check` on verify/restore/dump.yml in
-  `dbportal-semaphore:v2.17.39-pg16` → EXIT:0 each. Wrote the missing STATE +
-  JOURNAL entries, pushed main → origin. (Session also opened with a request to
-  read `p:\projects\db-portal\auto_proof.txt` — NOT readable from the VM: `P:\`
-  is the workstation, no mount, filesystem-wide `find` found nothing; user said
-  ignore it.) Slice (b) — the live drill + demo-m3.md + the 3 AC — remains.
