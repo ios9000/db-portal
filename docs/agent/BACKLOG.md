@@ -999,7 +999,7 @@ chain.Create for a restore step on k8s_patroni (ErrPatroniRestore); both audited
 `guardrail.denied` on auth_event (0012 extends the CHECK). ADR-012 records the deferral of
 full Patroni sequencing. Scheduler keeps its probe + maps ErrInstanceLocked → skipped.
 
-### WU-043 · Load test — 25–50 concurrent mock dumps — M · `todo`
+### WU-043 · Load test — 25–50 concurrent mock dumps — M · `done (2026-07-17, s29; SPEC-043 = docs/specs/load-test.md)`
 The ROADMAP M4 load-test exit item, and the proof WU-042's locks scale. A harness that
 drives 25–50 concurrent dumps through MockEngine against the seeded estate (041) and
 validates: exactly-once finalize per run (WU-016 holds under contention), per-instance lock
@@ -1009,17 +1009,37 @@ after downtime — icebox) behaves. Findings the harness surfaces (pool sizing, 
 spreading) get FILED and fixed IF they threaten the pilot; the WU's own deliverable is the
 harness + a clean run + numbers, not a fix for every finding. MockEngine only (ADR-002) —
 `MockConfig.StepDelay` throttles to force overlap.
-**AC:**
-- [ ] 25–50 concurrent mock dumps across the seeded estate complete with exactly-once
-      finalize each and consistent audit rows; no lost or double finalize.
-- [ ] Per-instance operations serialize under the 042 lock (concurrent same-instance →
-      queued/conflict, never two live); cross-instance runs proceed in parallel.
-- [ ] Zero orphaned `running` rows once the harness settles; documented throughput + a DB
+**AC:** (all met — s29; skip-gated Go harness + a live 500-instance/50-concurrent drill)
+- [x] 25–50 concurrent mock dumps across the seeded estate complete with exactly-once
+      finalize each and consistent audit rows; no lost or double finalize. (B1: 50
+      distinct-instance dumps → 50 success, each exactly one `run.submitted` + one
+      `run.finished`; B3 mixed batch idem.)
+- [x] Per-instance operations serialize under the 042 lock (concurrent same-instance →
+      queued/conflict, never two live); cross-instance runs proceed in parallel. (B2: 40 at
+      one instance → 1 win + 39 `ErrInstanceLocked`, 1 run row; B1 peak concurrency 50/50 —
+      full cross-instance parallelism from committed timestamps.)
+- [x] Zero orphaned `running` rows once the harness settles; documented throughput + a DB
       pool-size recommendation; any load-only finding filed (stampede, pool) with a verdict.
+      (0 orphans + 0 leaked locks every scenario; drill ≈386–406 runs/s; F1 pool + F2
+      stampede filed with verdicts in SPEC-043 + icebox.)
 **Verify:** the harness run pasted into the journal (counts, timing, zero-orphan assertion);
-`npm run check` green (the harness is skip-gated like the itest if it needs the dev stack).
+`npm run check` green (the harness is skip-gated like the itest if it needs the dev stack). — DONE.
 **Context brief:** WU-016 single-finalizer + runs watcher, config (pool size), WU-042 lock,
 engine MockConfig (StepDelay), schedule tick loop (stampede), 041 seed.
+**How built:** a skip-gated Go harness driving the REAL `runs.Service` over MockEngine on a
+scratch DB seeded with `inventory.GenerateEstate` (WU-041), so it joins `go test -race ./...`
+(runs on the VM, skips in CI) — no new binary/lifecycle (mini-ADR 1). `runs/load_test.go`:
+B1 (50 distinct instances → all succeed, exactly-once, peak-concurrency proof from committed
+started/finished timestamps, not a racy live sample), B2 (40 at one instance → 1+39 conflict,
+lock frees on finalize), B3 (20×3 mixed → per-instance 1 win + K-1 conflict, global
+exactly-once + zero-orphan). `schedule/stampede_test.go` B4: 25 due schedules, ONE sequential
+`fireDue`, all fire, zero orphans. `PORTAL_LOADTEST_INSTANCES` env grows the estate for a
+pilot-scale drill (500) with the same committed code. F1 (default pgxpool `max(4,NumCPU)`
+adequate — conns held only per-tx/per-poll, 50 dumps overlapped fully without exhaustion; an
+explicit `PORTAL_DB_MAX_CONNS` floor is a WU-046 nice-to-have) and F2 (the sequential
+`fireDue` self-rate-limits — no stampede spreading needed for the pilot) both filed with
+verdicts. No migration, no API/UI, no seam change; MockEngine + service code UNCHANGED (the
+WU is the harness, not a fix).
 
 ### WU-044 · Maintenance & retention jobs — M · `todo`
 The periodic-sweep subsystem a long-running deployment needs, on the existing scheduler/tick
@@ -1137,6 +1157,7 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 - Role admin CLI (`portal role grant|revoke|list`) — role grants happen only at boot per auth mode today
 - Schedules UI: cron×window hint — flag when a schedule's upcoming fires fall outside the instance's maintenance window (needs window eval over future fire times)
 - Run read model: expose `window_warned` on the run API (audit-only today) so the UI can show the flag post-hoc
-- Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory) — **→ WU-043**
+- Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory) — **VALIDATED WU-043 (s29), NO FIX NEEDED for the pilot** (SPEC-043 F2 + `schedule/stampede_test.go` B4): `fireDue` already fires due schedules SEQUENTIALLY, one bounded `fire` at a time, so a stampede is self-rate-limited — not a thundering herd of parallel Starts; the WU-042 lock serializes any same-instance collision to `skipped_overlap`. Add per-tick jitter/spread only if a future estate makes even sequential catch-up too bursty. Kept here as a post-pilot nice-to-have.
+- DB pool sizing: `db.NewPool` uses pgxpool defaults (`MaxConns = max(4, NumCPU)`) — **VALIDATED ADEQUATE WU-043 (s29)** (SPEC-043 F1): conns are held only per-tx/per-poll (never for a goroutine's lifetime), so 50 concurrent dumps + watchers overlapped fully (peak 50/50, ≈400 runs/s) without exhaustion or deadlock. An explicit `PORTAL_DB_MAX_CONNS` floor to decouple the pool from core count is a **→ WU-046** packaging nice-to-have, not a blocker.
 - Schedule-change ledger — schedule rows are mutable with no edit history; consider audit_event actions or a ledger table
 - Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work) — **→ WU-044**

@@ -5,14 +5,43 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-042 DONE (s28) —
-  concurrency locks + self-target ban + Patroni-restore block.** NEXT = **START WU-043**
-  (load test — 25–50 concurrent mock dumps; M, validates 042's locks scale; the WU-041 seed
-  populates the estate). M4 order = **041 ✓ → 042 ✓ → 043 → 044 → 045 → 046 → 047** (seed →
-  concurrency locks → load test → retention/GC → docs-recon+CI → packaging → retrospective);
-  full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in its header note. M4
-  exit deliverables = the pilot-deployable build (046) + the experiment retrospective (047);
-  close with an M4 gate review (author `m4-gate-review` mirroring m3).
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-043 DONE (s29) —
+  load test (concurrent mock dumps).** NEXT = **START WU-044** (maintenance & retention jobs:
+  audit 1y + artifact retention enforcement preserving 'safety' + session GC + dump.yml
+  finding-8 orphan fix; M, on the existing scheduler/tick lifecycle). M4 order = **041 ✓ →
+  042 ✓ → 043 ✓ → 044 → 045 → 046 → 047** (seed → concurrency locks → load test →
+  retention/GC → docs-recon+CI → packaging → retrospective); full ACs/context briefs in
+  BACKLOG "Phase 4" §, grooming rationale in its header note. M4 exit deliverables = the
+  pilot-deployable build (046) + the experiment retrospective (047); close with an M4 gate
+  review (author `m4-gate-review` mirroring m3).
+- **Status (s29, WU-043 DONE — load test):** WU-042's instance lock + WU-016's
+  single-finalizer are now PROVEN under contention at the ROADMAP M4 scale (25–50 concurrent
+  dumps). Deliverable = a skip-gated Go harness (SPEC-043 = docs/specs/load-test.md, JIT)
+  driving the REAL `runs.Service` over MockEngine on a scratch DB seeded with WU-041's
+  `inventory.GenerateEstate` — so it joins `go test -race ./...` (runs on the VM, skips in CI
+  like the itest), NO new binary/lifecycle (mini-ADR 1). Architect-implemented (backend
+  test-only, concurrency-sensitive). `runs/load_test.go`: **B1** 50 dumps across 50 DISTINCT
+  instances → all 50 succeed, each exactly one `run.submitted` + one `run.finished` (WU-016
+  exactly-once under load), zero orphans/zero leaked locks, **peak concurrency 50/50** (proven
+  from committed started/finished timestamps via a sweep-line, NOT a racy live sample —
+  mini-ADR 3); **B2** 40 concurrent at ONE instance → 1 win + 39 `ErrInstanceLocked`, exactly
+  1 run row, lock frees on finalize, next Start succeeds (the WU-042 lock test's shape at
+  load); **B3** mixed 20×3 → per-instance 1 win + K-1 conflict, global exactly-once +
+  zero-orphan. `schedule/stampede_test.go` **B4**: 25 due schedules, ONE sequential `fireDue`
+  → all 25 fire, zero orphans (the boot-stampede icebox item — VALIDATED, no fix needed).
+  `PORTAL_LOADTEST_INSTANCES` env grows the estate for a pilot-scale drill with the SAME
+  committed code. LIVE DRILL (isolated scratch DBs via MigratedDB, auto-dropped; dev `portal`
+  DB + demo :8080 untouched): `PORTAL_LOADTEST_INSTANCES=500 go test -race` → seeded 500
+  instances (0 quarantined), 50 concurrent dumps peak 50/50, ≈386–406 runs/s, exactly-once,
+  zero orphans. **Findings filed with verdicts:** F1 default pgxpool `MaxConns=max(4,NumCPU)`
+  is ADEQUATE (conns held only per-tx/per-poll, never a goroutine's lifetime → 50 dumps
+  overlapped fully without exhaustion or deadlock; explicit `PORTAL_DB_MAX_CONNS` floor → WU-046
+  nice-to-have); F2 scheduler stampede self-rate-limits (sequential `fireDue`) → no spreading
+  needed for the pilot. GATE: CHECK-EXIT:0 (golangci 0, fmt clean, go test -race ALL pkgs incl.
+  e2e golden flow + the new load/stampede tests, vitest 116/116 — one intermittent frontend
+  `EventSource`/jsdom flake in RunDetail.test.tsx seen once, green on 3 re-runs, NOT mine).
+  Diff = SPEC-043 + load_test.go + stampede_test.go (test-only). NO migration/API/UI/seam
+  change; MockEngine + service code UNCHANGED (the WU is the harness, not a fix).
 - **Status (s28, WU-042 DONE — concurrency locks):** "at most one live op per instance" is
   now STRUCTURAL, enforced at the single choke point `runs.Service.Start` so button +
   scheduler + chain-step all inherit it (ARCHITECTURE §concurrency "hierarchical TTL locks
@@ -272,14 +301,23 @@
 
 ## Next action (be exact)
 
-1. **START WU-043** (load test — 25–50 concurrent mock dumps; M; BACKLOG "Phase 4" §). The
-   ROADMAP M4 load-test exit item AND the proof WU-042's locks scale. A harness driving
-   25–50 concurrent mock dumps; the WU-041 seed (`portal seed --instances 500`) populates the
-   estate so contention is realistic. Watch for the boot-stampede spreading item folded here
-   (icebox → WU-043). Read the WU-043 entry + context brief; write SPEC-043 JIT. Note: with
-   WU-042's instance lock, concurrent dumps on the SAME instance now serialize (1 + N-1
-   conflict) — the load test should spread across DISTINCT instances to actually exercise
-   parallelism (or deliberately test same-instance contention at scale).
+1. **START WU-044** (maintenance & retention jobs; M; BACKLOG "Phase 4" §). The periodic-sweep
+   subsystem a long-running deployment needs, on the EXISTING scheduler/tick lifecycle. Four
+   cohesive sweeps: (a) audit retention 1y (archive-not-hard-delete per append-only intent —
+   decide in SPEC + DECISIONS); (b) artifact retention enforcement — expire `standard`
+   artifacts past policy from BOTH the registry AND the object store (engine-side delete),
+   PRESERVING `safety` (trustworthy after WU-040 item 6); (c) session GC sweep — reap expired
+   `session` rows (TTL read-enforced only today); (d) M3-gate finding 8 — wrap dump.yml's
+   post-`pg_dump` tasks in a `block:` with `always: file state=absent` so an upload/stat
+   failure never orphans real dump bytes on `/artifacts`. May checkpoint mid-WU between the Go
+   sweeps and the playbook fix. Read the WU-044 entry + context brief; write SPEC-044 JIT.
+   - WU-043 (s29) is DONE — load test. If revisiting: the harness is `runs/load_test.go`
+     (B1 distinct-instance parallelism + exactly-once, B2 same-instance contention at scale,
+     B3 mixed) + `schedule/stampede_test.go` (B4 boot-stampede), skip-gated via MigratedDB,
+     seeded by `inventory.GenerateEstate`. `PORTAL_LOADTEST_INSTANCES` env grows the estate for
+     a pilot-scale drill. SPEC-043 F1 (pool adequate → `PORTAL_DB_MAX_CONNS` a WU-046
+     nice-to-have) + F2 (stampede self-rate-limits, no fix) are filed with verdicts. No code
+     change — test-only.
    - WU-042 (s28) is DONE — concurrency locks. If revisiting: the lock is `instance_lock`
      (0012, PK instance_id); acquire = `runs.acquireInstanceLock` in Start's run-insert tx
      (lock.go), release = `DELETE ... WHERE run_id` in finalize's tx; `PORTAL_LOCK_TTL` 30m,
@@ -323,16 +361,18 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - Dev stack was UP through s28 (postgres healthy 10d; the WU-042 drill used an isolated
-     scratch DB portal_lock_drill on it, now dropped — the persistent `portal` DB + demo
-     :8080 were untouched). pgtarget sits RESTORED (widget 4 / ledger 200); minio holds the
-     WU-039 drill artifacts (harmless, no retention until M4). The persistent dev `portal` DB
-     is still at 0010 — WU-040 added 0011 and WU-042 added 0012 to the BINARY, but neither
-     migrated the persistent dev DB (all tests + drills use fresh scratch DBs that get 0012 on
-     `up`); migrate it with `cd backend && go run ./cmd/portal migrate up` only if a future
-     live drill on the `portal` DB needs 0011/0012. New config (safe defaults, unset in the
-     persistent .env): `PORTAL_LOCK_TTL` (30m), `PORTAL_PROTECTED_INSTANCES` (empty; the set
-     still seeds with DBName="portal", which matches no real instance).
+   - Dev stack was UP through s29 (postgres healthy 11d; the WU-043 load drills used only
+     ephemeral MigratedDB scratch DBs, all auto-dropped — the persistent `portal` DB + demo
+     :8080 were untouched). WU-043 added NO migration and NO service code (test-only). pgtarget
+     sits RESTORED (widget 4 / ledger 200); minio holds the WU-039 drill artifacts (harmless,
+     no retention until WU-044). The persistent dev `portal` DB is still at 0010 — WU-040 added
+     0011 and WU-042 added 0012 to the BINARY, but neither migrated the persistent dev DB (all
+     tests + drills use fresh scratch DBs that get 0012 on `up`); migrate it with `cd backend
+     && go run ./cmd/portal migrate up` only if a future live drill on the `portal` DB needs
+     0011/0012. New config (safe defaults, unset in the persistent .env): `PORTAL_LOCK_TTL`
+     (30m), `PORTAL_PROTECTED_INSTANCES` (empty; the set still seeds with DBName="portal",
+     which matches no real instance). `PORTAL_LOADTEST_INSTANCES` is HARNESS-ONLY (grows the
+     load-test scratch estate for a pilot-scale drill; never set in prod/dev .env).
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -599,6 +639,22 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-17 — **WU-043 DONE (s29) — load test (concurrent mock dumps)**: WU-042's instance
+  lock + WU-016's single-finalizer PROVEN under contention at the ROADMAP M4 scale. A
+  skip-gated Go harness (SPEC-043) drives the REAL `runs.Service` over MockEngine on a
+  scratch DB seeded with WU-041's `GenerateEstate`, so it joins `go test -race ./...` (VM
+  runs it, CI skips like the itest) — no new binary/lifecycle. `runs/load_test.go`: B1 (50
+  distinct instances → all succeed, exactly-once audit, peak concurrency 50/50 from committed
+  timestamps), B2 (40 at one instance → 1 win + 39 `ErrInstanceLocked`, 1 run row, lock frees
+  on finalize), B3 (mixed 20×3 → per-instance 1 win + K-1 conflict, global exactly-once +
+  zero-orphan). `schedule/stampede_test.go` B4 (25 due schedules, one sequential `fireDue` →
+  all fire, zero orphans). LIVE DRILL `PORTAL_LOADTEST_INSTANCES=500 go test -race`: seeded
+  500 (0 quarantined), 50 concurrent peak 50/50, ≈386–406 runs/s, exactly-once, zero orphans.
+  Findings filed w/ verdicts: F1 default pgxpool `max(4,NumCPU)` adequate (`PORTAL_DB_MAX_CONNS`
+  → WU-046 nice-to-have); F2 stampede self-rate-limits (no spreading needed). GATE
+  CHECK-EXIT:0 (golangci 0, fmt clean, -race all pkgs incl. e2e golden flow, vitest 116/116).
+  Test-only diff (SPEC + 2 test files); no migration/API/UI/seam change. Active → **WU-044**
+  (maintenance & retention jobs).
 - 2026-07-17 — **WU-042 DONE (s28) — concurrency locks + self-target ban + Patroni-restore
   block (SPEC-042, ADR-012)**: "one live op per instance" made structural at the single
   choke point runs.Service.Start (button + scheduler + chain-step inherit it). Migration
@@ -630,15 +686,3 @@
   dev 250/test 160/prod 90, 62 clusters, all prod windowed. GATE CHECK-EXIT:0 (golangci 0,
   -race all pkgs incl. inventory + e2e, vitest 116/116). Diff = main.go+40 + seed.go +
   seed_test.go + SPEC. Active → **WU-042** (concurrency locks).
-- 2026-07-16 — **PHASE 4 GROOMED (s26)**: with M3 closed (all fix WUs landed), decomposed
-  the M4 "Hardening" phase into 7 WUs against the ROADMAP M4 exit criteria + icebox debt,
-  each with ACs + context brief in BACKLOG "Phase 4" §. Order 041 (staging seed, S) → 042
-  (concurrency locks: instance TTL lock across all launch paths + self-target ban + naive-
-  replica block, M — generalizes the scheduler's instance-only overlap probe) → 043 (load
-  test 25–50 concurrent mock dumps, M — validates 042) → 044 (maintenance/retention: audit
-  1y + artifact enforcement preserving 'safety' + session GC + dump.yml finding-8 orphan
-  fix, M) → 045 (docs-vs-reality reconciliation + cold-start + CI hardening, M) → 046
-  (packaging for pilot: systemd unit + .env template + deploy runbook + break-glass mail
-  alarm, M) → 047 (experiment retrospective, STRATEGY §8, S — last). Promoted icebox items
-  annotated `→ WU-0xx`. M4 exit = pilot build (046) + retrospective (047), closed by an
-  `m4-gate-review` (author, mirroring m3). Docs-only; no Go/FE change. Active → **WU-041**.
