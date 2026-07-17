@@ -91,6 +91,12 @@ func startRun(log *slog.Logger, rs RunService) http.HandlerFunc {
 		case errors.Is(err, runs.ErrProdUnconfirmed):
 			writeJSONError(w, http.StatusBadRequest, "prod launch requires typing the instance name")
 			return
+		case errors.Is(err, runs.ErrSelfTarget):
+			writeJSONError(w, http.StatusForbidden, "this instance is the portal's own database and cannot be a target")
+			return
+		case errors.Is(err, runs.ErrInstanceLocked):
+			writeJSONError(w, http.StatusConflict, "an operation is already running on this instance")
+			return
 		case errors.Is(err, runs.ErrEngine):
 			// The run exists, finalized failed, audit trail complete — the
 			// engine just refused it.

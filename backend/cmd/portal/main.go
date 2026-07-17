@@ -97,6 +97,13 @@ func run(log *slog.Logger, args []string) error {
 	registry.Register(engine.ClassNonProd, nonprod)
 
 	runSvc := runs.NewService(pool, registry, log)
+	// Concurrency locks + self-target ban (SPEC-042): the instance lock is
+	// enforced in Start on every launch path; the protected set (seeded with
+	// the portal's own DB name) refuses a self-target. chainSvc carries the same
+	// protected set so the restore path refuses synchronously.
+	runSvc.LockTTL = cfg.LockTTL
+	protected := cfg.ProtectedInstanceSet()
+	runSvc.Protected = protected
 	// Against a REAL remote engine the webhook is the fast finalizer and the
 	// watcher's poll is the fallback truth (ADR-002, SPEC-033 mini-ADR 2) — so
 	// poll GENTLY at the configured Semaphore cadence instead of the mock's
@@ -106,6 +113,7 @@ func run(log *slog.Logger, args []string) error {
 		runSvc.PollInterval = cfg.SemaphorePollInterval
 	}
 	chainSvc := chain.New(pool, runSvc, log)
+	chainSvc.Protected = protected
 	// Failure/cancel mail to the DBA list (SPEC-014) — wired before the
 	// orphan sweeps so unattended endings notify too. Chain step runs mail
 	// at chain granularity only: the halt mail is THE mail, the run-level

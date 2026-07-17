@@ -100,6 +100,20 @@ func TestSemaphoreTemplateMap(t *testing.T) {
 	}
 }
 
+func TestProtectedInstanceSet(t *testing.T) {
+	// Seeded with the portal's own DB name (SPEC-042 mini-ADR 5), unioned with
+	// the explicit list, all lowercased for case-insensitive match.
+	set := config.Config{DBName: "portal", ProtectedInstances: "Ops-DB, secrets-store"}.
+		ProtectedInstanceSet()
+	require.Equal(t, map[string]bool{
+		"portal": true, "ops-db": true, "secrets-store": true,
+	}, set)
+
+	// Empty list still protects the portal DB out of the box.
+	require.Equal(t, map[string]bool{"portal": true},
+		config.Config{DBName: "portal"}.ProtectedInstanceSet())
+}
+
 func TestEngineNonProdDefaultsToMock(t *testing.T) {
 	unsetenv(t, "PORTAL_ENGINE_NONPROD")
 	cfg, err := config.Load("")

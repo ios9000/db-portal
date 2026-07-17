@@ -28,6 +28,14 @@ type Config struct {
 	DBPassword string `env:"PORTAL_DB_PASSWORD"`
 	DBName     string `env:"PORTAL_DB_NAME"   envDefault:"portal"`
 
+	// Concurrency locks (SPEC-042). LockTTL sizes the instance-lock backstop:
+	// a lock whose holder run is still live is NEVER stolen (mini-ADR 3), so
+	// this only bounds how long a genuinely-leaked lock lingers before a reap.
+	// ProtectedInstances is the self-target ban's declared set (mini-ADR 5);
+	// see ProtectedInstanceSet, which also seeds it with DBName.
+	LockTTL            time.Duration `env:"PORTAL_LOCK_TTL"             envDefault:"30m"`
+	ProtectedInstances string        `env:"PORTAL_PROTECTED_INSTANCES"`
+
 	// Notification mail (SPEC-014). NotifyTo empty = notifications off.
 	SMTPHost string `env:"PORTAL_SMTP_HOST" envDefault:"127.0.0.1"`
 	SMTPPort int    `env:"PORTAL_SMTP_PORT" envDefault:"1025"`
@@ -82,6 +90,24 @@ func (c Config) SemaphoreTemplateMap() (map[string]int, error) {
 		out[tag] = id
 	}
 	return out, nil
+}
+
+// ProtectedInstanceSet is the self-target ban's denylist (SPEC-042 mini-ADR 5):
+// instance names that must never be a portal target, lowercased for
+// case-insensitive match. It is PORTAL_PROTECTED_INSTANCES (comma-separated)
+// unioned with the portal's own DBName, so an instance literally named the same
+// as the portal DB is refused out of the box even with no explicit config.
+func (c Config) ProtectedInstanceSet() map[string]bool {
+	out := map[string]bool{}
+	if n := strings.ToLower(strings.TrimSpace(c.DBName)); n != "" {
+		out[n] = true
+	}
+	for _, part := range strings.Split(c.ProtectedInstances, ",") {
+		if p := strings.ToLower(strings.TrimSpace(part)); p != "" {
+			out[p] = true
+		}
+	}
+	return out
 }
 
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv

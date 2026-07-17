@@ -49,9 +49,14 @@ func TestMigrateUpDown(t *testing.T) {
 	require.True(t, tableExists(t, pool, "chain"), "0010 up must create the chain table")
 	require.True(t, tableExists(t, pool, "chain_step"), "0010 up must create the chain_step table")
 	require.True(t, indexExists(t, pool, "run_job_id_unique"), "0011 up must add the partial job_id unique index")
+	require.True(t, tableExists(t, pool, "instance_lock"), "0012 up must create the instance lock table")
 
 	// goose down reverts one migration at a time; walk back to zero and
 	// check each Down does its job.
+	require.NoError(t, db.Migrate(ctx, dsn, "down"))
+	require.False(t, tableExists(t, pool, "instance_lock"), "0012 down must remove the instance lock table")
+	require.True(t, indexExists(t, pool, "run_job_id_unique"), "0011 must survive 0012 down")
+
 	require.NoError(t, db.Migrate(ctx, dsn, "down"))
 	require.False(t, indexExists(t, pool, "run_job_id_unique"), "0011 down must drop the job_id unique index")
 	require.True(t, tableExists(t, pool, "chain"), "0010 must survive 0011 down")
@@ -172,8 +177,10 @@ func TestArtifactBackfillWalk(t *testing.T) {
 	insertRun("dump", "failed", true)   // non-success never registers
 
 	for range 2 {
-		// goose down steps one migration; 0011 (job_id index) + 0010 (chains)
-		// sit above 0009 now, so reaching below the registry takes three.
+		// goose down steps one migration; 0012 (instance locks) + 0011 (job_id
+		// index) + 0010 (chains) sit above 0009 now, so reaching below the
+		// registry takes four.
+		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))
 		require.NoError(t, db.Migrate(ctx, dsn, "down"))

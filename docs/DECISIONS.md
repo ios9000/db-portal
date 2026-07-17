@@ -128,6 +128,39 @@ by vitest component tests; shell-script e2e à la `demo-m0.sh` — not `-race`'d
 assertions against psql output, and a second thing to keep green; separate `npm run e2e`
 target — gates that aren't THE gate rot. `docs/demo-m1.md` stays the human twin.
 
+### ADR-012 · Concurrency: per-instance TTL lock row; self-target ban; naive-Patroni-restore blocked — `accepted` (WU-042, 2026-07-17)
+The M4 correctness hardening (SPEC-042 = docs/specs/concurrency-locks.md; ARCHITECTURE
+§concurrency planned "hierarchical TTL locks (M4)"). Three decisions:
+
+- **Instance lock = a `instance_lock` ROW (migration 0012), not a pg advisory lock.** At most
+  one live operation per instance, enforced at the single choke point `runs.Service.Start`, so
+  every launch path (button, scheduler, chain step) inherits it. A row survives restarts, names
+  its holder run + actor (auditable), and carries `expires_at`; a `pg_try_advisory_lock` is
+  session-scoped, TTL-less, and invisible. Acquire rides Start's existing run-insert tx (a
+  conflict rolls the whole tx back — no run, clean 409); release rides finalize's own tx (atomic
+  with the terminal state), so every terminal path frees the lock and a crashed holder is
+  reclaimed at boot by `SweepOrphans` → finalize. The TTL is only a backstop and the acquire
+  **never steals from a still-live holder** (steal predicate requires expired AND holder not in
+  `queued`/`running`), so a misconfigured-short TTL can never cause two concurrent ops.
+  **Rejected:** advisory locks (above); a lock held for a whole chain's duration (per-step is
+  enough — steps are sequential; a chain-wide lock complicates resume/sweep). Lock renewal and
+  cross-*resource* (cluster) locking are post-MVP.
+- **Self-target ban = a declared protected set**, not auto-detection. The portal's own DB must
+  never be a target (self-upgrade deadlock, research gotcha #2; ARCHITECTURE §concurrency). The
+  inventory schema carries no connection tuple, so the portal cannot *detect* that an instance
+  resolves to its own DB — `PORTAL_PROTECTED_INSTANCES` declares the names, seeded with
+  `PORTAL_DB_NAME` so the portal DB is protected out of the box. Refused at Start and
+  chain.Create with `ErrSelfTarget` (403); the denial is recorded `guardrail.denied` on
+  auth_event (the security ledger — a refused target never becomes a run).
+- **Naive-Patroni-restore blocked; full sequencing post-MVP.** A `pg_restore` into a
+  `k8s_patroni` cluster behind Patroni's back diverges the cluster (ARCHITECTURE §7). The
+  portal has no primary/replica visibility (inventory has only `cluster.platform`), so
+  chain.Create refuses any chain with a `restore` step onto a Patroni target
+  (`ErrPatroniRestore`, 403, audited). Dumps stay allowed (safe, even desirable from a replica).
+  **Deferred to post-MVP (research gotcha #1 remainder):** the real pause/detach → restore →
+  reinit-replicas leader/replica sequencing — the "hard engineering item" ARCHITECTURE §7 names;
+  and per-instance role awareness (needs an inventory schema addition).
+
 ## Open (inherited from architecture doc §10)
 
 - **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real).

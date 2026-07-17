@@ -82,6 +82,12 @@ func startRestore(log *slog.Logger, ar ArtifactReader, cs ChainService) http.Han
 		case errors.Is(err, runs.ErrProdUnconfirmed):
 			writeJSONError(w, http.StatusBadRequest, "prod restore requires typing the target instance name")
 			return
+		case errors.Is(err, runs.ErrSelfTarget):
+			writeJSONError(w, http.StatusForbidden, "this instance is the portal's own database and cannot be a restore target")
+			return
+		case errors.Is(err, runs.ErrPatroniRestore):
+			writeJSONError(w, http.StatusForbidden, "restore into a Patroni-managed cluster is not supported")
+			return
 		case err != nil:
 			// ErrUnknownOperation here means our own recipe drifted from the
 			// catalog — an internal fault, not a client one.

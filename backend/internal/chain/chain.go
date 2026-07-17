@@ -54,6 +54,27 @@ func runTerminal(state string) bool {
 	return state == runSuccess || state == runFailed || state == runCanceled
 }
 
+// opRestore is the restore operation id — a string twin, not a restore-package
+// import (which would cycle: restore imports chain). Same seam rule as the run
+// states above.
+const opRestore = "restore"
+
+func (s *Service) isProtected(instance string) bool {
+	return s.Protected[strings.ToLower(instance)]
+}
+
+// hasRestoreStep reports whether any step is the (dangerous) restore op — the
+// only step the Patroni block refuses (SPEC-042 mini-ADR 6). Dumps, including
+// the chain's own safety dump, stay allowed on Patroni.
+func hasRestoreStep(steps []StepSpec) bool {
+	for _, st := range steps {
+		if st.Operation == opRestore {
+			return true
+		}
+	}
+	return false
+}
+
 // Runs is the one door every step fires through — satisfied by
 // *runs.Service, faked in driver tests.
 type Runs interface {
@@ -138,6 +159,12 @@ type Service struct {
 	// Set before first use.
 	Notifier Notifier
 
+	// Protected is the self-target ban's denylist (SPEC-042 mini-ADR 5),
+	// instance names lowercased — the same set runs.Service carries, so the
+	// restore path refuses synchronously in Create rather than halting a step
+	// later. nil/empty = off. Set before first use.
+	Protected map[string]bool
+
 	wg sync.WaitGroup
 }
 
@@ -167,14 +194,32 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Chain, error) 
 	}
 
 	var instanceID int64
-	var env string
-	err := s.pool.QueryRow(ctx, `SELECT id, env FROM instance WHERE name = $1`, req.Instance).
-		Scan(&instanceID, &env)
+	var env, platform string
+	err := s.pool.QueryRow(ctx, `
+		SELECT i.id, i.env, c.platform
+		FROM instance i JOIN cluster c ON c.id = i.cluster_id
+		WHERE i.name = $1`, req.Instance).
+		Scan(&instanceID, &env, &platform)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Chain{}, fmt.Errorf("%w: %q", runs.ErrUnknownInstance, req.Instance)
 	case err != nil:
 		return Chain{}, fmt.Errorf("chain: look up instance: %w", err)
+	}
+	// Target guardrails (SPEC-042), refused synchronously before any chain row
+	// so the restore handler answers with the distinct error instead of an
+	// async halt. Both record the denial on the security ledger.
+	if s.isProtected(req.Instance) {
+		if derr := runs.RecordGuardrailDenial(ctx, s.pool, req.Actor, "self-target", req.Instance); derr != nil {
+			s.log.Error("guardrail denial write failed", "kind", "self-target", "err", derr.Error())
+		}
+		return Chain{}, fmt.Errorf("%w: %q", runs.ErrSelfTarget, req.Instance)
+	}
+	if platform == "k8s_patroni" && hasRestoreStep(req.Steps) {
+		if derr := runs.RecordGuardrailDenial(ctx, s.pool, req.Actor, "patroni-restore", req.Instance); derr != nil {
+			s.log.Error("guardrail denial write failed", "kind", "patroni-restore", "err", derr.Error())
+		}
+		return Chain{}, fmt.Errorf("%w: %q", runs.ErrPatroniRestore, req.Instance)
 	}
 	// The prod ritual happens once, here, for every step to come; the typed
 	// confirm is persisted and fired verbatim so an instance promoted to

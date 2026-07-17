@@ -153,6 +153,8 @@ func TestStartRunErrorMapping(t *testing.T) {
 		{"unknown operation", `{"instance":"a","operation":"x"}`, runs.ErrUnknownOperation, http.StatusBadRequest, "unknown operation"},
 		{"unknown instance", `{"instance":"nope","operation":"dump"}`, runs.ErrUnknownInstance, http.StatusNotFound, "no such instance"},
 		{"engine refused", `{"instance":"a","operation":"dump"}`, runs.ErrEngine, http.StatusBadGateway, "engine refused"},
+		{"self-target", `{"instance":"a","operation":"dump"}`, runs.ErrSelfTarget, http.StatusForbidden, "portal's own database"},
+		{"instance locked", `{"instance":"a","operation":"dump"}`, runs.ErrInstanceLocked, http.StatusConflict, "already running on this instance"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

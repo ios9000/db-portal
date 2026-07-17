@@ -116,6 +116,8 @@ func TestStartRestoreCreateErrorMapping(t *testing.T) {
 	}{
 		{"unknown target", runs.ErrUnknownInstance, http.StatusNotFound, "no such instance"},
 		{"prod unconfirmed", runs.ErrProdUnconfirmed, http.StatusBadRequest, "typing the target"},
+		{"self-target", runs.ErrSelfTarget, http.StatusForbidden, "portal's own database"},
+		{"patroni restore", runs.ErrPatroniRestore, http.StatusForbidden, "Patroni-managed cluster"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

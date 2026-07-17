@@ -156,6 +156,13 @@ func (s *Service) fire(ctx context.Context, d dueSchedule) {
 	switch {
 	case err == nil:
 		s.stamp(ctx, d.id, statusFired, &run.ID, &now, next)
+	case errors.Is(err, runs.ErrInstanceLocked):
+		// The instance lock (SPEC-042) closes the TOCTOU window the probe
+		// above cannot: a run went live between the probe and this Start.
+		// Same skip-visibly posture — an overlapping dump is a load hazard.
+		s.log.Warn("scheduler: fire skipped, the instance is locked by a live run",
+			"schedule", d.id, "instance", d.instance)
+		s.stamp(ctx, d.id, statusSkipped, nil, nil, next)
 	case errors.Is(err, runs.ErrEngine):
 		// The run exists, finalized failed, and SPEC-014 already mailed the
 		// DBA list — from the schedule's view that fire happened (mini-ADR 10).

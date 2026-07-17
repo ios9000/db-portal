@@ -45,6 +45,20 @@ var (
 	// ErrProdUnconfirmed is the server side of the prod ritual (SPEC-021
 	// mini-ADR 6): a prod launch whose Confirm doesn't name the instance.
 	ErrProdUnconfirmed = errors.New("runs: prod launch requires typing the instance name")
+	// ErrInstanceLocked means another operation is already live on the target
+	// instance (SPEC-042): the instance lock admits one at a time across every
+	// launch path. Transient — the caller may retry once the holder finalizes.
+	ErrInstanceLocked = errors.New("runs: an operation is already running on this instance")
+	// ErrSelfTarget refuses an operation whose target is a protected instance —
+	// the portal's own DB (self-upgrade deadlock, research gotcha #2 / SPEC-042
+	// mini-ADR 5). Permanent: the target is off-limits by policy.
+	ErrSelfTarget = errors.New("runs: this instance is the portal's own database and cannot be a target")
+	// ErrPatroniRestore refuses a restore into a Patroni-managed cluster
+	// (research gotcha #1 / SPEC-042 mini-ADR 6): the portal does not implement
+	// the pause/detach → restore → reinit sequencing a safe Patroni restore
+	// needs. Dumps stay allowed. Lives here so chain.Create reuses the runs
+	// error vocabulary and handlers map it once.
+	ErrPatroniRestore = errors.New("runs: restore into a Patroni-managed cluster is not supported")
 )
 
 // Notifier receives a copy of every run that ends not-success (SPEC-014).
@@ -77,6 +91,17 @@ type Service struct {
 	// Set before first use.
 	Notifier Notifier
 
+	// LockTTL sizes the instance-lock backstop (SPEC-042 mini-ADR 3): a lock
+	// whose holder run is still live is never stolen, so this only bounds how
+	// long a genuinely-leaked lock lingers. Set before first use; NewService
+	// defaults it.
+	LockTTL time.Duration
+
+	// Protected is the self-target ban's denylist (SPEC-042 mini-ADR 5),
+	// instance names lowercased. nil/empty = the ban is off. Set before first
+	// use (main wires config.ProtectedInstanceSet).
+	Protected map[string]bool
+
 	// failRecordJobID (tests only, via export_test.go) forces the
 	// post-StartJob job-id record to fail so the stranded-job repair
 	// path is exercisable deterministically.
@@ -94,6 +119,7 @@ func NewService(pool *pgxpool.Pool, registry *engine.Registry, log *slog.Logger)
 	return &Service{
 		pool: pool, registry: registry, log: log,
 		PollInterval: 500 * time.Millisecond, MaxStatusErrors: defaultMaxStatusErrors,
+		LockTTL: defaultLockTTL,
 	}
 }
 
@@ -151,6 +177,16 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 		return Run{}, fmt.Errorf("runs: look up instance: %w", err)
 	}
 
+	// The self-target ban (SPEC-042 mini-ADR 5): the portal's own DB is never a
+	// portal target. Refuse before any row, and record the denial on the
+	// security ledger — a refused target never becomes a run.
+	if s.isProtected(req.Instance) {
+		if derr := RecordGuardrailDenial(ctx, s.pool, req.Actor, "self-target", req.Instance); derr != nil {
+			s.log.Error("guardrail denial write failed", "kind", "self-target", "err", derr.Error())
+		}
+		return Run{}, fmt.Errorf("%w: %q", ErrSelfTarget, req.Instance)
+	}
+
 	// The prod ritual, enforced where env is authoritative (SPEC-021 mini-
 	// ADR 6): same exact-match predicate as the drawer. Checked before any
 	// row is written — a failed ritual is friction, not a security event.
@@ -194,6 +230,20 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 		req.Actor, runID, instanceID, env, op.PlaybookTag, digest, windowWarned); err != nil {
 		return Run{}, fmt.Errorf("runs: audit submit: %w", err)
 	}
+
+	// Take the instance lock in this same tx (SPEC-042 mini-ADR 2): if the
+	// instance is already held by a live op the lock is refused and the whole
+	// tx rolls back — no run, no audit, a clean conflict. If taken, run + audit
+	// + lock commit together. finalize releases it, atomically with the
+	// terminal state.
+	acquired, err := acquireInstanceLock(ctx, tx, instanceID, runID, req.Actor, s.lockTTL())
+	if err != nil {
+		return Run{}, fmt.Errorf("runs: acquire instance lock: %w", err)
+	}
+	if !acquired {
+		return Run{}, fmt.Errorf("%w: %q", ErrInstanceLocked, req.Instance)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return Run{}, fmt.Errorf("runs: commit: %w", err)
 	}
@@ -381,6 +431,15 @@ func (s *Service) finalize(ctx context.Context, runID int64, state, errMsg strin
 		// won the race. The first outcome stands — no duplicate audit
 		// event, no notification (SPEC-012 mini-ADR 8).
 		return nil
+	}
+
+	// Release the instance lock in this same tx (SPEC-042 mini-ADR 2): only the
+	// winning finalizer reaches here, so the lock frees atomically with the
+	// terminal state. Keyed on run_id, so if the lock was already reaped/stolen
+	// (its holder differs) this touches 0 rows — never frees another op's lock.
+	// A pre-0012 run or a swept run that held no lock simply matches nothing.
+	if _, err := tx.Exec(ctx, `DELETE FROM instance_lock WHERE run_id = $1`, runID); err != nil {
+		return fmt.Errorf("runs: release instance lock: %w", err)
 	}
 
 	// Register the artifact (SPEC-030): same tx as the guarded run UPDATE,
