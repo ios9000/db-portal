@@ -5,14 +5,49 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-041 DONE (s27) —
-  staging seed.** NEXT = **START WU-042** (concurrency locks — instance TTL lock across
-  all launch paths + portal self-target ban + naive-replica block; M, architect-
-  implemented, concurrency-sensitive). M4 order = **041 ✓ → 042 → 043 → 044 → 045 → 046 →
-  047** (seed → concurrency locks → load test → retention/GC → docs-recon+CI → packaging →
-  retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in its
-  header note. M4 exit deliverables = the pilot-deployable build (046) + the experiment
-  retrospective (047); close with an M4 gate review (author `m4-gate-review` mirroring m3).
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-042 DONE (s28) —
+  concurrency locks + self-target ban + Patroni-restore block.** NEXT = **START WU-043**
+  (load test — 25–50 concurrent mock dumps; M, validates 042's locks scale; the WU-041 seed
+  populates the estate). M4 order = **041 ✓ → 042 ✓ → 043 → 044 → 045 → 046 → 047** (seed →
+  concurrency locks → load test → retention/GC → docs-recon+CI → packaging → retrospective);
+  full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in its header note. M4
+  exit deliverables = the pilot-deployable build (046) + the experiment retrospective (047);
+  close with an M4 gate review (author `m4-gate-review` mirroring m3).
+- **Status (s28, WU-042 DONE — concurrency locks):** "at most one live op per instance" is
+  now STRUCTURAL, enforced at the single choke point `runs.Service.Start` so button +
+  scheduler + chain-step all inherit it (ARCHITECTURE §concurrency "hierarchical TTL locks
+  (M4)"; SPEC-042 = docs/specs/concurrency-locks.md; ADR-012). Migration 0012 adds
+  `instance_lock` (PK instance_id) — a lock ROW, not a pg advisory lock (survives restarts,
+  auditable, carries expires_at). ACQUIRE rides Start's existing run-insert tx: a conflict
+  rolls the WHOLE tx back → no run, no audit, a clean 409 (same "nothing created" posture as
+  the prod ritual). RELEASE rides finalize's own tx (after the RowsAffected==0 winner guard)
+  → atomic with the terminal run state, so EVERY terminal path frees the lock and a crashed
+  holder is reclaimed at boot by SweepOrphans→finalize (crash-heal needs no TTL). The TTL is
+  only a backstop and the steal predicate (`expires_at < now() AND NOT EXISTS live holder`)
+  NEVER takes a still-live holder's lock — so a misconfigured-short TTL can't cause two
+  concurrent ops (the load-bearing safety property). `PORTAL_LOCK_TTL` default 30m. Folded
+  two research gotchas at the assemblers: **#2 self-target ban** — declared
+  `PORTAL_PROTECTED_INSTANCES` (seeded with PORTAL_DB_NAME so the portal DB is protected out
+  of the box; inventory has NO connection tuple → auto-detect is impossible, post-MVP) →
+  ErrSelfTarget 403 at Start + chain.Create; **#1 naive-Patroni-restore** — chain.Create
+  refuses a restore step onto a k8s_patroni target → ErrPatroniRestore 403 (dumps stay
+  allowed; full pause/detach→restore→reinit sequencing post-MVP, ADR-012). Both refusals
+  audited `guardrail.denied` on auth_event (0012 extends the 0006 CHECK). Scheduler KEEPS its
+  run-table overlap probe as a cheap early-out AND maps ErrInstanceLocked → skipped_overlap,
+  closing the probe's TOCTOU window. Guardrails/ritual/audit/golden-flow UNCHANGED — the lock
+  is a gate in front. TESTS (-race): N-goroutine contention (1 win + N-1 conflict, only 1 run
+  row), TTL reap of a dead holder, never-steal-from-live-holder, release-on-finalize,
+  self-target + Patroni refusals with denial rows, scheduler lock-skip, 409/403 handler maps,
+  config protected-set; 0012 up/down/up pinned; migrate down-walk +1 step. LIVE HTTP DRILL
+  (isolated portal :8098 + scratch DB portal_lock_drill, auth off, crm-test declared
+  protected; demo :8080 + dev DB untouched): two concurrent dumps on billing-test → 1×201
+  (run id 1) + 1×409 "already running", only ONE run row (the 409'd insert consumed id 2 on
+  rollback — cosmetic gap); run 1 success → lock freed → next dump 201; dump on protected
+  crm-test → 403 self-target; restore onto billing-test (k8s_patroni) → 403 patroni, restore
+  onto hr-test (vm) → 201 running (block is narrow); auth_event held both guardrail.denied
+  rows. Drill torn down, scratch DB dropped. GATE: CHECK-EXIT:0 (golangci 0, fmt clean, go
+  test -race all pkgs incl. e2e golden flow, vitest 116/116). Diff = 0012 + 6 src + 6 test +
+  SPEC + ADR-012 (826 insertions). No UI change; MockEngine + seam UNCHANGED (ADR-002).
 - **Status (s27, WU-041 DONE — staging seed):** the first M4 WU, a deterministic
   realistic-estate generator (SPEC-041 = docs/specs/staging-seed.md, JIT). Architect-
   implemented directly (S, no UI, backend-only → delegation overhead > diff, per the
@@ -237,16 +272,20 @@
 
 ## Next action (be exact)
 
-1. **START WU-042** (concurrency locks — instance TTL lock + self-target ban; M; BACKLOG
-   "Phase 4" §). The headline M4 correctness hardening, architect-implemented (concurrency-
-   sensitive): generalize the scheduler's instance-ONLY overlap probe (executor.go:80-132)
-   into a real lock enforced at `runs.Service.Start` across ALL launch paths (button + chain
-   + schedule), with a TTL so a dead holder self-heals (symmetric with SweepOrphans, not a
-   wedge). Fold research gotcha #2 (portal self-target ban) + a partial of #1 (block naive
-   replica ops; full Patroni sequencing stays post-MVP via DECISIONS). Guardrails/audit/
-   ritual UNCHANGED — the lock is a new gate in front. Decide advisory-lock vs lock-table in
-   SPEC-042 (likely a lock row: survives restarts, carries the TTL, auditable). Write
-   SPEC-042 JIT at start. The WU-041 seed is available to exercise contention at scale.
+1. **START WU-043** (load test — 25–50 concurrent mock dumps; M; BACKLOG "Phase 4" §). The
+   ROADMAP M4 load-test exit item AND the proof WU-042's locks scale. A harness driving
+   25–50 concurrent mock dumps; the WU-041 seed (`portal seed --instances 500`) populates the
+   estate so contention is realistic. Watch for the boot-stampede spreading item folded here
+   (icebox → WU-043). Read the WU-043 entry + context brief; write SPEC-043 JIT. Note: with
+   WU-042's instance lock, concurrent dumps on the SAME instance now serialize (1 + N-1
+   conflict) — the load test should spread across DISTINCT instances to actually exercise
+   parallelism (or deliberately test same-instance contention at scale).
+   - WU-042 (s28) is DONE — concurrency locks. If revisiting: the lock is `instance_lock`
+     (0012, PK instance_id); acquire = `runs.acquireInstanceLock` in Start's run-insert tx
+     (lock.go), release = `DELETE ... WHERE run_id` in finalize's tx; `PORTAL_LOCK_TTL` 30m,
+     `PORTAL_PROTECTED_INSTANCES` (self-target, seeded w/ DBName). Errors ErrInstanceLocked
+     (409) / ErrSelfTarget (403) / ErrPatroniRestore (403), all in runs pkg. Tests in
+     runs/lock_test.go, chain/chain_lock_test.go, schedule/lock_test.go. ADR-012 + SPEC-042.
    - WU-041 (s27) is DONE — staging seed. If revisiting: `inventory.GenerateEstate(n, seed)`
      (seed.go) is a pure SPEC-010 CSV generator; `portal seed [--instances N] [--seed S]`
      feeds it through the existing `inventory.Import`. Defaults N=500/seed=41. No schema/UI.
@@ -284,13 +323,16 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - Dev stack was UP through s26 (mailpit/minio/pgtarget/postgres/semaphore all
-     healthy; WU-040 used only scratch DBs via `MigratedDB`/`scratchDSN`, no live drill).
-     pgtarget sits RESTORED (widget 4 / ledger 200); minio holds the WU-039 drill
-     artifacts (harmless, no retention until M4). The dev DB is at 0010 — WU-040 added
-     0011 to the binary but never migrated the persistent dev DB (all tests use fresh
-     scratch DBs that get 0011 on `up`); migrate it with `cd backend && go run
-     ./cmd/portal migrate up` only if a future live drill on it needs 0011.
+   - Dev stack was UP through s28 (postgres healthy 10d; the WU-042 drill used an isolated
+     scratch DB portal_lock_drill on it, now dropped — the persistent `portal` DB + demo
+     :8080 were untouched). pgtarget sits RESTORED (widget 4 / ledger 200); minio holds the
+     WU-039 drill artifacts (harmless, no retention until M4). The persistent dev `portal` DB
+     is still at 0010 — WU-040 added 0011 and WU-042 added 0012 to the BINARY, but neither
+     migrated the persistent dev DB (all tests + drills use fresh scratch DBs that get 0012 on
+     `up`); migrate it with `cd backend && go run ./cmd/portal migrate up` only if a future
+     live drill on the `portal` DB needs 0011/0012. New config (safe defaults, unset in the
+     persistent .env): `PORTAL_LOCK_TTL` (30m), `PORTAL_PROTECTED_INSTANCES` (empty; the set
+     still seeds with DBName="portal", which matches no real instance).
 2. Housekeeping note (carried): demo-m1.md header still says "live-verified
    2026-07-08"; beats re-verified through s13 — refresh the line when the
    doc is next touched.
@@ -557,6 +599,23 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-17 — **WU-042 DONE (s28) — concurrency locks + self-target ban + Patroni-restore
+  block (SPEC-042, ADR-012)**: "one live op per instance" made structural at the single
+  choke point runs.Service.Start (button + scheduler + chain-step inherit it). Migration
+  0012 `instance_lock` (PK instance_id) — a lock ROW (survives restarts, auditable, TTL), not
+  a pg advisory lock. Acquire rides Start's run-insert tx (conflict → whole tx rolls back:
+  clean 409, no run); release rides finalize's own tx (atomic w/ terminal state → every path
+  frees it, boot sweep reclaims a crash — no TTL needed for crash-heal). TTL is a backstop
+  and the steal predicate NEVER takes a still-live holder (safe under any TTL);
+  PORTAL_LOCK_TTL 30m. Self-target ban = declared PORTAL_PROTECTED_INSTANCES seeded w/ DBName
+  (ErrSelfTarget 403); Patroni-block at chain.Create for a restore step on k8s_patroni
+  (ErrPatroniRestore 403, dumps allowed); both audited guardrail.denied on auth_event (0012
+  extends the CHECK). Scheduler keeps its probe + maps ErrInstanceLocked → skipped_overlap.
+  Guardrails/ritual/audit/golden-flow UNCHANGED. -race tests (contention 1+N-1, TTL reap,
+  never-steal-live, self-target/Patroni refusals, scheduler skip, 409/403 maps) + LIVE HTTP
+  drill (isolated :8098, torn down): 2 concurrent dumps → 1×201+1×409; self-target crm-test
+  → 403; restore onto Patroni → 403, onto VM → 201. GATE CHECK-EXIT:0 (golangci 0, -race all
+  pkgs incl. e2e, vitest 116/116). Commit 2bb4b52. Active → **WU-043** (load test).
 - 2026-07-17 — **WU-041 DONE (s27) — staging seed (first M4 WU)**: a deterministic
   realistic-estate generator (SPEC-041). Architect-implemented (S, backend-only). A PURE
   `inventory.GenerateEstate(n, seed) string` emits a valid SPEC-010 CSV that the new
@@ -583,20 +642,3 @@
   alarm, M) → 047 (experiment retrospective, STRATEGY §8, S — last). Promoted icebox items
   annotated `→ WU-0xx`. M4 exit = pilot build (046) + retrospective (047), closed by an
   `m4-gate-review` (author, mirroring m3). Docs-only; no Go/FE change. Active → **WU-041**.
-- 2026-07-16 — **WU-040 DONE (s26) — LOW bundle (M3-gate items 5/6/7); ALL M3-gate
-  fixes landed**: three cheap defects in one S WU, Go-test-shaped, no live stack.
-  (5) `parseResultLine` (semaphore.go) registered a name-only result line as a dead
-  empty-checksum artifact — guard now rejects empty `SHA256`/non-positive `SizeBytes`
-  → nil (run still succeeds); LOW because verify.yml:37 already fail-closes on it.
-  (6) 0009's backfill omitted `retention_class`, so a `goose down`→`up` walk
-  silently reclassified `'safety'` rows `'standard'` — FIXED IN PLACE in 0009 (only a
-  dev/test down→up re-runs an applied migration) with in-SQL
-  `CASE WHEN operation='safety_dump' THEN 'safety' ELSE 'standard'`, mirroring
-  finalize. (7) `job_id text` had no uniqueness — NEW migration
-  **0011_job_id_unique.sql** = partial `UNIQUE (job_id) WHERE job_id IS NOT NULL`
-  (PG NULLs distinct → queued runs unaffected). TESTS: 3 cases →
-  TestSemaphoreSuccessNoArtifact; TestArtifactBackfillWalk adds a safety row + asserts
-  'safety' preserved (down-count 2→3); new TestJobIDUniqueConstraint; TestMigrateUpDown
-  pins 0011 (new `indexExists`). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs
-  incl. db/engine/runs FRESH, golden flow not-skipped 2.04s, vitest 116/116). No
-  UI/seam change; MockEngine untouched. Active → **groom + start Phase 4**.

@@ -957,7 +957,7 @@ check` green (no regression); paste the distribution into the journal.
 **Context brief:** WU-010 (internal/inventory, `portal import` idempotency), infra/fixtures/
 instances.csv + dev-targets.csv, backend/cmd/portal (subcommand wiring), migrations 0002.
 
-### WU-042 · Concurrency locks — instance TTL locks + self-target ban — M · `todo`
+### WU-042 · Concurrency locks — instance TTL locks + self-target ban — M · `done (2026-07-17, s28, commit 2bb4b52; SPEC-042 = docs/specs/concurrency-locks.md)`
 The core correctness hardening. Today only the scheduler refuses a fire when a run is live
 on the instance (executor.go:118, instance-scoped, skip-visibly) — the button and chain
 paths can still launch a second operation on the SAME instance concurrently, and two
@@ -972,19 +972,32 @@ post-MVP, route via DECISIONS.md). Guardrails/audit/ritual paths UNCHANGED — t
 new gate in front of them, not a rewrite. Decide advisory-lock vs lock-table in the SPEC
 (pg advisory locks are cheap but process-scoped; a lock row survives restarts + carries the
 TTL + is auditable — likely the lock table).
-**AC:**
-- [ ] Two concurrent Start on one instance → exactly one proceeds; the other gets a clear
+**AC:** (all met — s28; live HTTP drill on isolated portal :8098/portal_lock_drill, torn down)
+- [x] Two concurrent Start on one instance → exactly one proceeds; the other gets a clear
       409/conflict on the button AND chain AND schedule paths (the scheduler's existing
-      skip-visibly semantics preserved or subsumed).
-- [ ] The lock releases on terminal finalize; a holder that died is reaped after TTL so the
-      instance is never permanently wedged (test the reap).
-- [ ] A portal-self-target op is refused with a distinct error; audit records the denial.
-- [ ] Guardrails, ritual, audit attribution, and the golden flow are unchanged/green.
+      skip-visibly semantics preserved or subsumed). (button 409 + chain halt + scheduler
+      skipped_overlap; live drill: two concurrent dumps → 1×201 + 1×409, only one run row.)
+- [x] The lock releases on terminal finalize; a holder that died is reaped after TTL so the
+      instance is never permanently wedged (test the reap). (release rides finalize's tx;
+      TestInstanceLockReapsExpiredDeadHolder + never-steal-from-live-holder.)
+- [x] A portal-self-target op is refused with a distinct error; audit records the denial.
+      (ErrSelfTarget 403 + guardrail.denied on auth_event; live 403 on protected crm-test.)
+- [x] Guardrails, ritual, audit attribution, and the golden flow are unchanged/green.
+      (+ Patroni-restore block ErrPatroniRestore 403; VM restore still 201.)
 **Verify:** -race contention tests (N goroutines Start same instance → 1 success + N-1
-conflict; TTL reap; self-target refusal); golden flow green; `npm run check` green.
+conflict; TTL reap; self-target refusal); golden flow green; `npm run check` green. — DONE.
 **Context brief:** schedule/executor.go (overlap probe :80-132), runs/service.go (Start,
 finalize, SweepOrphans), migrations head, research gotchas #1/#2 (STATE "Standing context"
 + icebox), ARCHITECTURE §concurrency; architect-implemented (concurrency-sensitive).
+**How built:** migration 0012 `instance_lock` (PK instance_id) — the ARCHITECTURE
+§concurrency TTL lock; acquire in Start's run-insert tx (conflict → tx rollback, clean 409,
+no run), release in finalize's tx (atomic w/ terminal state → every path frees it, boot
+sweep reclaims a crash). Steal predicate never takes a still-live holder (safe under any
+TTL). `runs.acquireInstanceLock`/`lock.go`; `PORTAL_LOCK_TTL` (30m). Self-target =
+declared `PORTAL_PROTECTED_INSTANCES` seeded w/ DBName (ErrSelfTarget); Patroni-block at
+chain.Create for a restore step on k8s_patroni (ErrPatroniRestore); both audited
+`guardrail.denied` on auth_event (0012 extends the CHECK). ADR-012 records the deferral of
+full Patroni sequencing. Scheduler keeps its probe + maps ErrInstanceLocked → skipped.
 
 ### WU-043 · Load test — 25–50 concurrent mock dumps — M · `todo`
 The ROADMAP M4 load-test exit item, and the proof WU-042's locks scale. A harness that
@@ -1113,9 +1126,9 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 - Activity: date-range filter + pagination past 50 + server-side audit export (SPEC-014 deferred; client CSV caps at the view)
 - Inventory: UI/API upload + import-history screen (MVP import is `portal import` CLI — SPEC-010)
 - Inventory: Excel/.xlsx ingestion (MVP is CSV-only — SPEC-010)
-- Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too) — **partial → WU-042** (block naive replica ops; full leader/replica sequencing stays post-MVP via DECISIONS)
+- Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too) — **partial DONE WU-042** (chain.Create blocks a restore step onto a k8s_patroni target, ADR-012; full leader/replica pause/detach→restore→reinit sequencing + per-instance role awareness stay post-MVP)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
-- Portal self-target ban (research gotcha #2) — enforce in inventory layer when real targets exist — **→ WU-042**
+- Portal self-target ban (research gotcha #2) — **DONE WU-042** (declared `PORTAL_PROTECTED_INSTANCES` set seeded w/ DBName, refused at Start + chain.Create, ErrSelfTarget 403, audited guardrail.denied; ADR-012). Auto-detection needs an inventory connection-tuple schema addition (post-MVP).
 - Bulk/rolling operations (Screen 2 sticky bar); saved views
 - 5-year audit shipping to object storage; SIEM export
 - AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming) — **→ WU-044**
