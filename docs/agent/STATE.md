@@ -5,15 +5,48 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-043 DONE (s29) —
-  load test (concurrent mock dumps).** NEXT = **START WU-044** (maintenance & retention jobs:
-  audit 1y + artifact retention enforcement preserving 'safety' + session GC + dump.yml
-  finding-8 orphan fix; M, on the existing scheduler/tick lifecycle). M4 order = **041 ✓ →
-  042 ✓ → 043 ✓ → 044 → 045 → 046 → 047** (seed → concurrency locks → load test →
-  retention/GC → docs-recon+CI → packaging → retrospective); full ACs/context briefs in
-  BACKLOG "Phase 4" §, grooming rationale in its header note. M4 exit deliverables = the
-  pilot-deployable build (046) + the experiment retrospective (047); close with an M4 gate
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-044 DONE (s30) —
+  maintenance & retention jobs.** NEXT = **START WU-045** (docs-vs-reality reconciliation +
+  cold-start + CI hardening: fresh-clone cold-start evidence, doc/code drift reconcile,
+  Postgres service in CI so DB tests + golden flow stop skipping, pin golangci installer; M).
+  M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 → 046 → 047** (seed → concurrency locks →
+  load test → retention/GC → docs-recon+CI → packaging → retrospective); full ACs/context
+  briefs in BACKLOG "Phase 4" §, grooming rationale in its header note. M4 exit deliverables =
+  the pilot-deployable build (046) + the experiment retrospective (047); close with an M4 gate
   review (author `m4-gate-review` mirroring m3).
+- **Status (s30, WU-044 DONE — maintenance & retention jobs):** the periodic-sweep subsystem a
+  long-running deployment needs (SPEC-044 = docs/specs/maintenance.md, JIT; ADR-013). A new
+  `internal/maintenance.Service` on the scheduler's tick lifecycle — `go maint.Run(ctx)` in
+  main, sweeps ONCE at boot then every `PORTAL_MAINTENANCE_INTERVAL` (default 1h).
+  Architect-implemented (data deletion + audit integrity + retention policy = sensitive).
+  Three best-effort passes: **(1) session GC** `DELETE FROM session WHERE expires_at < now()`
+  (live session structurally excluded — complements SPEC-020's lazy per-token expiry); **(2)
+  artifact retention enforcement** deletes `standard` registry artifacts past
+  `PORTAL_ARTIFACT_RETENTION` (default 90d = 2160h) AND writes an `artifact.reaped` audit_event
+  (actor `maintenance`, linked to the origin run) in ONE modifying-CTE statement — `safety` is
+  structurally unselectable (WHERE `retention_class='standard'`), a non-positive age DISABLES
+  the pass (zero would reap everything — fail-safe); **(3) audit retention** is OBSERVATIONAL
+  — audit_event/auth_event are append-only BY TRIGGER (0003–0005: DELETE can't succeed), so
+  the policy (ADR-013) is retain-in-DB, cold-storage archival post-MVP; the pass reports the
+  oldest-event age and logs when it exceeds `PORTAL_AUDIT_RETENTION` (default 365d = 8760h),
+  mutating NOTHING. **Object bytes:** per ADR-004 the portal never issues `mc rm` — byte TTL
+  is the object store's lifecycle-expiry (engine-side, safety-exempt, → WU-046 runbook); a
+  reaped non-NULL location is logged WARN, never silently orphaned; under the pilot's
+  MockEngine `location` is NULL so there's nothing to expire. **(4) dump.yml finding-8:**
+  post-`pg_dump` tasks wrapped in a `block:`/`always: file state=absent` so a failed upload
+  never orphans real dump bytes (`--syntax-check` EXIT:0 in the runner image). NO migration
+  (existing tables; audit_event needs no CHECK change — the `run.cancel_requested` precedent).
+  3 new config knobs (safe defaults). TESTS (-race): session expired-reaped/live-kept,
+  artifact standard-reaped/safety-preserved/age-boundary/disabled/orphan-object-count, audit
+  no-mutation + age report + DELETE-still-raises, Run boot-sweep + disabled-returns. LIVE DRILL
+  (isolated portal :8097 + scratch DB portal_maint_drill, auth off, tight interval/retention;
+  demo :8080 + dev `portal` DB untouched): seeded 3 sessions/3 artifacts → boot sweep → 1
+  session (live kept), 2 artifacts (old-standard reaped w/ `artifact.reaped` audit
+  actor=maintenance env=test, young-standard + 100d safety kept), `DELETE FROM audit_event`
+  still ERRORs "append-only". Drill torn down, scratch DB dropped. GATE: CHECK-EXIT:0 (golangci
+  0, fmt clean, go test -race ALL pkgs incl. e2e golden flow + new maintenance pkg, vitest
+  116/116). Diff = SPEC-044 + maintenance.go + maintenance_test.go + config (3 knobs) + main
+  (wiring) + dump.yml + ADR-013. No API/UI/seam change; MockEngine + service code UNCHANGED.
 - **Status (s29, WU-043 DONE — load test):** WU-042's instance lock + WU-016's
   single-finalizer are now PROVEN under contention at the ROADMAP M4 scale (25–50 concurrent
   dumps). Deliverable = a skip-gated Go harness (SPEC-043 = docs/specs/load-test.md, JIT)
@@ -301,16 +334,27 @@
 
 ## Next action (be exact)
 
-1. **START WU-044** (maintenance & retention jobs; M; BACKLOG "Phase 4" §). The periodic-sweep
-   subsystem a long-running deployment needs, on the EXISTING scheduler/tick lifecycle. Four
-   cohesive sweeps: (a) audit retention 1y (archive-not-hard-delete per append-only intent —
-   decide in SPEC + DECISIONS); (b) artifact retention enforcement — expire `standard`
-   artifacts past policy from BOTH the registry AND the object store (engine-side delete),
-   PRESERVING `safety` (trustworthy after WU-040 item 6); (c) session GC sweep — reap expired
-   `session` rows (TTL read-enforced only today); (d) M3-gate finding 8 — wrap dump.yml's
-   post-`pg_dump` tasks in a `block:` with `always: file state=absent` so an upload/stat
-   failure never orphans real dump bytes on `/artifacts`. May checkpoint mid-WU between the Go
-   sweeps and the playbook fix. Read the WU-044 entry + context brief; write SPEC-044 JIT.
+1. **START WU-045** (docs-vs-reality reconciliation + cold-start + CI hardening; M; BACKLOG
+   "Phase 4" §). The ROADMAP M4 "docs-vs-reality reconciliation" exit item + accumulated
+   CI/supply-chain debt. **Cold-start:** clean clone on a fresh host → install → migrate →
+   `npm run check` → `build:release` → run, pasted as evidence. **Reconcile:** walk every
+   SPEC/DECISIONS/ARCHITECTURE/STATE claim against the code, resolve/file drifts; refresh the
+   stale demo-m1.md header ("live-verified 2026-07-08"); reconcile WU-004 token hex vs
+   design-brief.md; fix `config.LocateDotenv`'s upward `.env` walk to stop at a repo marker +
+   log the resolved file (M1-gate item 16). **CI:** add a Postgres service to check.yml so DB
+   tests + the golden flow stop skipping (ADR-011 gap); pin the golangci-lint installer to
+   v2.12.2 instead of `curl|sh` from HEAD (M1-gate item 14); bump GH Actions versions + fix
+   the setup-go cache path. May checkpoint between the reconciliation report and the CI
+   changes. Read the WU-045 entry + context brief; write the report JIT (spec optional — this
+   WU is docs/CI, not a module).
+   - WU-044 (s30) is DONE — maintenance & retention. If revisiting: `internal/maintenance`
+     Service (`maintenance.go`), `go maint.Run(ctx)` in main; sweeps = session GC + `standard`
+     artifact reap (audited `artifact.reaped`, `safety` preserved) + audit-age OBSERVATION
+     (append-only, never mutated). Config: `PORTAL_MAINTENANCE_INTERVAL` (1h),
+     `PORTAL_ARTIFACT_RETENTION` (2160h/90d, non-positive disables), `PORTAL_AUDIT_RETENTION`
+     (8760h/365d, observational). Policy = ADR-013; object-store byte TTL deferred to WU-046
+     (store lifecycle, ADR-004). dump.yml has the block/always orphan fix. NO migration. Tests
+     in maintenance_test.go.
    - WU-043 (s29) is DONE — load test. If revisiting: the harness is `runs/load_test.go`
      (B1 distinct-instance parallelism + exactly-once, B2 same-instance contention at scale,
      B3 mixed) + `schedule/stampede_test.go` (B4 boot-stampede), skip-gated via MigratedDB,
@@ -361,9 +405,14 @@
      `PORTAL_ENGINE_NONPROD=mock` + `PORTAL_SEMAPHORE_TEMPLATES=smoke:1`; drills
      use an isolated portal ([[live-drill-isolation]]) — full recipe in
      **docs/demo-m3.md** (setup + reset §§).
-   - Dev stack was UP through s29 (postgres healthy 11d; the WU-043 load drills used only
-     ephemeral MigratedDB scratch DBs, all auto-dropped — the persistent `portal` DB + demo
-     :8080 were untouched). WU-043 added NO migration and NO service code (test-only). pgtarget
+   - Dev stack was UP through s30 (postgres healthy 11d; the WU-044 live drill used an isolated
+     scratch DB portal_maint_drill on it, now dropped — the persistent `portal` DB + demo :8080
+     were untouched). WU-044 added NO migration (uses existing tables). New config (safe
+     defaults, unset in the persistent .env): `PORTAL_MAINTENANCE_INTERVAL` (1h),
+     `PORTAL_ARTIFACT_RETENTION` (2160h=90d), `PORTAL_AUDIT_RETENTION` (8760h=365d) — the
+     maintenance loop runs in the demo/dev binary with these defaults (session GC + artifact
+     reap are harmless on the tiny dev estate; the audit pass only observes). WU-043 added NO
+     migration and NO service code (test-only). pgtarget
      sits RESTORED (widget 4 / ledger 200); minio holds the WU-039 drill artifacts (harmless,
      no retention until WU-044). The persistent dev `portal` DB is still at 0010 — WU-040 added
      0011 and WU-042 added 0012 to the BINARY, but neither migrated the persistent dev DB (all
@@ -639,6 +688,21 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-17 — **WU-044 DONE (s30) — maintenance & retention jobs (SPEC-044, ADR-013)**: the
+  periodic-sweep subsystem, on the scheduler's tick lifecycle (`go maint.Run(ctx)`; boot sweep
+  then every `PORTAL_MAINTENANCE_INTERVAL`, default 1h). New `internal/maintenance.Service`,
+  three best-effort passes: session GC (`DELETE ... expires_at < now()`, live never matched),
+  `standard` artifact reap past `PORTAL_ARTIFACT_RETENTION` (default 90d) with an
+  `artifact.reaped` audit_event (actor maintenance, origin-run-linked) in ONE modifying-CTE —
+  `safety` structurally unselectable, non-positive age disables (fail-safe), and audit-age
+  OBSERVATION (append-only ledgers retained in-DB, cold-storage archival post-MVP; mutates
+  nothing). Object bytes = the store's lifecycle-expiry (engine-side, ADR-004; → WU-046);
+  reaped non-NULL location logged WARN. dump.yml finding-8 fixed (post-`pg_dump` tasks in a
+  `block:`/`always:`; syntax-check EXIT:0). NO migration; 3 config knobs. -race tests per
+  sweep + LIVE DRILL (isolated :8097/portal_maint_drill, torn down): 3 sessions→1 live-kept, 3
+  artifacts→2 (old-standard reaped+audited, young+safety kept), DELETE audit_event still
+  ERRORs append-only. GATE CHECK-EXIT:0 (golangci 0, -race all pkgs incl. e2e golden flow,
+  vitest 116/116). Active → **WU-045** (docs-recon + cold-start + CI).
 - 2026-07-17 — **WU-043 DONE (s29) — load test (concurrent mock dumps)**: WU-042's instance
   lock + WU-016's single-finalizer PROVEN under contention at the ROADMAP M4 scale. A
   skip-gated Go harness (SPEC-043) drives the REAL `runs.Service` over MockEngine on a
@@ -672,17 +736,3 @@
   drill (isolated :8098, torn down): 2 concurrent dumps → 1×201+1×409; self-target crm-test
   → 403; restore onto Patroni → 403, onto VM → 201. GATE CHECK-EXIT:0 (golangci 0, -race all
   pkgs incl. e2e, vitest 116/116). Commit 2bb4b52. Active → **WU-043** (load test).
-- 2026-07-17 — **WU-041 DONE (s27) — staging seed (first M4 WU)**: a deterministic
-  realistic-estate generator (SPEC-041). Architect-implemented (S, backend-only). A PURE
-  `inventory.GenerateEstate(n, seed) string` emits a valid SPEC-010 CSV that the new
-  `portal seed [--instances N] [--seed S]` subcommand feeds through the EXISTING
-  `inventory.Import` — idempotency/cluster-resolution/validation/report all inherited; the
-  seed can't drift from the import contract (reject = generator bug, asserted 0). Env mix
-  computed up front + shuffled (exact ratios: prod max(1,18%)/test 32%/dev dominant),
-  clusters=max(5,n/8) each one platform, names `<cluster>-<env>-<NN>`, prod always windowed;
-  RNG math/rand/v2 PCG(seed,seed) → byte-identical. NO migration/API/UI; test fixtures
-  untouched. 4 tests (determinism/parses-clean/distribution/DB-idempotency). LIVE CLI DRILL
-  (isolated scratch DB, dev+demo untouched): 500 new/0 quarantined then 0 new/500 unchanged;
-  dev 250/test 160/prod 90, 62 clusters, all prod windowed. GATE CHECK-EXIT:0 (golangci 0,
-  -race all pkgs incl. inventory + e2e, vitest 116/116). Diff = main.go+40 + seed.go +
-  seed_test.go + SPEC. Active → **WU-042** (concurrency locks).

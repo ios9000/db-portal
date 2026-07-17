@@ -161,6 +161,50 @@ The M4 correctness hardening (SPEC-042 = docs/specs/concurrency-locks.md; ARCHIT
   reinit-replicas leader/replica sequencing — the "hard engineering item" ARCHITECTURE §7 names;
   and per-instance role awareness (needs an inventory schema addition).
 
+### ADR-013 · Maintenance & retention: reap sessions + standard artifacts; the audit trail is retained in-DB — `accepted` (WU-044, 2026-07-17)
+The periodic-sweep subsystem a long-running deployment needs (SPEC-044 = docs/specs/
+maintenance.md). A new `internal/maintenance.Service` runs on the same tick lifecycle as the
+scheduler (`go maint.Run(ctx)`), sweeping once at boot then every `PORTAL_MAINTENANCE_INTERVAL`
+(default 1h). Three passes, each best-effort and independent:
+
+- **Session GC.** `DELETE FROM session WHERE expires_at < now()` — a plain bulk delete
+  (session is not append-only); the predicate can never match a live session, so a live session
+  is never reaped. Complements SPEC-020's lazy per-token expiry (which only reaps a token when
+  it is next presented). No config; not audited (a session row is not a security event).
+- **Artifact retention enforcement.** Deletes `standard` registry artifacts older than
+  `PORTAL_ARTIFACT_RETENTION` (default 90d = `2160h`), **structurally preserving `safety`**
+  (the WHERE matches `retention_class='standard'`, so safety is unselectable). The delete +
+  an `artifact.reaped` `audit_event` (actor `maintenance`, linked to the artifact's origin run)
+  ride ONE modifying-CTE statement — INSERT into the append-only audit_event is allowed, and
+  readers filter on specific actions (the `run.cancel_requested` precedent), so a new action
+  breaks nothing. `run.artifact_*` columns STAY (history, distinct from the restorable
+  registry — SPEC-030). A non-positive age DISABLES the pass (a zero age would reap everything
+  — fail-safe). **Object bytes are NOT deleted by the portal** (ADR-004: the portal holds no
+  object-store credentials, never issues `mc rm`): byte-level TTL is the object store's own
+  lifecycle-expiry, configured engine-side (the deploy runbook, WU-046), with `safety` in a
+  lifecycle-exempt key space; the portal enforces the registry, the store enforces the bytes,
+  kept consistent by matching the age. Under the pilot's MockEngine `location` is NULL (no
+  object store); a reaped artifact that still carries a non-NULL location is logged at WARN so
+  it is never silently orphaned.
+- **Audit retention = retain in-DB; cold-storage archival is post-MVP.** `audit_event` and
+  `auth_event` are append-only **by database trigger** (0003–0005) — a DELETE cannot succeed
+  — so a retention job can only mean archive-then-purge, and shipping to cold storage is an
+  explicit icebox item ("5-year audit shipping to object storage") beyond MVP. The policy: the
+  ledgers are retained in-database for the pilot's lifetime and the maintenance loop **never
+  mutates them** (respecting the trigger + audit integrity — no silent mutation); the audit
+  pass is *observational*, logging the oldest event's age when it exceeds
+  `PORTAL_AUDIT_RETENTION` (default 365d = `8760h`) so an operator knows when archival becomes
+  necessary. `run` rows are pinned by the audit FK and equally immortal — deliberately: the
+  audit trail is the long-term operational record.
+
+**Rejected:** folding sweeps into `schedule.Service` (muddies its single responsibility);
+hard-deleting audit rows (impossible without dropping the append-only trigger — that IS the
+integrity property); a portal-driven per-object `mc rm` reap (would require object-store
+credentials in the portal, violating ADR-004, or a bespoke engine "reap" job type coupling the
+maintenance loop to the engine seam and minting spurious run/audit rows). Also in this WU
+(m3-gate finding 8): dump.yml's post-`pg_dump` tasks are wrapped in a `block:`/`always:` so a
+failed upload never orphans real dump bytes on the runner volume.
+
 ## Open (inherited from architecture doc §10)
 
 - **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real).

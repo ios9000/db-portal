@@ -51,83 +51,96 @@
       ansible.builtin.set_fact:
         artifact_path: "{{ artifact_dir }}/{{ artifact_name }}"
 
-    - name: run pg_dump (custom format, portable)
-      ansible.builtin.command:
-        argv:
-          - pg_dump
-          - --format=custom
-          - --no-owner
-          - --no-privileges
-          - --file={{ artifact_path }}
-      changed_when: true
+    # Everything that touches the staging file lives in ONE block whose
+    # `always:` removes it (SPEC-044 mini-ADR 6, m3-gate finding 8). pg_dump
+    # writes real bytes to /artifacts; the old best-effort `rm` was the LAST
+    # task, so any failure after the dump (a non-zero `mc cp`, a stat, a size
+    # assert) aborted the play and orphaned those bytes on the shared volume
+    # forever. `always:` runs on both the success and the abort path, so a
+    # failed upload cleans up too — the emit-only-after-verified-upload contract
+    # (WU-035) is unchanged, the cleanup is just moved from success-only to
+    # guaranteed.
+    - name: dump, store, and verify — staging cleaned up either way
+      block:
+        - name: run pg_dump (custom format, portable)
+          ansible.builtin.command:
+            argv:
+              - pg_dump
+              - --format=custom
+              - --no-owner
+              - --no-privileges
+              - --file={{ artifact_path }}
+          changed_when: true
 
-    - name: stat the dump (size + sha256)
-      ansible.builtin.stat:
-        path: "{{ artifact_path }}"
-        checksum_algorithm: sha256
-      register: dumpstat
+        - name: stat the dump (size + sha256)
+          ansible.builtin.stat:
+            path: "{{ artifact_path }}"
+            checksum_algorithm: sha256
+          register: dumpstat
 
-    - name: preflight — the dump is non-empty
-      ansible.builtin.assert:
-        that:
-          - dumpstat.stat.exists
-          - dumpstat.stat.size > 0
-        fail_msg: "pg_dump produced no output at {{ artifact_path }}"
-        quiet: true
+        - name: preflight — the dump is non-empty
+          ansible.builtin.assert:
+            that:
+              - dumpstat.stat.exists
+              - dumpstat.stat.size > 0
+            fail_msg: "pg_dump produced no output at {{ artifact_path }}"
+            quiet: true
 
-    # WU-035 (SPEC-035 mini-ADR 3): store the bytes in object storage. mc reads
-    # the credentialed MC_HOST_dbportal alias from the process environment
-    # (injected engine-side by the Semaphore Environment — no credential named
-    # here). A non-zero mc exit ABORTS the play: a dump that isn't stored must
-    # never reach the emit step, so it registers no artifact.
-    - name: upload the dump to object storage
-      ansible.builtin.command:
-        argv:
-          - mc
-          - cp
-          - "{{ artifact_path }}"
-          - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
-      changed_when: true
+        # WU-035 (SPEC-035 mini-ADR 3): store the bytes in object storage. mc
+        # reads the credentialed MC_HOST_dbportal alias from the process
+        # environment (injected engine-side by the Semaphore Environment — no
+        # credential named here). A non-zero mc exit ABORTS the play: a dump
+        # that isn't stored must never reach the emit step, so it registers no
+        # artifact. The block's `always:` still reclaims the staging file.
+        - name: upload the dump to object storage
+          ansible.builtin.command:
+            argv:
+              - mc
+              - cp
+              - "{{ artifact_path }}"
+              - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
+          changed_when: true
 
-    - name: stat the stored object
-      ansible.builtin.command:
-        argv:
-          - mc
-          - stat
-          - --json
-          - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
-      register: mcstat
-      changed_when: false
+        - name: stat the stored object
+          ansible.builtin.command:
+            argv:
+              - mc
+              - stat
+              - --json
+              - "{{ mc_alias }}/{{ bucket }}/{{ artifact_name }}"
+          register: mcstat
+          changed_when: false
 
-    - name: preflight — stored object size matches the local dump
-      ansible.builtin.assert:
-        that:
-          - (mcstat.stdout | from_json).size | int == dumpstat.stat.size
-        fail_msg: >-
-          stored object size {{ (mcstat.stdout | from_json).size | default('?') }}
-          != dumped file size {{ dumpstat.stat.size }} — upload not verified
-        quiet: true
+        - name: preflight — stored object size matches the local dump
+          ansible.builtin.assert:
+            that:
+              - (mcstat.stdout | from_json).size | int == dumpstat.stat.size
+            fail_msg: >-
+              stored object size {{ (mcstat.stdout | from_json).size | default('?') }}
+              != dumped file size {{ dumpstat.stat.size }} — upload not verified
+            quiet: true
 
-    # Only now that the bytes are stored AND verified do we announce the
-    # artifact. location is the canonical object URL (mini-ADR 2), NOT the
-    # staging path — the volume is staging only from WU-035 on.
-    - name: emit machine-readable result line
-      ansible.builtin.debug:
-        msg: >-
-          DBPORTAL_RESULT={{
-            {
-              'name': artifact_name,
-              'size_bytes': dumpstat.stat.size,
-              'sha256': dumpstat.stat.checksum,
-              'location': 's3://' ~ bucket ~ '/' ~ artifact_name
-            } | to_json | b64encode }}
-
-    # Staging cleanup (mini-ADR 5): the object store is the source of truth now;
-    # the local .dump was only a staging copy pg_dump had to write before mc
-    # could upload it. Best-effort — a cleanup failure must NOT fail a run whose
-    # artifact is already stored and announced.
-    - name: staging cleanup — remove the local dump
-      ansible.builtin.file:
-        path: "{{ artifact_path }}"
-        state: absent
-      failed_when: false
+        # Only now that the bytes are stored AND verified do we announce the
+        # artifact. location is the canonical object URL (mini-ADR 2), NOT the
+        # staging path — the volume is staging only from WU-035 on.
+        - name: emit machine-readable result line
+          ansible.builtin.debug:
+            msg: >-
+              DBPORTAL_RESULT={{
+                {
+                  'name': artifact_name,
+                  'size_bytes': dumpstat.stat.size,
+                  'sha256': dumpstat.stat.checksum,
+                  'location': 's3://' ~ bucket ~ '/' ~ artifact_name
+                } | to_json | b64encode }}
+      always:
+        # Staging cleanup (mini-ADR 6): the object store is the source of truth;
+        # the local .dump was only a staging copy pg_dump had to write before mc
+        # could upload it. Runs whether the block succeeded or aborted, so a
+        # failed upload never orphans bytes. Best-effort — a cleanup failure must
+        # not fail a run whose artifact is already stored and announced.
+        - name: staging cleanup — remove the local dump
+          ansible.builtin.file:
+            path: "{{ artifact_path }}"
+            state: absent
+          failed_when: false

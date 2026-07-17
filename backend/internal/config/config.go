@@ -36,6 +36,18 @@ type Config struct {
 	LockTTL            time.Duration `env:"PORTAL_LOCK_TTL"             envDefault:"30m"`
 	ProtectedInstances string        `env:"PORTAL_PROTECTED_INSTANCES"`
 
+	// Maintenance & retention (SPEC-044). MaintenanceInterval is the sweep
+	// cadence; non-positive disables the loop. ArtifactRetention is the max age
+	// of a `standard` registry artifact before it is reaped — non-positive
+	// DISABLES the artifact sweep (a zero age would reap everything, mini-ADR 5);
+	// `safety` artifacts are never reaped. AuditRetention is observational only:
+	// the append-only ledgers are retained in-DB and the sweep logs when the
+	// oldest event exceeds it (mini-ADR 2). Durations use Go units (e.g. 2160h
+	// = 90d, 8760h = 365d) — the day unit is not supported.
+	MaintenanceInterval time.Duration `env:"PORTAL_MAINTENANCE_INTERVAL" envDefault:"1h"`
+	ArtifactRetention   time.Duration `env:"PORTAL_ARTIFACT_RETENTION"   envDefault:"2160h"`
+	AuditRetention      time.Duration `env:"PORTAL_AUDIT_RETENTION"      envDefault:"8760h"`
+
 	// Notification mail (SPEC-014). NotifyTo empty = notifications off.
 	SMTPHost string `env:"PORTAL_SMTP_HOST" envDefault:"127.0.0.1"`
 	SMTPPort int    `env:"PORTAL_SMTP_PORT" envDefault:"1025"`

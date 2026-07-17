@@ -1041,7 +1041,7 @@ explicit `PORTAL_DB_MAX_CONNS` floor is a WU-046 nice-to-have) and F2 (the seque
 verdicts. No migration, no API/UI, no seam change; MockEngine + service code UNCHANGED (the
 WU is the harness, not a fix).
 
-### WU-044 · Maintenance & retention jobs — M · `todo`
+### WU-044 · Maintenance & retention jobs — M · `done (2026-07-17, s30; SPEC-044 = docs/specs/maintenance.md, ADR-013)`
 The periodic-sweep subsystem a long-running deployment needs, on the existing scheduler/tick
 lifecycle. Four cohesive sweeps: **(a) audit retention (1y)** — expire/archive `audit_event`
 per a documented policy (default likely archive-not-hard-delete given append-only intent —
@@ -1053,19 +1053,45 @@ today — icebox); **(d) M3-gate finding 8** — wrap dump.yml's post-`pg_dump` 
 `block:` with `always: file state=absent` so an upload/stat failure never orphans real dump
 bytes on `/artifacts` (playbook-only, cheap bundled slice). May checkpoint mid-WU between
 the Go sweeps and the playbook fix.
-**AC:**
-- [ ] Audit rows past retention handled per the documented policy; the append-only trigger
-      (0003) and audit integrity are respected (no silent mutation).
-- [ ] `standard` artifacts past policy removed from the registry AND the object store;
-      `safety` artifacts NEVER reaped; the deletion is audited.
-- [ ] Expired sessions reaped on a schedule; a live session is never reaped.
-- [ ] dump.yml orphans no bytes on a post-dump failure (block/always) — re-drilled or
-      syntax-checked; each sweep has a -race test; golden flow green.
+**AC:** (all met — s30; -race tests per sweep + a live boot-sweep drill on isolated portal
+:8097/portal_maint_drill, torn down)
+- [x] Audit rows past retention handled per the documented policy; the append-only trigger
+      (0003) and audit integrity are respected (no silent mutation). (Policy ADR-013:
+      retain-in-DB, cold-storage archival post-MVP; the audit pass is OBSERVATIONAL — reports
+      the oldest-event age, mutates nothing. Live drill: `DELETE FROM audit_event` still
+      ERRORs "append-only" after a sweep; TestObserveAuditAgeNoMutation.)
+- [x] `standard` artifacts past policy removed from the registry AND the object store;
+      `safety` artifacts NEVER reaped; the deletion is audited. (Registry reap deletes
+      `standard` past `PORTAL_ARTIFACT_RETENTION`, `safety` structurally unselectable; each
+      deletion writes an `artifact.reaped` audit_event (actor `maintenance`, linked to the
+      origin run). OBJECT BYTES: per ADR-004 the portal never issues `mc rm` — byte TTL is the
+      store's lifecycle-expiry, engine-side, safety-exempt (→ WU-046 runbook); a reaped
+      non-NULL location is logged WARN, never silently orphaned. Live drill: 3 artifacts → 2
+      (old-standard reaped w/ audit, young-standard + ancient safety kept).)
+- [x] Expired sessions reaped on a schedule; a live session is never reaped. (`DELETE FROM
+      session WHERE expires_at < now()` — live session structurally excluded. Live drill: 3
+      sessions → 1, the live one kept; TestReapExpiredSessions.)
+- [x] dump.yml orphans no bytes on a post-dump failure (block/always) — re-drilled or
+      syntax-checked; each sweep has a -race test; golden flow green. (Post-`pg_dump` tasks
+      wrapped in a `block:`/`always: file state=absent`; `--syntax-check` EXIT:0 in the runner
+      image. Each sweep -race tested; golden flow not-skipped + green.)
 **Verify:** -race tests per sweep (retention boundaries, safety-preservation, session TTL);
-dump.yml `--syntax-check` EXIT:0 (+ optional live orphan drill); `npm run check` green.
+dump.yml `--syntax-check` EXIT:0 (+ optional live orphan drill); `npm run check` green. — DONE.
 **Context brief:** SPEC-014 (notify/retention), WU-030 artifact registry + object-store
 delete (`mc rm` engine-side, ADR-004), SPEC-020 sessions, schedule tick loop, playbooks/
 dump.yml, icebox retention/GC items, docs/agent/reviews/m3-gate.md finding 8.
+**How built:** a new `internal/maintenance.Service` on the scheduler's tick lifecycle (`go
+maint.Run(ctx)` in main; sweeps once at boot then every `PORTAL_MAINTENANCE_INTERVAL`,
+default 1h). Three best-effort passes: session GC (bulk-delete expired), artifact retention
+(delete `standard` past `PORTAL_ARTIFACT_RETENTION` default 90d + `artifact.reaped` audit via
+ONE modifying-CTE statement; `safety` never selected; non-positive age DISABLES the pass —
+zero would reap everything), audit-age OBSERVATION (append-only ledgers retained in-DB, logs
+when oldest > `PORTAL_AUDIT_RETENTION` default 365d, mutates nothing). NO migration (uses
+existing tables; audit_event needs no CHECK change — the `run.cancel_requested` precedent).
+Config: 3 new env knobs (all safe defaults). dump.yml finding-8: post-`pg_dump` tasks wrapped
+in `block:`/`always:`. Policy recorded in ADR-013. Rejected: portal-driven `mc rm` (violates
+ADR-004 or couples maintenance to the engine seam); hard-deleting audit (impossible without
+dropping the trigger — that IS the integrity property).
 
 ### WU-045 · Docs-vs-reality reconciliation + cold-start + CI hardening — M · `todo`
 The ROADMAP M4 "docs-vs-reality reconciliation" exit item plus the accumulated CI/supply-
@@ -1113,6 +1139,12 @@ shown; a break-glass login produces a mailpit alarm; `npm run check` green.
 **Context brief:** ADR-010 (build:release), infra/bootstrap-vm.sh + the demo systemd recipe
 (JOURNAL s16), internal/config (required-var handling), SPEC-020 (break-glass, CookieSecure
 Warn) + notify, ARCHITECTURE §deployment, `.env.example`.
+**Carried from WU-044 (s30):** the runbook + `.env` template must document the maintenance
+knobs (`PORTAL_MAINTENANCE_INTERVAL`/`PORTAL_ARTIFACT_RETENTION`/`PORTAL_AUDIT_RETENTION`) AND
+— for a REAL object store (post-mock) — an **object-store bucket lifecycle-expiry rule**
+matching `PORTAL_ARTIFACT_RETENTION`, with `safety` artifacts in a lifecycle-exempt key space
+(ADR-013/ADR-004: the portal reaps the registry, the store reaps the bytes; the portal never
+issues `mc rm`). For the MockEngine pilot `location` is NULL so there is nothing to expire.
 
 ### WU-047 · Experiment retrospective (STRATEGY §8 metrics) — S · `todo`
 The second ROADMAP M4 exit deliverable, and the true last WU. Docs-only: write the
@@ -1151,7 +1183,7 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 - Portal self-target ban (research gotcha #2) — **DONE WU-042** (declared `PORTAL_PROTECTED_INSTANCES` set seeded w/ DBName, refused at Start + chain.Create, ErrSelfTarget 403, audited guardrail.denied; ADR-012). Auto-detection needs an inventory connection-tuple schema addition (post-MVP).
 - Bulk/rolling operations (Screen 2 sticky bar); saved views
 - 5-year audit shipping to object storage; SIEM export
-- AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming) — **→ WU-044**
+- AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming) — **DONE WU-044 (s30)** (maintenance sweep `DELETE FROM session WHERE expires_at < now()`, live session never matched; SPEC-044 mini-ADR 4).
 - AuthZ: denial-rate alarm — a spike of `authz.denied` should mail the DBA list, not sit silently in auth_event
 - AuthN: break-glass use should ALSO send a mail alarm via notify (today: alarmed audit action + log line only) — **→ WU-046**
 - Role admin CLI (`portal role grant|revoke|list`) — role grants happen only at boot per auth mode today
@@ -1160,4 +1192,4 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 - Scheduler: boot-stampede spreading — after long downtime, many coalesced catch-ups fire in one tick; spread them (M4 load-test territory) — **VALIDATED WU-043 (s29), NO FIX NEEDED for the pilot** (SPEC-043 F2 + `schedule/stampede_test.go` B4): `fireDue` already fires due schedules SEQUENTIALLY, one bounded `fire` at a time, so a stampede is self-rate-limited — not a thundering herd of parallel Starts; the WU-042 lock serializes any same-instance collision to `skipped_overlap`. Add per-tick jitter/spread only if a future estate makes even sequential catch-up too bursty. Kept here as a post-pilot nice-to-have.
 - DB pool sizing: `db.NewPool` uses pgxpool defaults (`MaxConns = max(4, NumCPU)`) — **VALIDATED ADEQUATE WU-043 (s29)** (SPEC-043 F1): conns are held only per-tx/per-poll (never for a goroutine's lifetime), so 50 concurrent dumps + watchers overlapped fully (peak 50/50, ≈400 runs/s) without exhaustion or deadlock. An explicit `PORTAL_DB_MAX_CONNS` floor to decouple the pool from core count is a **→ WU-046** packaging nice-to-have, not a blocker.
 - Schedule-change ledger — schedule rows are mutable with no edit history; consider audit_event actions or a ledger table
-- Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work) — **→ WU-044**
+- Artifact retention ENFORCEMENT job (registry stores class only from WU-030; delete/expire is M4+ policy work) — **DONE WU-044 (s30), registry side** (maintenance sweep deletes `standard` past `PORTAL_ARTIFACT_RETENTION`, preserves `safety`, audits each reap; SPEC-044 mini-ADR 3, ADR-013). **Object-store byte reclamation** is delegated to the store's lifecycle-expiry (engine-side per ADR-004, safety-exempt) — wire the bucket lifecycle rule in the deploy runbook — **→ WU-046**.

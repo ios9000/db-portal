@@ -27,6 +27,7 @@ import (
 	"github.com/ios9000/db-portal/backend/internal/db"
 	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/inventory"
+	"github.com/ios9000/db-portal/backend/internal/maintenance"
 	"github.com/ios9000/db-portal/backend/internal/notify"
 	"github.com/ios9000/db-portal/backend/internal/runs"
 	"github.com/ios9000/db-portal/backend/internal/schedule"
@@ -165,6 +166,17 @@ func run(log *slog.Logger, args []string) error {
 	// never races the repair of its own half-fired predecessor.
 	sched := schedule.New(pool, runSvc, log)
 	go sched.Run(ctx)
+
+	// The maintenance loop (SPEC-044, ADR-013): the same tick lifecycle,
+	// reaping expired sessions + standard artifacts past retention and
+	// observing the append-only audit trail's age. Retention ages come from
+	// config; a non-positive interval or artifact age disables that pass
+	// (fail-safe — a zero age would reap everything).
+	maint := maintenance.New(pool, log)
+	maint.Interval = cfg.MaintenanceInterval
+	maint.ArtifactRetention = cfg.ArtifactRetention
+	maint.AuditRetention = cfg.AuditRetention
+	go maint.Run(ctx)
 
 	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
