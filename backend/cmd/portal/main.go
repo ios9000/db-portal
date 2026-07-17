@@ -3,11 +3,13 @@
 //	portal                       serve the API + embedded SPA
 //	portal migrate up|down|status  run embedded goose migrations
 //	portal import <file.csv>     import the instance inventory (SPEC-010)
+//	portal seed [--instances N] [--seed S]  load a synthetic estate (SPEC-041)
 //	portal version               print the build version
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,8 +67,11 @@ func run(log *slog.Logger, args []string) error {
 		}
 		return runImport(context.Background(), cfg, args[1])
 	}
+	if len(args) > 0 && args[0] == "seed" {
+		return runSeed(context.Background(), cfg, args[1:])
+	}
 	if len(args) > 0 {
-		return fmt.Errorf("unknown command %q (want migrate, import or version)", args[0])
+		return fmt.Errorf("unknown command %q (want migrate, import, seed or version)", args[0])
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -261,6 +266,40 @@ func runImport(ctx context.Context, cfg config.Config, path string) error {
 	defer pool.Close()
 
 	report, err := inventory.Import(ctx, pool, filepath.Base(path), f)
+	if err != nil {
+		return err
+	}
+	for _, rej := range report.Rejects {
+		fmt.Fprintf(os.Stderr, "quarantined line %d: %s\n", rej.Line, strings.Join(rej.Reasons, "; "))
+	}
+	fmt.Println(report)
+	return nil
+}
+
+// runSeed implements `portal seed [--instances N] [--seed S]` (SPEC-041): it
+// generates a deterministic synthetic estate and loads it through the SAME
+// SPEC-010 import path as `portal import`, so idempotency, cluster resolution,
+// and validation are inherited. A clean estate never quarantines a row; exit 0
+// on success.
+func runSeed(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("seed", flag.ContinueOnError)
+	instances := fs.Int("instances", 500, "number of instances to generate")
+	seed := fs.Int64("seed", 41, "RNG seed (same seed reproduces the same estate)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *instances < 1 {
+		return fmt.Errorf("usage: portal seed [--instances N>=1] [--seed S]")
+	}
+
+	pool, err := db.NewPool(ctx, cfg.DSN())
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	report, err := inventory.Import(ctx, pool, "seed",
+		strings.NewReader(inventory.GenerateEstate(*instances, *seed)))
 	if err != nil {
 		return err
 	}

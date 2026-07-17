@@ -936,7 +936,7 @@ playbooks/verify.yml:37 (the fail-closed checksum-length assert that makes item 
 > becomes submittable at M3 exit — surface to the user; it runs in parallel and gates the
 > real-estate rollout, not the M4 code.
 
-### WU-041 · Staging seed — realistic estate fixture — S · `todo`
+### WU-041 · Staging seed — realistic estate fixture — S · `done (2026-07-17, s27; SPEC-041 = docs/specs/staging-seed.md)`
 The prerequisite tooling for the load test (043), cold-start (045), and a realistic pilot
 (046): a deterministic generator that populates the ~500-instance estate the product
 targets (CLAUDE.md), across all envs and multiple clusters, so guardrail/window/lock

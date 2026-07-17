@@ -5,15 +5,34 @@
 
 ## Now
 
-- **Active:** M3 CLOSED (gate passed, ALL fix WUs landed 037→040). **PHASE 4 (M4 —
-  Hardening) GROOMED (s26).** NEXT = **START WU-041** (staging seed — realistic estate
-  fixture, S, the first M4 WU). M4 order = **041 → 042 → 043 → 044 → 045 → 046 → 047**
-  (seed → concurrency locks → load test → retention/GC → docs-recon+CI → packaging →
-  retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in
-  its header note. M4 exit deliverables = the pilot-deployable build (046) + the
-  experiment retrospective (047); close with an M4 gate review (author `m4-gate-review`
-  mirroring m3). Phase-3 execution order was 030 → 032 → 031 → 033 → 034 → 035 → 036 →
-  **M3 gate ✓** → **037 ✓** → **038 ✓** → **039 ✓** → **040 ✓**.
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-041 DONE (s27) —
+  staging seed.** NEXT = **START WU-042** (concurrency locks — instance TTL lock across
+  all launch paths + portal self-target ban + naive-replica block; M, architect-
+  implemented, concurrency-sensitive). M4 order = **041 ✓ → 042 → 043 → 044 → 045 → 046 →
+  047** (seed → concurrency locks → load test → retention/GC → docs-recon+CI → packaging →
+  retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming rationale in its
+  header note. M4 exit deliverables = the pilot-deployable build (046) + the experiment
+  retrospective (047); close with an M4 gate review (author `m4-gate-review` mirroring m3).
+- **Status (s27, WU-041 DONE — staging seed):** the first M4 WU, a deterministic
+  realistic-estate generator (SPEC-041 = docs/specs/staging-seed.md, JIT). Architect-
+  implemented directly (S, no UI, backend-only → delegation overhead > diff, per the
+  WU-023/030 carve-out). DESIGN: a PURE `inventory.GenerateEstate(n, seed) string` emits a
+  valid SPEC-010 CSV that the new `portal seed [--instances N] [--seed S]` subcommand feeds
+  through the EXISTING `inventory.Import` — idempotency (natural key), cluster resolution,
+  validation, and the report all inherited; the seed can't drift from the import contract
+  (a reject = generator bug, asserted 0). NO migration/API/UI; the 8-row test fixtures
+  untouched. Env mix computed up front + shuffled so ratios hold EXACTLY (prod
+  max(1,18%)/test 32%/dev remainder-dominant); clusters=max(5,n/8), each ONE platform
+  (two-platform cluster self-quarantines); names `<cluster>-<env>-<NN>`; prod always
+  windowed (WU-023 parser coverage). RNG = math/rand/v2 PCG(seed,seed), fixed call order →
+  byte-identical output. 4 tests (determinism, parses-clean, distribution, DB idempotency).
+  LIVE CLI DRILL (isolated scratch DB portal_seed_drill, PORTAL_DB_NAME override; dev
+  `portal` DB + demo :8080 untouched): `portal seed --instances 500 --seed 41` → 500 new/0
+  quarantined; RE-run → 0 new/500 unchanged (idempotent); distribution = dev 250/test
+  160/prod 90 (non-prod dominates, prod non-empty), 62 clusters (31 patroni/31 vm), all 90
+  prod windowed. Scratch DB dropped. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs
+  incl. inventory FRESH + e2e, vitest 116/116). Diff = main.go (+40) + seed.go + seed_test.go
+  + SPEC. **The seed is now available for the WU-043 load test.**
 - **Status (s26, PHASE 4 GROOMED — M4 decomposed into 7 WUs):** with all M3-gate
   fixes landed, groomed the M4 "Hardening" phase against the ROADMAP M4 exit criteria +
   the icebox debt. Filed **WU-041** (staging seed, S) → **WU-042** (concurrency locks:
@@ -218,20 +237,23 @@
 
 ## Next action (be exact)
 
-1. **START WU-041** (staging seed — realistic estate fixture, S; BACKLOG "Phase 4" §).
-   The first M4 WU and a prerequisite for the load test (043) + cold-start (045): a
-   deterministic, idempotent generator that populates the ~500-instance estate across all
-   envs + ≥5 clusters (prod slice non-empty for ritual coverage), via the WU-010 `portal
-   import` path or a thin `portal seed` subcommand — no new schema, small test fixtures
-   untouched. Write SPEC-041 just-in-time at start (specs stay JIT — ROADMAP sequencing
-   rule). Delegation candidate: tight-brief, Sonnet-implementable per the delegation model.
-   Then proceed 041 → 042 → 043 → 044 → 045 → 046 → 047; M4 exit = pilot build (046) +
-   retrospective (047), closed by an `m4-gate-review`.
-   - Phase 4 is GROOMED (s26): all 7 WUs have ACs + context briefs in BACKLOG; the header
-     note there carries the execution-order rationale. Promoted icebox debt is annotated
-     `→ WU-0xx` in place.
+1. **START WU-042** (concurrency locks — instance TTL lock + self-target ban; M; BACKLOG
+   "Phase 4" §). The headline M4 correctness hardening, architect-implemented (concurrency-
+   sensitive): generalize the scheduler's instance-ONLY overlap probe (executor.go:80-132)
+   into a real lock enforced at `runs.Service.Start` across ALL launch paths (button + chain
+   + schedule), with a TTL so a dead holder self-heals (symmetric with SweepOrphans, not a
+   wedge). Fold research gotcha #2 (portal self-target ban) + a partial of #1 (block naive
+   replica ops; full Patroni sequencing stays post-MVP via DECISIONS). Guardrails/audit/
+   ritual UNCHANGED — the lock is a new gate in front. Decide advisory-lock vs lock-table in
+   SPEC-042 (likely a lock row: survives restarts, carries the TTL, auditable). Write
+   SPEC-042 JIT at start. The WU-041 seed is available to exercise contention at scale.
+   - WU-041 (s27) is DONE — staging seed. If revisiting: `inventory.GenerateEstate(n, seed)`
+     (seed.go) is a pure SPEC-010 CSV generator; `portal seed [--instances N] [--seed S]`
+     feeds it through the existing `inventory.Import`. Defaults N=500/seed=41. No schema/UI.
+   - Phase 4 is GROOMED: all 7 WUs have ACs + context briefs in BACKLOG; the header note
+     carries the execution-order rationale. Promoted icebox debt is annotated `→ WU-0xx`.
    - Milestone bookkeeping still open: mark M3 EXIT in ROADMAP.md (demo-m3.md is the exit
-     twin) when convenient; not blocking WU-041.
+     twin) when convenient; not blocking.
    - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
      package** (ARCHITECTURE §8.2) becomes submittable at M3 exit — surface to the user.
    - WU-040 (s26) is DONE — the LOW bundle. If revisiting: item 5 = the
@@ -535,6 +557,20 @@
 
 ## Checkpoint log (last 3, newest first)
 
+- 2026-07-17 — **WU-041 DONE (s27) — staging seed (first M4 WU)**: a deterministic
+  realistic-estate generator (SPEC-041). Architect-implemented (S, backend-only). A PURE
+  `inventory.GenerateEstate(n, seed) string` emits a valid SPEC-010 CSV that the new
+  `portal seed [--instances N] [--seed S]` subcommand feeds through the EXISTING
+  `inventory.Import` — idempotency/cluster-resolution/validation/report all inherited; the
+  seed can't drift from the import contract (reject = generator bug, asserted 0). Env mix
+  computed up front + shuffled (exact ratios: prod max(1,18%)/test 32%/dev dominant),
+  clusters=max(5,n/8) each one platform, names `<cluster>-<env>-<NN>`, prod always windowed;
+  RNG math/rand/v2 PCG(seed,seed) → byte-identical. NO migration/API/UI; test fixtures
+  untouched. 4 tests (determinism/parses-clean/distribution/DB-idempotency). LIVE CLI DRILL
+  (isolated scratch DB, dev+demo untouched): 500 new/0 quarantined then 0 new/500 unchanged;
+  dev 250/test 160/prod 90, 62 clusters, all prod windowed. GATE CHECK-EXIT:0 (golangci 0,
+  -race all pkgs incl. inventory + e2e, vitest 116/116). Diff = main.go+40 + seed.go +
+  seed_test.go + SPEC. Active → **WU-042** (concurrency locks).
 - 2026-07-16 — **PHASE 4 GROOMED (s26)**: with M3 closed (all fix WUs landed), decomposed
   the M4 "Hardening" phase into 7 WUs against the ROADMAP M4 exit criteria + icebox debt,
   each with ACs + context brief in BACKLOG "Phase 4" §. Order 041 (staging seed, S) → 042
@@ -564,18 +600,3 @@
   pins 0011 (new `indexExists`). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs
   incl. db/engine/runs FRESH, golden flow not-skipped 2.04s, vitest 116/116). No
   UI/seam change; MockEngine untouched. Active → **groom + start Phase 4**.
-- 2026-07-16 — **WU-039 DONE (s26) — restore.yml re-fetch footgun**: the MEDIUM
-  playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
-  {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
-  volume — an interrupted fetch leaves a partial file, the next attempt SKIPS the
-  fetch and hashes the partial → the operator told their GOOD backup is "tampered"
-  (worst on the Resume-after-halt path). FIX (playbook-only): dropped `creates:` and
-  added a `clear any stale staging file` task before the fetch so a partial can never
-  masquerade as the artifact. dump.yml/verify.yml confirmed footgun-free (not changed).
-  All 3 playbooks `--syntax-check` EXIT:0. LIVE DRILL (isolated :8099 +
-  portal_drill039, semaphore engine; demo :8080 untouched): planted a 2000-byte
-  partial at the staging path → restore → CHAIN SUCCESS (restore task
-  `ok=9 changed=4 skipped=0`: clear→changed, fetch→changed NOT skipped, checksum
-  assert→ok), widget back; corrupt object → HALTED at verify (target untouched, ONE
-  mail); fix + resume → SUCCESS. GATE: CHECK-EXIT:0 (regression, no Go/FE change,
-  vitest 116/116). Drill torn down, scratch DB dropped. Active → **WU-040**.
