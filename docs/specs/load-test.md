@@ -25,8 +25,12 @@ The invariants under test are internal (`runs.Service` + the `instance_lock`
 row + the audit trail), so the harness drives the **real** `runs.Service` over
 **MockEngine** against a **scratch DB** via `testutil.MigratedDB` — the same
 seam every runs test uses. That makes it part of `go test -race ./...` (the
-gate) with zero new lifecycle: it runs on the VM (dev Postgres up) and *skips*
-in CI (no Postgres), exactly like the Semaphore itest. A standalone
+gate) with zero new lifecycle: it runs wherever a Postgres is reachable and
+*skips* otherwise. (This §'s original "*skips* in CI (no Postgres)" was
+**superseded by WU-045**, which added a Postgres service to `check.yml`; the
+harness now runs in CI too. Its assertions are runner-speed-robust —
+parallelism is only asserted `>= 2`, never a hard peak — so a slow shared
+runner cannot make it flaky.) A standalone
 `portal loadtest` binary was rejected — it would duplicate the service wiring,
 escape `-race`, and need its own teardown. The full-scale run (500-instance
 seed, 50 concurrent) is a **live drill** of the same code paths on the VM, its

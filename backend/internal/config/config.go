@@ -151,26 +151,63 @@ func Load(dotenvPath string) (Config, error) {
 	return cfg, nil
 }
 
-// LocateDotenv walks up from the CWD looking for a .env file and returns
-// its path, or "" if none exists (Load treats "" as "no dotenv file").
-// Dev runs the binary from backend/ (or tests from their package dir)
-// while .env lives at the repo root; in prod there is no .env at all.
+// LocateDotenv returns the path to the .env file config.Load should read, or
+// "" for none (Load treats "" as "no dotenv file"). Resolution:
+//
+//  1. PORTAL_DOTENV, if set, is honored verbatim — an explicit path, or "" to
+//     disable the search. This is the escape hatch for a prod/systemd deploy,
+//     where config comes from the process env / EnvironmentFile.
+//  2. Otherwise walk UP from the CWD for a .env, but confine the search to the
+//     repository: never look above the repo root (the nearest ancestor holding
+//     .git). Dev runs the binary from backend/ (or a test from its package
+//     dir) while .env lives at the repo root — both inside the repo, so the
+//     bounded walk still finds it. Outside any repo (a standalone prod binary)
+//     the boundary is the CWD itself, so only ./.env is considered and a stray
+//     .env in an unrelated parent can never be silently adopted (M1-gate item
+//     16). main logs the resolved path at startup.
 func LocateDotenv() string {
-	dir, err := os.Getwd()
+	if p, ok := os.LookupEnv("PORTAL_DOTENV"); ok {
+		return p
+	}
+	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-	for {
-		path := filepath.Join(dir, ".env")
-		if _, err := os.Stat(path); err == nil {
+	boundary := repoBoundary(cwd)
+	for dir := cwd; ; {
+		if path := filepath.Join(dir, ".env"); isRegularFile(path) {
 			return path
+		}
+		if dir == boundary {
+			return ""
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// repoBoundary returns the topmost directory LocateDotenv may search: the
+// nearest ancestor of cwd (inclusive) that holds a .git entry — the repo root —
+// or cwd itself when cwd is not inside a repository. .git may be a directory (a
+// normal clone) or a file (a worktree/submodule), so existence, not dir-ness,
+// is the test. go.mod is deliberately NOT a boundary: it lives in backend/, one
+// level below the repo root where .env sits, so stopping there would miss it.
+func repoBoundary(cwd string) string {
+	for dir := cwd; ; {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			return cwd
 		}
 		dir = parent
 	}
+}
+
+// isRegularFile reports whether path exists and is a regular file (not a dir).
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // SMTPAddr returns the notification SMTP endpoint as host:port.

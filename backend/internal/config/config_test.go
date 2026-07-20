@@ -114,6 +114,74 @@ func TestProtectedInstanceSet(t *testing.T) {
 		config.Config{DBName: "portal"}.ProtectedInstanceSet())
 }
 
+func TestLocateDotenvExplicitOverride(t *testing.T) {
+	// PORTAL_DOTENV wins verbatim — an explicit path, or "" to disable the
+	// search (the prod/systemd escape hatch).
+	t.Setenv("PORTAL_DOTENV", "/etc/dbportal/portal.env")
+	require.Equal(t, "/etc/dbportal/portal.env", config.LocateDotenv())
+
+	t.Setenv("PORTAL_DOTENV", "")
+	require.Empty(t, config.LocateDotenv(), "empty PORTAL_DOTENV disables the .env search")
+}
+
+func TestLocateDotenvFindsRepoRootEnv(t *testing.T) {
+	// Dev runs from a subdir (e.g. backend/internal/config) while .env lives at
+	// the repo root; the bounded walk still finds it.
+	unsetenv(t, "PORTAL_DOTENV")
+	repo := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(repo, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".env"), []byte("PORTAL_DB_NAME=fromrepo\n"), 0o600))
+	sub := filepath.Join(repo, "backend", "internal", "config")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+
+	got := config.LocateDotenv()
+	require.NotEmpty(t, got, "the repo-root .env must be found from a subdir")
+	b, err := os.ReadFile(got)
+	require.NoError(t, err)
+	require.Contains(t, string(b), "fromrepo")
+}
+
+func TestLocateDotenvStopsAtRepoRoot(t *testing.T) {
+	// The footgun (M1-gate item 16): a .env in a parent ABOVE the repo root
+	// must never be adopted. Layout: outer/.env (foreign) → outer/repo/.git
+	// (the repo root, no .env of its own) → outer/repo/backend (the CWD).
+	unsetenv(t, "PORTAL_DOTENV")
+	outer := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outer, ".env"), []byte("PORTAL_DB_NAME=foreign\n"), 0o600))
+	repo := filepath.Join(outer, "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	sub := filepath.Join(repo, "backend")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+
+	require.Empty(t, config.LocateDotenv(),
+		"must not walk above the repo root into a foreign parent .env")
+}
+
+func TestLocateDotenvOutsideRepoChecksCwdOnly(t *testing.T) {
+	// No repo marker anywhere: the boundary is the CWD itself, so a parent .env
+	// is still never adopted, but a .env in the CWD is.
+	unsetenv(t, "PORTAL_DOTENV")
+	base := t.TempDir()
+	sub := filepath.Join(base, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	t.Chdir(sub)
+	if config.LocateDotenv() != "" {
+		t.Skip("temp dir sits under an unexpected .git/.env ancestor; skipping the rootless case")
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(base, ".env"), []byte("PORTAL_DB_NAME=parent\n"), 0o600))
+	require.Empty(t, config.LocateDotenv(), "outside a repo, a parent .env must be ignored")
+
+	require.NoError(t, os.WriteFile(filepath.Join(sub, ".env"), []byte("PORTAL_DB_NAME=here\n"), 0o600))
+	got := config.LocateDotenv()
+	require.NotEmpty(t, got)
+	b, err := os.ReadFile(got)
+	require.NoError(t, err)
+	require.Contains(t, string(b), "here")
+}
+
 func TestEngineNonProdDefaultsToMock(t *testing.T) {
 	unsetenv(t, "PORTAL_ENGINE_NONPROD")
 	cfg, err := config.Load("")

@@ -51,9 +51,15 @@ func run(log *slog.Logger, args []string) error {
 		return nil
 	}
 
-	cfg, err := config.Load(config.LocateDotenv())
+	dotenv := config.LocateDotenv()
+	cfg, err := config.Load(dotenv)
 	if err != nil {
 		return err
+	}
+	if dotenv != "" {
+		log.Info("loaded dotenv file", "path", dotenv)
+	} else {
+		log.Info("no dotenv file found; using process env + defaults")
 	}
 
 	if len(args) > 0 && args[0] == "migrate" {

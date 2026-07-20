@@ -1,8 +1,12 @@
 /*
  * Design tokens — the single place visual grammar is defined (WU-004).
- * Source: design brief §Design system (Inter, 8px grid, env + status colors).
- * Exact hex values pending the brief extract on this machine; these are
- * accessible placeholders honoring the documented rules:
+ * Source: design brief §Design system (docs/specs/design-brief.md), reconciled
+ * against the brief in WU-045. The brief pins exactly one hex — subtle borders
+ * #E5E7EB (--border below) — and 8px grid, 8px card radius, Inter, 1200px
+ * content max-width; the env + status palettes are named semantically there
+ * (PROD red / TEST amber / DEV gray; running blue / success green / failed red
+ * / warning amber / waiting purple / queued-skipped gray), so the exact hexes
+ * below are a cohesive, WCAG-AA-contrast set implementing those names. Rules:
  *   - PROD red / TEST amber / DEV gray, always paired with a text label
  *     (redundant encoding — never color alone).
  *   - All spacing on the 8px grid.
@@ -24,7 +28,7 @@
   /* surfaces & text */
   --bg: #ffffff;
   --surface: #f8fafc;
-  --border: #e2e8f0;
+  --border: #e5e7eb; /* brief §Design system: subtle borders */
   --text: #334155;
   --text-muted: #64748b;
   --text-strong: #0f172a;

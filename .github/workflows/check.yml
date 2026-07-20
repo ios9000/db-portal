@@ -3,19 +3,54 @@ on:
   push:
     branches: [main]
   pull_request:
+
+# Point the DB-backed tests + golden-flow e2e at the postgres service below so
+# they RUN in CI instead of skipping (ADR-011 gap, closed in WU-045). testutil
+# builds the DSN from these; a fresh checkout has no .env (gitignored), so the
+# process env + defaults decide. The VM gate already covers these — this brings
+# CI to parity.
+env:
+  PORTAL_DB_HOST: 127.0.0.1
+  PORTAL_DB_PORT: "5432"
+  PORTAL_DB_USER: portal
+  PORTAL_DB_PASSWORD: portal
+  PORTAL_DB_NAME: portal
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: portal
+          POSTGRES_PASSWORD: portal
+          POSTGRES_DB: portal
+        ports:
+          - 5432:5432
+        # Gate the steps on readiness so the first CREATE DATABASE (scratch DBs
+        # via testutil.MigratedDB) never races the container's boot.
+        options: >-
+          --health-cmd "pg_isready -U portal -d portal"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
+          # go.mod/go.sum live in backend/, not the repo root — point the module
+          # cache at them so it actually hits (was a silent miss before WU-045).
+          cache-dependency-path: backend/go.sum
       - name: install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+        # Pin the installer script AND the binary to the VM's version (2.12.2),
+        # not `curl | sh` from HEAD — supply-chain + silent lint drift (M1-gate
+        # item 14). Bump in lockstep with the VM (CLAUDE.md) when upgrading.
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.12.2/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
       - run: npm install --ignore-scripts
       - run: cd frontend && npm ci
       - run: npm run check

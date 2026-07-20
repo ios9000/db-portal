@@ -5,8 +5,11 @@ one-click dump on TEST → live logs → artifact → a run that ends badly (aud
 the PROD ritual. Runs against MockEngine (ADR-002) — every portal layer above the
 engine seam is the real production code path.
 
-Automated twin: `backend/e2e/golden_flow_test.go` (in `npm run check`, ADR-011).
-Everything below was live-verified on the release binary 2026-07-08 (JOURNAL s07).
+Automated twin: `backend/e2e/golden_flow_test.go` (in `npm run check`, ADR-011) —
+the hero flow is re-verified on every gate run, so it cannot silently rot. The
+beats below were first live-verified on the release binary 2026-07-08 (JOURNAL
+s07) and last re-walked live through JOURNAL s13; the header was reconciled in
+WU-045 (2026-07-20) — the automated twin, not this date, is the standing proof.
 
 ## Setup (before the clock — ~2 min once)
 

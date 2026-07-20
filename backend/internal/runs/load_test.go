@@ -26,9 +26,12 @@ import (
 // under contention, the invariants WU-042 (instance lock) and WU-016
 // (single-finalizer) promise: exactly-once finalize, per-instance
 // serialization, cross-instance parallelism, and zero orphaned runs. Like
-// every runs test it rides a scratch DB via testutil.MigratedDB, so it runs on
-// the VM (dev Postgres up, part of the gate) and skips in CI (mini-ADR 1). The
-// full-scale 500-instance/50-concurrent run is a live drill of this same code.
+// every runs test it rides a scratch DB via testutil.MigratedDB, so it runs
+// wherever a Postgres is reachable and skips otherwise. (SPEC-043 mini-ADR 1
+// said "skips in CI"; WU-045 added a Postgres service to check.yml, so it now
+// runs in CI too — its assertions are runner-speed-robust: parallelism is only
+// asserted >= 2, never a hard peak.) The full-scale 500-instance/50-concurrent
+// run is a live drill of this same code via PORTAL_LOADTEST_INSTANCES.
 
 // newLoadService seeds a realistic estate of nInstances (SPEC-041 generator)
 // into a fresh scratch DB and returns a runs.Service over fast mock engines.

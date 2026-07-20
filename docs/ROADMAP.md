@@ -44,6 +44,11 @@ grooming — the exit criterion had no covering WU).
 failure, notifies, resumes; the SAME portal code runs Mock and Semaphore engines behind
 the adapter. *Real-project gate: security vetting package (arch doc §8.2) submittable.*
 
+**Exited** (s22, WU-036; recorded in WU-045): all exit criteria met — the exit twin is
+`docs/demo-m3.md` (8 beats), the M3 gate review is `docs/agent/reviews/m3-gate.md`
+(8 findings, 0 criticals, fix WUs 037–040 all landed). The M4 gate review runs after WU-047.
+The security-vetting package (arch §8.2) is now submittable — surfaced to the user.
+
 ## M4 — Hardening
 
 Concurrency locks, load test (25–50 concurrent dumps), audit retention job, staging seed,

@@ -101,7 +101,12 @@ jittered). A staging portal pointed only at non-prod rehearses releases.
 
 - Cancel semantics: killing Ansible doesn't stop a running server-side operation;
   per-operation cancel policy needed (Icebox, pre-M3 grooming).
-- Patroni-aware restore sequencing (M3, prototype first).
-- Locking: same op, same instance, two clickers — hierarchical TTL locks (M4).
+- Patroni-aware restore sequencing (M3, prototype first). *WU-042/ADR-012: a restore step
+  onto a `k8s_patroni` target is refused (ErrPatroniRestore) — dumps stay allowed; the full
+  pause/detach → restore → reinit sequencing remains post-MVP.*
+- Locking: same op, same instance, two clickers — hierarchical TTL locks (M4). *Delivered
+  WU-042/ADR-012: the `instance_lock` row (PK instance_id, TTL backstop) is acquired in
+  `runs.Service.Start`'s tx on every launch path and released on finalize; a still-live
+  holder is never stolen. Proven under 25–50 concurrent load in WU-043.*
 - Playbook hardening (idempotency, machine-readable outcomes) is project scope, not a given.
 - Timezones/DST for schedules and windows (WU-022 must decide storage in UTC + display rules).
