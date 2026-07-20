@@ -5,15 +5,53 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-044 DONE (s30) —
-  maintenance & retention jobs.** NEXT = **START WU-045** (docs-vs-reality reconciliation +
-  cold-start + CI hardening: fresh-clone cold-start evidence, doc/code drift reconcile,
-  Postgres service in CI so DB tests + golden flow stop skipping, pin golangci installer; M).
-  M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 → 046 → 047** (seed → concurrency locks →
-  load test → retention/GC → docs-recon+CI → packaging → retrospective); full ACs/context
-  briefs in BACKLOG "Phase 4" §, grooming rationale in its header note. M4 exit deliverables =
-  the pilot-deployable build (046) + the experiment retrospective (047); close with an M4 gate
-  review (author `m4-gate-review` mirroring m3).
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-045 DONE (s31) —
+  docs-vs-reality reconciliation + cold-start + CI hardening.** NEXT = **START WU-046**
+  (packaging for a pilot deployment: real systemd unit + `.env` deploy template + deploy
+  runbook + break-glass mail alarm + CookieSecure/TLS guidance; M — the pilot-deployable
+  build, an M4 exit deliverable). M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 ✓ →
+  046 → 047** (seed → concurrency locks → load test → retention/GC → docs-recon+CI →
+  packaging → retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming
+  rationale in its header note. M4 exit deliverables = the pilot-deployable build (046) +
+  the experiment retrospective (047); close with an M4 gate review (author `m4-gate-review`
+  mirroring m3).
+- **Status (s31, WU-045 DONE — docs-recon + cold-start + CI hardening):** the ROADMAP M4
+  "docs-vs-reality reconciliation" exit item + the accumulated CI/supply-chain debt, in one M
+  WU (docs/CI, no module → no SPEC; report = `docs/agent/reviews/wu-045-reconciliation.md`).
+  **RECONCILE (7 drifts resolved):** (R1) `frontend/src/index.css` header claimed "hex values
+  pending the brief extract on this machine" — the brief has been on the VM since 2026-07-07;
+  rewrote the comment + aligned `--border` #e2e8f0→**#e5e7eb** (the brief's one exact hex; env/
+  status palettes are named semantically there, kept as a documented WCAG-AA set). (R2) demo-
+  m1.md header "live-verified 2026-07-08" refreshed (the golden-flow twin is the standing
+  proof; last live re-walk s13). (R3) **`config.LocateDotenv` foreign-.env footgun (M1-gate
+  item 16)**: the upward walk hit the filesystem root → could adopt a stray parent `.env`, and
+  nothing logged which file loaded. FIX = bound the walk at the **repo root** (nearest ancestor
+  with `.git`; go.mod is NOT the boundary — it's in backend/, one level below where `.env`
+  lives) + a **`PORTAL_DOTENV`** explicit-path/disable override; `main` logs the resolved path
+  ("loaded dotenv file" / "no dotenv file found"). 4 new tests (override, finds-repo-root-from-
+  subdir, **stops-at-repo-root** = the footgun, outside-repo-checks-CWD-only w/ self-skip
+  guard). (R4) `.env.example` gained the WU-041..044 knobs (LOCK_TTL, PROTECTED_INSTANCES,
+  MAINTENANCE_INTERVAL, ARTIFACT_RETENTION, AUDIT_RETENTION). (R5) ARCHITECTURE §7 lock +
+  Patroni-restore items marked **delivered** (ADR-012). (R6) SPEC-043 mini-ADR 1 + load_test.go
+  "skips in CI" **superseded** (CI now has Postgres; the harness's parallelism assertion is
+  `>=2`, runner-robust). (R7) ROADMAP M3 marked **Exited** (s22/WU-036; twin demo-m3.md).
+  MATCHED (no drift): migrations 0001–0012, VM golangci **2.12.2** == CLAUDE.md == CI pin, Go
+  1.26.4, ADR-011/012/013, all config knobs+defaults, guardrail invariants. FILED→WU-046: the
+  prod `.env` deploy template + object-store lifecycle rule. **CI (`.github/workflows/
+  check.yml`):** added a **Postgres 16 service** (health-gated) + `PORTAL_DB_*` env so DB tests
+  + the golden flow + the load/stampede harness **RUN** in CI instead of skipping (ADR-011 gap);
+  **pinned golangci-lint to v2.12.2** (installer script AND binary, not `curl|sh` from HEAD —
+  M1-gate item 14); bumped actions to node24 majors (**checkout/setup-node/setup-go @v7**) +
+  `setup-go cache-dependency-path: backend/go.sum`. **COLD-START DRILL** (throwaway
+  portal/portal PG on :55432 + fresh `git clone` of the committed tree; dev PG :5432 + demo
+  :8080 UNTOUCHED, both torn down): fresh clone (no `.env`) → `npm install` → `npm ci` → `go
+  build ./...` → `migrate up` (→ **v12**) → `npm run check` (golden flow 1.9s + config/runs/
+  schedule/maintenance DB tests all RAN not-skipped — process-env DB config = **CI parity
+  proof**; vitest 116/116) → `build:release` (19M) → run → **healthz 200**, boot log shows the
+  R3 line "no dotenv file found" — every step exit 0. GATE: CHECK-EXIT:0 in place (golangci 0,
+  go test -race ALL pkgs incl. e2e golden flow + config new tests + load/stampede, vitest
+  116/116); **CI GREEN** (run 29785515001, ~4m, DB tests ran). NO migration/API/UI/seam change;
+  MockEngine + service code UNCHANGED. Commit 0f65751 (12 files) + this bookkeeping.
 - **Status (s30, WU-044 DONE — maintenance & retention jobs):** the periodic-sweep subsystem a
   long-running deployment needs (SPEC-044 = docs/specs/maintenance.md, JIT; ADR-013). A new
   `internal/maintenance.Service` on the scheduler's tick lifecycle — `go maint.Run(ctx)` in
@@ -334,19 +372,30 @@
 
 ## Next action (be exact)
 
-1. **START WU-045** (docs-vs-reality reconciliation + cold-start + CI hardening; M; BACKLOG
-   "Phase 4" §). The ROADMAP M4 "docs-vs-reality reconciliation" exit item + accumulated
-   CI/supply-chain debt. **Cold-start:** clean clone on a fresh host → install → migrate →
-   `npm run check` → `build:release` → run, pasted as evidence. **Reconcile:** walk every
-   SPEC/DECISIONS/ARCHITECTURE/STATE claim against the code, resolve/file drifts; refresh the
-   stale demo-m1.md header ("live-verified 2026-07-08"); reconcile WU-004 token hex vs
-   design-brief.md; fix `config.LocateDotenv`'s upward `.env` walk to stop at a repo marker +
-   log the resolved file (M1-gate item 16). **CI:** add a Postgres service to check.yml so DB
-   tests + the golden flow stop skipping (ADR-011 gap); pin the golangci-lint installer to
-   v2.12.2 instead of `curl|sh` from HEAD (M1-gate item 14); bump GH Actions versions + fix
-   the setup-go cache path. May checkpoint between the reconciliation report and the CI
-   changes. Read the WU-045 entry + context brief; write the report JIT (spec optional — this
-   WU is docs/CI, not a module).
+1. **START WU-046** (packaging for a pilot deployment; M; BACKLOG "Phase 4" §). The ROADMAP
+   M4 exit deliverable: turn the `build:release` binary (ADR-010) into something a pilot
+   operator deploys on a fresh host and trusts. Deliverables: a **real (non-transient)
+   systemd unit** generalizing the demo unit (survives reboot; env from a FILE via
+   `EnvironmentFile=`, not inline); a **`.env` deploy template** documenting every required
+   var by SHAPE (no secrets — mirrors `.env.example` discipline; **must include** the
+   WU-041..044 knobs AND, for a real object store, a bucket **lifecycle-expiry** rule matching
+   `PORTAL_ARTIFACT_RETENTION` with `safety` in a lifecycle-exempt keyspace — carried from
+   WU-044); a **deploy runbook** (fresh host → migrate → running portal serving SPA+API with
+   auth ON + guardrails ON + notify wired); the **break-glass mail alarm** (currently alarms
+   audit + log only, not mail) + explicit **CookieSecure/TLS-in-front** guidance (make the
+   SPEC-020 boot Warn honest for pilot). Exit = pilot-deployable build. Read the WU-046 entry
+   + context brief; SPEC optional. **Deploy tip:** WU-045 added `PORTAL_DOTENV` — the systemd
+   unit should set config via `EnvironmentFile=` (process env) and can set `PORTAL_DOTENV=` to
+   disable the `.env` search entirely, so a stray `.env` on the host is never adopted.
+   - Cold-start recipe (reusable, from WU-045 s31): throwaway `portal/portal` Postgres on a
+     spare port + `git clone /root/db-portal <tmp>` (no `.env` → process-env config, CI/prod-
+     like) → `npm install` → `cd frontend && npm ci` → `go build ./...` → `migrate up` →
+     `npm run check` → `build:release` → run → `curl /healthz`. Drill script lived in the
+     scratchpad (`coldstart.sh`), torn down; re-author from this recipe if needed.
+   - WU-045 (s31) is DONE — docs-recon + cold-start + CI hardening. If revisiting: report =
+     `docs/agent/reviews/wu-045-reconciliation.md`; `config.LocateDotenv` now bounds the walk
+     at `.git` + honors `PORTAL_DOTENV` (tests in config_test.go); `check.yml` has a Postgres
+     service + pinned golangci v2.12.2 + `@v7` actions. NO migration/API/UI change.
    - WU-044 (s30) is DONE — maintenance & retention. If revisiting: `internal/maintenance`
      Service (`maintenance.go`), `go maint.Run(ctx)` in main; sweeps = session GC + `standard`
      artifact reap (audited `artifact.reaped`, `safety` preserved) + audit-age OBSERVATION
@@ -422,9 +471,10 @@
      (30m), `PORTAL_PROTECTED_INSTANCES` (empty; the set still seeds with DBName="portal",
      which matches no real instance). `PORTAL_LOADTEST_INSTANCES` is HARNESS-ONLY (grows the
      load-test scratch estate for a pilot-scale drill; never set in prod/dev .env).
-2. Housekeeping note (carried): demo-m1.md header still says "live-verified
-   2026-07-08"; beats re-verified through s13 — refresh the line when the
-   doc is next touched.
+2. Housekeeping (carried): the demo-m1.md header refresh + ROADMAP M3 exit mark are DONE
+   (WU-045 s31). Still open, not blocking: migrate the persistent dev `portal` DB from 0010
+   → 0012 only if a future live drill on THAT db needs 0011/0012 (`cd backend && go run
+   ./cmd/portal migrate up`); tests/drills use fresh scratch DBs that get 0012 on `up`.
 
 ## Blocked / needs user
 

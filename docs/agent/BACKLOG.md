@@ -1093,7 +1093,7 @@ in `block:`/`always:`. Policy recorded in ADR-013. Rejected: portal-driven `mc r
 ADR-004 or couples maintenance to the engine seam); hard-deleting audit (impossible without
 dropping the trigger — that IS the integrity property).
 
-### WU-045 · Docs-vs-reality reconciliation + cold-start + CI hardening — M · `todo`
+### WU-045 · Docs-vs-reality reconciliation + cold-start + CI hardening — M · `done` (s31)
 The ROADMAP M4 "docs-vs-reality reconciliation" exit item plus the accumulated CI/supply-
 chain debt. **Cold-start:** from a clean clone on a fresh host/container, install → migrate
 → `npm run check` → `build:release` → run, pasted as evidence (the M0/M1 cold-start
@@ -1106,13 +1106,20 @@ stop skipping (ADR-011 gap); pin the golangci-lint installer to v2.12.2 instead 
 from HEAD (M1-gate item 14 — supply-chain); bump the GH Actions versions + fix the setup-go
 cache path. May checkpoint between the reconciliation report and the CI changes.
 **AC:**
-- [ ] Cold-start runbook passes on a fresh environment with pasted evidence (each step exit 0).
-- [ ] A reconciliation report enumerates doc/code drifts and each is resolved or filed;
+- [x] Cold-start runbook passes on a fresh environment with pasted evidence (each step exit 0).
+      — fresh clone → npm install → npm ci → go build → migrate up (v12) → npm run check →
+      build:release (19M) → run → healthz 200, all exit 0 (JOURNAL s31; throwaway portal/portal
+      PG on :55432, dev stack untouched). The SAME drill proves the new CI DB approach.
+- [x] A reconciliation report enumerates doc/code drifts and each is resolved or filed;
       demo-m1.md header refreshed; the `.env`-walk footgun closed.
-- [ ] CI runs DB-backed tests + the golden flow (no longer skipped); golangci pinned to
+      — docs/agent/reviews/wu-045-reconciliation.md (7 drifts resolved, 6 matched, 2 filed→WU-046).
+- [x] CI runs DB-backed tests + the golden flow (no longer skipped); golangci pinned to
       2.12.2; actions bumped; a CI run is green.
+      — check.yml: Postgres 16 service; golangci v2.12.2 (script+binary); checkout/setup-node/
+      setup-go @v7 (node24) + setup-go cache-dependency-path. Green run:
+      https://github.com/ios9000/db-portal/actions/runs/29785515001 (~4m, DB tests ran).
 **Verify:** the cold-start transcript + a green CI run link in the journal; `npm run check`
-green locally and in CI.
+green locally and in CI. — DONE: gate CHECK-EXIT:0 in place + in cold-start clone; CI green.
 **Context brief:** docs/agent/SESSION-PROTOCOL.md (cold-start), .github/workflows/check.yml,
 internal/config (LocateDotenv), docs/specs/design-brief.md + frontend/src/index.css tokens,
 icebox CI items, M1-gate items 14/16.
