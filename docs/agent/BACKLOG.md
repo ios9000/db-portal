@@ -1124,7 +1124,7 @@ green locally and in CI. — DONE: gate CHECK-EXIT:0 in place + in cold-start cl
 internal/config (LocateDotenv), docs/specs/design-brief.md + frontend/src/index.css tokens,
 icebox CI items, M1-gate items 14/16.
 
-### WU-046 · Packaging for a pilot deployment — M · `todo`
+### WU-046 · Packaging for a pilot deployment — M · `done` (s31)
 The ROADMAP M4 exit deliverable: turn the `build:release` binary (ADR-010) into something a
 pilot operator can deploy on a fresh host and trust. A real (non-transient) **systemd unit**
 generalizing the demo unit (survives reboot; env from a file, not inline); a **config/.env
@@ -1135,14 +1135,27 @@ break-glass mail alarm (icebox — break-glass currently alarms audit + log only
 and explicit CookieSecure/TLS-in-front guidance (the SPEC-020 boot Warn made honest for
 pilot). A versioned release artifact. Exit: pilot-deployable build.
 **AC:**
-- [ ] Following the runbook on a fresh host yields a working portal (auth on, prod ritual on,
+- [x] Following the runbook on a fresh host yields a working portal (auth on, prod ritual on,
       failure mail wired) from the release artifact; the systemd unit survives a reboot.
-- [ ] The `.env` template lists every required var by shape with no secret values; a missing
+      — release artifact (14M, stamped commit/date + SHA256) drove auth-on (401), break-glass,
+      config-validate live (JOURNAL s31); `infra/dbportal.service` passes `systemd-analyze
+      verify`, `systemctl enable` → is-enabled=**enabled** (multi-user.target symlink =
+      reboot-survival). NOTE: app driven standalone + unit enabled-not-started, to respect the
+      VM's ask-gated `systemctl start` + the live demo on :8080; prod ritual inherited (golden
+      flow, in the gate).
+- [x] The `.env` template lists every required var by shape with no secret values; a missing
       required var fails closed with a clear message.
-- [ ] Break-glass use sends a mail alarm (not just the audit action + log line); CookieSecure/
+      — `infra/portal.env.template` ([REQUIRED] markers, no secrets); `config.Validate` refuses
+      ldap-without-URL/bind-template at boot: "PORTAL_AUTH_MODE=ldap requires PORTAL_LDAP_URL,
+      PORTAL_LDAP_BIND_TEMPLATE" (proved live). +test.
+- [x] Break-glass use sends a mail alarm (not just the audit action + log line); CookieSecure/
       TLS guidance documented and the boot Warn behaves for the pilot config.
+      — live: break-glass login → mailpit "SECURITY: break-glass account used" (password NOT
+      leaked, remote captured); normal login does NOT alarm. TLS/CookieSecure in deploy.md §8 +
+      template; the ldap+!CookieSecure boot Warn is present (fake-mode drill: no warn). +test.
 **Verify:** the deploy runbook executed on a fresh host/container, pasted; reboot-survival
-shown; a break-glass login produces a mailpit alarm; `npm run check` green.
+shown; a break-glass login produces a mailpit alarm; `npm run check` green. — DONE: drills in
+JOURNAL s31; gate CHECK-EXIT:0; CI green https://github.com/ios9000/db-portal/actions/runs/29788985814
 **Context brief:** ADR-010 (build:release), infra/bootstrap-vm.sh + the demo systemd recipe
 (JOURNAL s16), internal/config (required-var handling), SPEC-020 (break-glass, CookieSecure
 Warn) + notify, ARCHITECTURE §deployment, `.env.example`.

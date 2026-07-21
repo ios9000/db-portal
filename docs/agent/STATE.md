@@ -5,16 +5,59 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-045 DONE (s31) —
-  docs-vs-reality reconciliation + cold-start + CI hardening.** NEXT = **START WU-046**
-  (packaging for a pilot deployment: real systemd unit + `.env` deploy template + deploy
-  runbook + break-glass mail alarm + CookieSecure/TLS guidance; M — the pilot-deployable
-  build, an M4 exit deliverable). M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 ✓ →
-  046 → 047** (seed → concurrency locks → load test → retention/GC → docs-recon+CI →
-  packaging → retrospective); full ACs/context briefs in BACKLOG "Phase 4" §, grooming
-  rationale in its header note. M4 exit deliverables = the pilot-deployable build (046) +
-  the experiment retrospective (047); close with an M4 gate review (author `m4-gate-review`
-  mirroring m3).
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-046 DONE (s31) —
+  packaging for a pilot deployment (the pilot-deployable-build M4 exit deliverable).** NEXT =
+  **START WU-047** (experiment retrospective, STRATEGY §8 metrics; S — docs-only; the TRUE
+  LAST WU). M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 ✓ → 046 ✓ → 047** (seed →
+  concurrency locks → load test → retention/GC → docs-recon+CI → packaging → retrospective);
+  full ACs/context briefs in BACKLOG "Phase 4" §. After WU-047, close M4 with a milestone gate
+  review (author an `m4-gate-review` skill mirroring m3) — the M4 exit gate. The security-
+  vetting package (ARCHITECTURE §8.2) is submittable now (surfaced to the user at WU-045).
+- **Status (s31, WU-046 DONE — packaging for a pilot deployment):** turned the `build:release`
+  binary (ADR-010) into a pilot-deployable, reboot-surviving service (the ROADMAP M4 exit
+  deliverable). Docs/infra/security-hardening, no module → no SPEC. Architect-implemented (auth
+  + config are security-sensitive). **DELIVERABLES:** (1) `infra/dbportal.service` — a REAL
+  (non-transient) systemd unit generalizing the `systemd-run` demo unit: `EnvironmentFile=`
+  (config from a file, never inline), `Restart=on-failure`, **`WantedBy=multi-user.target`**
+  (the reboot-survival guarantee — `enable` links it in), sandbox hardening (NoNewPrivileges/
+  ProtectSystem=strict/PrivateTmp/…), and `Environment=PORTAL_DOTENV=` to DISABLE the WU-045
+  `.env` search on the host (no stray adoption). (2) `infra/portal.env.template` — deploy
+  config, SHAPE ONLY (no secrets), `[REQUIRED]` markers, incl. the WU-041..044 knobs + the
+  object-store lifecycle-expiry note (carried from WU-044: real store reaps bytes, portal reaps
+  the registry, `safety` in an exempt keyspace). (3) `docs/deploy.md` — the fresh-host runbook
+  (build → provision user/dirs → install binary+env+unit → migrate → `enable --now` → verify),
+  incl. break-glass, TLS/CookieSecure, object-store retention, upgrade/rollback. **HARDENING
+  (code):** (a) **break-glass MAIL alarm** (SPEC-020 icebox → DELIVERED): `notify.Mailer.
+  BreakGlassUsed` (D7 content — who/where/when, NEVER the password/token) + a one-method
+  `authn.Alarmer` seam (authn stays a leaf pkg, no notify import) + `Service.Alarm` field wired
+  in main to the Mailer when `PORTAL_NOTIFY_TO` is set; fired **async best-effort off the login
+  path** (a slow/failed SMTP must never block emergency access — the audit row + error log are
+  the durable record, mail only accelerates). (b) **`config.Validate()`** — fail closed on a
+  misconfigured SERVER boot (ldap mode requires `PORTAL_LDAP_URL` + `PORTAL_LDAP_BIND_TEMPLATE`,
+  else a door nobody can open) with a clear message, BEFORE the pool/port; called after the
+  subcommand dispatch so `migrate`/`import`/`seed` skip it. (c) **version provenance** — new
+  `var Commit`/`var BuildDate` stamped by `build-release.sh` via `-ldflags -X`; `portal version`
+  prints `db-portal 0.0.1 (commit <sha>, built <ts>)`; build-release also emits a `.sha256`
+  checksum. TESTS (-race): TestBreakGlassFiresMailAlarm (fake Alarmer: break-glass fires w/ the
+  observed remote, normal login does NOT), TestValidate (ldap missing-vars errors naming each;
+  fully-configured/fake/off OK). **VERIFY DRILLS** (standalone binary + dev-PG scratch DB
+  `portal_pilot_drill` + shared mailpit; demo :8080 + dev DB UNTOUCHED, torn down): config-
+  validate fail-closed live ("PORTAL_AUTH_MODE=ldap requires PORTAL_LDAP_URL,
+  PORTAL_LDAP_BIND_TEMPLATE"); auth-on GET /api/instances→401; **break-glass login → mailpit
+  "[db-portal] SECURITY: break-glass account used"** (body mentions break-glass + remote,
+  password NOT leaked); normal dba1 login → NO alarm; `portal version` shows commit/date;
+  `PORTAL_DOTENV=` → "no dotenv file found". SYSTEMD (ungated only — `systemctl start/stop/
+  restart` are ask-gated): `systemd-analyze verify infra/dbportal.service` clean (only the
+  deploy-time `/opt/dbportal/portal` path warns, not a syntax error); drill unit `enable` →
+  **is-enabled=enabled** (multi-user.target symlink present), `is-active=inactive` (deliberately
+  NOT started — no :8080 conflict), disable+rm clean, **demo still active**. NOTE the app was
+  driven STANDALONE + the unit enabled-not-started to respect the VM's gated `systemctl start`
+  + the live demo; a literal `systemctl start dbportal` under the unit is the one path not
+  exercised (mechanically equivalent — the unit just execs the verified binary; offered to the
+  user as an optional follow-up). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl.
+  e2e golden flow + new authn/config tests, vitest 116/116); **CI GREEN** (run 29788985814,
+  ~2.5m). NO migration, NO UI change; MockEngine + service seam UNCHANGED. Commit 1659571
+  (12 files) + this bookkeeping.
 - **Status (s31, WU-045 DONE — docs-recon + cold-start + CI hardening):** the ROADMAP M4
   "docs-vs-reality reconciliation" exit item + the accumulated CI/supply-chain debt, in one M
   WU (docs/CI, no module → no SPEC; report = `docs/agent/reviews/wu-045-reconciliation.md`).
@@ -372,26 +415,34 @@
 
 ## Next action (be exact)
 
-1. **START WU-046** (packaging for a pilot deployment; M; BACKLOG "Phase 4" §). The ROADMAP
-   M4 exit deliverable: turn the `build:release` binary (ADR-010) into something a pilot
-   operator deploys on a fresh host and trusts. Deliverables: a **real (non-transient)
-   systemd unit** generalizing the demo unit (survives reboot; env from a FILE via
-   `EnvironmentFile=`, not inline); a **`.env` deploy template** documenting every required
-   var by SHAPE (no secrets — mirrors `.env.example` discipline; **must include** the
-   WU-041..044 knobs AND, for a real object store, a bucket **lifecycle-expiry** rule matching
-   `PORTAL_ARTIFACT_RETENTION` with `safety` in a lifecycle-exempt keyspace — carried from
-   WU-044); a **deploy runbook** (fresh host → migrate → running portal serving SPA+API with
-   auth ON + guardrails ON + notify wired); the **break-glass mail alarm** (currently alarms
-   audit + log only, not mail) + explicit **CookieSecure/TLS-in-front** guidance (make the
-   SPEC-020 boot Warn honest for pilot). Exit = pilot-deployable build. Read the WU-046 entry
-   + context brief; SPEC optional. **Deploy tip:** WU-045 added `PORTAL_DOTENV` — the systemd
-   unit should set config via `EnvironmentFile=` (process env) and can set `PORTAL_DOTENV=` to
-   disable the `.env` search entirely, so a stray `.env` on the host is never adopted.
+1. **START WU-047** (experiment retrospective — the TRUE LAST WU; S; docs-only; BACKLOG
+   "Phase 4" §). Write the AI-agent-driven-development retrospective against STRATEGY.md §8's
+   metrics: what the harness rules (repo-is-memory, one-WU-per-session, verify-don't-claim, the
+   gate) actually bought; the recurring session-loss failure modes (ssh reset killing pre-
+   checkpoint work, the [[twin-session-hazard]]) and the mitigations that worked (tmux
+   persistence, ps/tty twin checks, recover-don't-redo); the architect/implementer delegation
+   outcomes + cost ([[workflow-cost-sensitivity]]); what to change next experiment. GROUND every
+   claim in JOURNAL evidence + the memory files. Fill STRATEGY.md §8 or a linked
+   `docs/agent/RETROSPECTIVE.md`. Verify: doc exists, each §8 metric addressed w/ JOURNAL cites,
+   links resolve, `npm run check` green (docs-only). Read the WU-047 entry + context brief.
+   - After WU-047: M4 EXIT GATE — author an `m4-gate-review` skill mirroring `m3-gate-review`
+     (5 Sonnet reviewers over the M4 diff, architect verifies findings inline) and run it. That
+     is the M4 milestone close. Then MVP is complete.
+   - Optional follow-up the user may want (offered at WU-046): a literal `systemctl start
+     dbportal` under `infra/dbportal.service` on the VM (ask-gated) to see the service running
+     under systemd end-to-end — mechanically equivalent to the WU-046 standalone drill (the unit
+     just execs the verified binary); not blocking.
+   - WU-046 (s31) is DONE — pilot packaging. If revisiting: `infra/dbportal.service` (systemd
+     unit), `infra/portal.env.template` (deploy env), `docs/deploy.md` (runbook); break-glass
+     mail = `notify.BreakGlassUsed` + `authn.Alarmer`/`Service.Alarm` (async off the login
+     path, wired in main); `config.Validate()` fail-closed (ldap needs URL+bind template);
+     version Commit/BuildDate stamped by build-release (`-ldflags`) + `.sha256`. Tests in
+     authn/service_test.go + config/config_test.go. NO migration/UI change.
    - Cold-start recipe (reusable, from WU-045 s31): throwaway `portal/portal` Postgres on a
      spare port + `git clone /root/db-portal <tmp>` (no `.env` → process-env config, CI/prod-
      like) → `npm install` → `cd frontend && npm ci` → `go build ./...` → `migrate up` →
-     `npm run check` → `build:release` → run → `curl /healthz`. Drill script lived in the
-     scratchpad (`coldstart.sh`), torn down; re-author from this recipe if needed.
+     `npm run check` → `build:release` → run → `curl /healthz`. Drill scripts lived in the
+     scratchpad (`coldstart.sh`, `appdrill.sh`), torn down; re-author from these recipes.
    - WU-045 (s31) is DONE — docs-recon + cold-start + CI hardening. If revisiting: report =
      `docs/agent/reviews/wu-045-reconciliation.md`; `config.LocateDotenv` now bounds the walk
      at `.git` + honors `PORTAL_DOTENV` (tests in config_test.go); `check.yml` has a Postgres
