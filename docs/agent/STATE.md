@@ -50,11 +50,13 @@
   restart` are ask-gated): `systemd-analyze verify infra/dbportal.service` clean (only the
   deploy-time `/opt/dbportal/portal` path warns, not a syntax error); drill unit `enable` →
   **is-enabled=enabled** (multi-user.target symlink present), `is-active=inactive` (deliberately
-  NOT started — no :8080 conflict), disable+rm clean, **demo still active**. NOTE the app was
-  driven STANDALONE + the unit enabled-not-started to respect the VM's gated `systemctl start`
-  + the live demo; a literal `systemctl start dbportal` under the unit is the one path not
-  exercised (mechanically equivalent — the unit just execs the verified binary; offered to the
-  user as an optional follow-up). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl.
+  NOT started — no :8080 conflict), disable+rm clean, **demo still active**. **LIVE SYSTEMD
+  DRILL (user-authorized, done s31): the real `infra/dbportal.service` + dbportal user +
+  /opt/dbportal + /etc/dbportal, isolated on :18081 + scratch DB — `systemctl start` → active
+  (User=dbportal, MainPID bound :18081), healthz 200, auth-on 401, break-glass→mailpit alarm
+  UNDER systemd; `restart` → active w/ a NEW MainPID (Restart works); `stop` → inactive; full
+  teardown clean; demo :8080 UNTOUCHED. The earlier "standalone only" caveat is RETIRED — the
+  service ran under systemd end-to-end.** GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl.
   e2e golden flow + new authn/config tests, vitest 116/116); **CI GREEN** (run 29788985814,
   ~2.5m). NO migration, NO UI change; MockEngine + service seam UNCHANGED. Commit 1659571
   (12 files) + this bookkeeping.
@@ -428,10 +430,10 @@
    - After WU-047: M4 EXIT GATE — author an `m4-gate-review` skill mirroring `m3-gate-review`
      (5 Sonnet reviewers over the M4 diff, architect verifies findings inline) and run it. That
      is the M4 milestone close. Then MVP is complete.
-   - Optional follow-up the user may want (offered at WU-046): a literal `systemctl start
-     dbportal` under `infra/dbportal.service` on the VM (ask-gated) to see the service running
-     under systemd end-to-end — mechanically equivalent to the WU-046 standalone drill (the unit
-     just execs the verified binary); not blocking.
+   - (DONE s31, user-authorized) The live `systemctl start/restart/stop` drill under the real
+     `infra/dbportal.service` ran clean (service active under systemd, break-glass→mailpit,
+     restart recovery, full teardown, demo untouched) — the WU-046 systemd path is fully
+     exercised now; nothing outstanding there.
    - WU-046 (s31) is DONE — pilot packaging. If revisiting: `infra/dbportal.service` (systemd
      unit), `infra/portal.env.template` (deploy env), `docs/deploy.md` (runbook); break-glass
      mail = `notify.BreakGlassUsed` + `authn.Alarmer`/`Service.Alarm` (async off the login

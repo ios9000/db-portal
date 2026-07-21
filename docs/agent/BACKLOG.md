@@ -1138,11 +1138,13 @@ pilot). A versioned release artifact. Exit: pilot-deployable build.
 - [x] Following the runbook on a fresh host yields a working portal (auth on, prod ritual on,
       failure mail wired) from the release artifact; the systemd unit survives a reboot.
       — release artifact (14M, stamped commit/date + SHA256) drove auth-on (401), break-glass,
-      config-validate live (JOURNAL s31); `infra/dbportal.service` passes `systemd-analyze
-      verify`, `systemctl enable` → is-enabled=**enabled** (multi-user.target symlink =
-      reboot-survival). NOTE: app driven standalone + unit enabled-not-started, to respect the
-      VM's ask-gated `systemctl start` + the live demo on :8080; prod ritual inherited (golden
-      flow, in the gate).
+      config-validate live (JOURNAL s31). LIVE SYSTEMD DRILL (user-authorized; real
+      infra/dbportal.service + dbportal user + /opt/dbportal + /etc/dbportal, isolated on :18081
+      + scratch DB; demo :8080 untouched): `systemctl start` → active, User=dbportal, healthz
+      200, auth-on 401, break-glass→mailpit alarm UNDER systemd; `restart` → active w/ new
+      MainPID (Restart works); `enable` → is-enabled=**enabled** (multi-user.target =
+      reboot-survival); `systemd-analyze verify` clean; `stop`+teardown clean. Prod ritual
+      inherited (golden flow, in the gate).
 - [x] The `.env` template lists every required var by shape with no secret values; a missing
       required var fails closed with a clear message.
       — `infra/portal.env.template` ([REQUIRED] markers, no secrets); `config.Validate` refuses
