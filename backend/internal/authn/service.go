@@ -18,8 +18,18 @@ import (
 
 // breakGlassUser is the one local account that works when AD is down
 // (SPEC-020 mini-ADR 5). It exists only if PORTAL_BREAKGLASS_HASH is set,
-// and every successful use is alarmed: auth.break_glass row + error log.
+// and every successful use is alarmed: auth.break_glass row + error log +
+// (when wired) a mail alarm to the DBA list.
 const breakGlassUser = "break-glass"
+
+// Alarmer sends an out-of-band alert when the break-glass account is used
+// (SPEC-020 mini-ADR 5; WU-046). notify.Mailer implements it. Kept as a
+// one-method seam here (not an import of notify) so authn stays a leaf
+// package. A nil Service.Alarm means mail alarming is off (e.g.
+// PORTAL_NOTIFY_TO empty) — the audit row + error log still fire.
+type Alarmer interface {
+	BreakGlassUsed(ctx context.Context, remote string) error
+}
 
 // Session is a freshly minted login: the opaque token goes into the
 // cookie and is never stored — the DB holds sha256(token) only.
@@ -39,6 +49,11 @@ type Service struct {
 	ttl            time.Duration
 	breakglassHash string
 	failDelay      time.Duration // blunts online guessing; tests shrink it
+
+	// Alarm mails a break-glass alert; nil = mail alarming off (audit row +
+	// error log still fire). main wires it to the notify.Mailer when
+	// PORTAL_NOTIFY_TO is set. Set once at composition, read on the login path.
+	Alarm Alarmer
 }
 
 func NewService(pool *pgxpool.Pool, dir Directory, log *slog.Logger, ttl time.Duration, breakglassHash string) *Service {
@@ -85,8 +100,26 @@ func (s *Service) Login(ctx context.Context, username, password, remote string) 
 	if action == "auth.break_glass" {
 		s.log.Error("BREAK-GLASS LOGIN — local account used, verify this was sanctioned",
 			"remote", remote)
+		s.alarmBreakGlass(remote)
 	}
 	return Session{Token: token, Identity: id, ExpiresAt: expires}, nil
+}
+
+// alarmBreakGlass fires the mail alarm off the login path (WU-046): break-glass
+// is emergency access when AD is down, so a slow or failed SMTP send must never
+// block or fail the login — it runs in its own goroutine with a detached
+// context and is strictly best-effort (a failure is logged, never surfaced).
+// The audit row + error log above are the durable record; mail only accelerates.
+func (s *Service) alarmBreakGlass(remote string) {
+	if s.Alarm == nil {
+		return
+	}
+	go func() {
+		if err := s.Alarm.BreakGlassUsed(context.Background(), remote); err != nil {
+			s.log.Error("break-glass mail alarm failed (audit row + log still recorded it)",
+				"err", err.Error())
+		}
+	}()
 }
 
 // authenticate resolves the principal: break-glass is checked before the

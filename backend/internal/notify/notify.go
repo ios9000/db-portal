@@ -40,6 +40,15 @@ func (m *Mailer) ChainHalted(_ context.Context, c chain.Chain) error {
 	return m.send(m.chainMessage(c))
 }
 
+// BreakGlassUsed mails a security alarm the moment the local break-glass
+// account authenticates (SPEC-020 mini-ADR 5; WU-046). It carries who/where/
+// when only — never the password or session token — matching the D7 content
+// rule. The caller (authn.Service) fires this best-effort off the login path,
+// so a failed or slow send can never block emergency access.
+func (m *Mailer) BreakGlassUsed(_ context.Context, remote string) error {
+	return m.send(m.breakGlassMessage(remote))
+}
+
 // send runs one SMTP conversation delivering msg to the DBA list.
 func (m *Mailer) send(msg string) error {
 	conn, err := net.DialTimeout("tcp", m.Addr, dialTimeout)
@@ -128,6 +137,24 @@ func (m *Mailer) chainMessage(c chain.Chain) string {
 	fmt.Fprintf(&b, "  Initiated by: %s\r\n\r\n", c.CreatedBy)
 	fmt.Fprintf(&b, "Resume from the failed step once the cause is fixed.\r\n")
 	fmt.Fprintf(&b, "View the run: %s\r\n", link)
+	return b.String()
+}
+
+// breakGlassMessage renders the security alarm. `remote` is the portal-observed
+// client address (never client-supplied body text); no secret is interpolated.
+func (m *Mailer) breakGlassMessage(remote string) string {
+	if remote == "" {
+		remote = "unknown"
+	}
+	var b strings.Builder
+	m.headers(&b, "[db-portal] SECURITY: break-glass account used")
+	b.WriteString("The local break-glass emergency account was just used to sign in.\r\n\r\n")
+	fmt.Fprintf(&b, "  Account: break-glass\r\n")
+	fmt.Fprintf(&b, "  Remote:  %s\r\n", remote)
+	fmt.Fprintf(&b, "  Time:    %s\r\n\r\n", time.Now().UTC().Format(time.RFC1123Z))
+	b.WriteString("If this was not a sanctioned emergency, treat the portal as potentially\r\n")
+	b.WriteString("compromised: review the auth trail and rotate PORTAL_BREAKGLASS_HASH.\r\n")
+	b.WriteString("Portal: " + strings.TrimSuffix(m.BaseURL, "/") + "/\r\n")
 	return b.String()
 }
 

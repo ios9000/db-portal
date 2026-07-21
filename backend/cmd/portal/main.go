@@ -47,7 +47,7 @@ func main() {
 
 func run(log *slog.Logger, args []string) error {
 	if len(args) > 0 && args[0] == "version" {
-		fmt.Println("db-portal", version.Version)
+		fmt.Printf("db-portal %s (commit %s, built %s)\n", version.Version, version.Commit, version.BuildDate)
 		return nil
 	}
 
@@ -79,6 +79,13 @@ func run(log *slog.Logger, args []string) error {
 	}
 	if len(args) > 0 {
 		return fmt.Errorf("unknown command %q (want migrate, import, seed or version)", args[0])
+	}
+
+	// Fail closed on a misconfigured server boot (WU-046) — before opening the
+	// DB pool or binding a port. The CLI subcommands above don't reach here, so
+	// `migrate up` never needs the auth vars.
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -126,12 +133,17 @@ func run(log *slog.Logger, args []string) error {
 	// at chain granularity only: the halt mail is THE mail, the run-level
 	// one is filtered (SPEC-032 mini-ADR 5). No recipients = notifications
 	// off, stated once so nobody hunts for missing mail.
+	// alarm carries the break-glass mail alarm into the authenticator below
+	// (SPEC-020, WU-046); nil when notifications are off (mail alarming off,
+	// audit row + error log still fire).
+	var alarm authn.Alarmer
 	if to := cfg.NotifyRecipients(); len(to) > 0 {
 		mailer := &notify.Mailer{
 			Addr: cfg.SMTPAddr(), From: cfg.SMTPFrom, To: to, BaseURL: cfg.BaseURL,
 		}
 		runSvc.Notifier = chain.StepRunFilter{Next: mailer}
 		chainSvc.Notifier = mailer
+		alarm = mailer
 		log.Info("run notifications enabled", "smtp", cfg.SMTPAddr(), "to", to)
 	} else {
 		log.Info("run notifications disabled (PORTAL_NOTIFY_TO is empty)")
@@ -151,7 +163,7 @@ func run(log *slog.Logger, args []string) error {
 		log.Info("orphaned chains halted", "count", n)
 	}
 
-	auth, err := buildAuthenticator(cfg, pool, log)
+	auth, err := buildAuthenticator(cfg, pool, log, alarm)
 	if err != nil {
 		return err
 	}
@@ -184,7 +196,7 @@ func run(log *slog.Logger, args []string) error {
 	maint.AuditRetention = cfg.AuditRetention
 	go maint.Run(ctx)
 
-	log.Info("starting portal", "version", version.Version, "addr", cfg.HTTPAddr)
+	log.Info("starting portal", "version", version.Version, "commit", version.Commit, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
 		DB:        pool,
 		Instances: inventory.NewStore(pool),
@@ -245,14 +257,16 @@ func devGrants(mode string) []string {
 // buildAuthenticator is the composition root for SPEC-020's directory seam.
 // Unknown modes fail at startup rather than guessing — auth config is not
 // a place for silent fallbacks.
-func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) (server.Authenticator, error) {
+func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger, alarm authn.Alarmer) (server.Authenticator, error) {
 	switch cfg.AuthMode {
 	case "off":
 		log.Warn("AUTH BYPASS ACTIVE (PORTAL_AUTH_MODE=off) — every request is local-dev; demo/dev only")
 		return authn.Bypass{}, nil
 	case "fake":
 		log.Info("auth mode: fake in-process directory (dev/CI)")
-		return authn.NewService(pool, authn.DevDirectory(), log, cfg.SessionTTL, cfg.BreakglassHash), nil
+		svc := authn.NewService(pool, authn.DevDirectory(), log, cfg.SessionTTL, cfg.BreakglassHash)
+		svc.Alarm = alarm
+		return svc, nil
 	case "ldap":
 		if cfg.LDAPInsecure {
 			log.Warn("PORTAL_LDAP_INSECURE=true — LDAP TLS verification is off; dev only")
@@ -260,7 +274,7 @@ func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger)
 		// Same loudness as the LDAP warning above (M2-gate finding 10): a
 		// prod-shaped boot without the Secure cookie flag must not be silent.
 		if !cfg.CookieSecure {
-			log.Warn("PORTAL_COOKIE_SECURE=false with ldap auth — the session cookie may travel over plain HTTP; set it true behind TLS")
+			log.Warn("PORTAL_COOKIE_SECURE=false with ldap auth — the session cookie may travel over plain HTTP; set it true behind TLS (WU-046 deploy runbook)")
 		}
 		dir := authn.LDAP{
 			URL:          cfg.LDAPURL,
@@ -268,7 +282,9 @@ func buildAuthenticator(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger)
 			Insecure:     cfg.LDAPInsecure,
 		}
 		log.Info("auth mode: ldap", "url", cfg.LDAPURL)
-		return authn.NewService(pool, dir, log, cfg.SessionTTL, cfg.BreakglassHash), nil
+		svc := authn.NewService(pool, dir, log, cfg.SessionTTL, cfg.BreakglassHash)
+		svc.Alarm = alarm
+		return svc, nil
 	default:
 		return nil, fmt.Errorf("unknown PORTAL_AUTH_MODE %q (want ldap, fake or off)", cfg.AuthMode)
 	}

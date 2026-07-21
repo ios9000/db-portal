@@ -12,8 +12,10 @@ for dev/CI (same seam pattern as MockEngine), ONE break-glass local account
 whose every use writes an alarmed audit event, and the golden-flow e2e
 authenticating for real. Explicitly NOT here: roles/route guards + real
 audit actor (WU-021 — runs keep `actor='local-dev'`), SSO (post-MVP),
-account lockout/rate-limit policy beyond a failure delay (icebox), email
-alarm on break-glass use (icebox — the audit row + error log land now).
+account lockout/rate-limit policy beyond a failure delay (icebox). Email
+alarm on break-glass use was originally deferred (audit row + error log
+only) and is now **delivered in WU-046**: a best-effort mail alarm to
+`PORTAL_NOTIFY_TO` fires off the login path (never blocking emergency access).
 
 ## Mini-ADRs (agent decisions, revisitable)
 

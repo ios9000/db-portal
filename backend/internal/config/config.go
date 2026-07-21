@@ -122,6 +122,34 @@ func (c Config) ProtectedInstanceSet() map[string]bool {
 	return out
 }
 
+// Validate checks that the vars the SELECTED mode needs to function are
+// present, so a misconfigured pilot deploy fails at boot with a clear message
+// instead of booting into a silently-broken state (WU-046). It is deliberately
+// minimal — it enforces only vars whose absence makes the portal non-functional
+// (a door nobody can open), never stylistic preferences (those stay boot Warns,
+// e.g. CookieSecure). Called on the server path only; the migrate/import/seed
+// subcommands don't need auth config. Fails closed, listing every missing var.
+func (c Config) Validate() error {
+	var missing []string
+	if c.AuthMode == "ldap" {
+		// SPEC-020 mini-ADR 4 keeps the door LOCKED on misconfig (ldap with no
+		// URL → every login 401). That is safe but SILENT — a portal nobody can
+		// enter that looks healthy. Refuse to boot instead, so the operator sees
+		// the misconfiguration immediately rather than at the first failed login.
+		if strings.TrimSpace(c.LDAPURL) == "" {
+			missing = append(missing, "PORTAL_LDAP_URL")
+		}
+		if strings.TrimSpace(c.LDAPBindTemplate) == "" {
+			missing = append(missing, "PORTAL_LDAP_BIND_TEMPLATE")
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("config: PORTAL_AUTH_MODE=%s requires %s to be set (see the deploy runbook / .env template)",
+			c.AuthMode, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv
 // file; a missing file is not an error. The process environment is never
 // mutated — file values are merged below process env before parsing.

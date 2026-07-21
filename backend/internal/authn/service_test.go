@@ -52,6 +52,17 @@ func (downDirectory) Bind(context.Context, string, string) (authn.Identity, erro
 	return authn.Identity{}, authn.ErrBadCredentials
 }
 
+// recordingAlarm captures break-glass mail alarms. The buffered channel is the
+// sync point with the Service's fire-and-forget alarm goroutine (WU-046).
+type recordingAlarm struct{ ch chan string }
+
+func newRecordingAlarm() *recordingAlarm { return &recordingAlarm{ch: make(chan string, 1)} }
+
+func (a *recordingAlarm) BreakGlassUsed(_ context.Context, remote string) error {
+	a.ch <- remote
+	return nil
+}
+
 func authEvents(t *testing.T, pool *pgxpool.Pool) []string {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
@@ -184,6 +195,36 @@ func TestBreakGlass(t *testing.T) {
 	// Wrong password still fails.
 	_, err = svc.Login(ctx, "break-glass", "nope", "")
 	require.ErrorIs(t, err, authn.ErrBadCredentials)
+}
+
+// WU-046: a break-glass login fires the mail alarm (with the observed remote);
+// a normal login never does. The alarm is best-effort off the login path.
+func TestBreakGlassFiresMailAlarm(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("open-sesame"), bcrypt.MinCost)
+	require.NoError(t, err)
+	svc, _ := newService(t, withBreakglass(string(hash)))
+	alarm := newRecordingAlarm()
+	svc.Alarm = alarm
+	ctx := context.Background()
+
+	// A normal (directory) login must NOT alarm.
+	_, err = svc.Login(ctx, "dba1", "dba1", "10.0.0.9:1")
+	require.NoError(t, err)
+	select {
+	case r := <-alarm.ch:
+		t.Fatalf("a normal login must not fire the break-glass alarm (remote %q)", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Break-glass DOES alarm, carrying the portal-observed remote.
+	_, err = svc.Login(ctx, "break-glass", "open-sesame", "10.0.0.2:9")
+	require.NoError(t, err)
+	select {
+	case r := <-alarm.ch:
+		require.Equal(t, "10.0.0.2:9", r)
+	case <-time.After(2 * time.Second):
+		t.Fatal("break-glass login did not fire the mail alarm")
+	}
 }
 
 func TestBreakGlassDisabledByDefault(t *testing.T) {

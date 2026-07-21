@@ -182,6 +182,30 @@ func TestLocateDotenvOutsideRepoChecksCwdOnly(t *testing.T) {
 	require.Contains(t, string(b), "here")
 }
 
+func TestValidate(t *testing.T) {
+	// ldap mode without its bind vars boots into a door nobody can open —
+	// Validate refuses instead, naming every missing var (WU-046).
+	err := config.Config{AuthMode: "ldap"}.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PORTAL_LDAP_URL")
+	require.Contains(t, err.Error(), "PORTAL_LDAP_BIND_TEMPLATE")
+
+	// Partially configured still fails, naming only what's missing.
+	err = config.Config{AuthMode: "ldap", LDAPURL: "ldaps://ad.corp:636"}.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PORTAL_LDAP_BIND_TEMPLATE")
+	require.NotContains(t, err.Error(), "PORTAL_LDAP_URL")
+
+	// Fully configured ldap validates.
+	require.NoError(t, config.Config{
+		AuthMode: "ldap", LDAPURL: "ldaps://ad.corp:636", LDAPBindTemplate: "%s@corp.example.com",
+	}.Validate())
+
+	// fake / off never require the ldap vars.
+	require.NoError(t, config.Config{AuthMode: "fake"}.Validate())
+	require.NoError(t, config.Config{AuthMode: "off"}.Validate())
+}
+
 func TestEngineNonProdDefaultsToMock(t *testing.T) {
 	unsetenv(t, "PORTAL_ENGINE_NONPROD")
 	cfg, err := config.Load("")

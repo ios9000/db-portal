@@ -1,0 +1,50 @@
+# db-portal systemd unit (WU-046) — the real, reboot-surviving service for a
+# pilot deployment. Generalizes the transient `systemd-run` demo unit: config
+# comes from a FILE (never inline), and `systemctl enable` makes it start at
+# boot (WantedBy=multi-user.target below).
+#
+# Install (see docs/deploy.md for the full runbook):
+#   install -m0755 portal /opt/dbportal/portal
+#   install -m0640 -o root -g dbportal portal.env /etc/dbportal/portal.env
+#   cp infra/dbportal.service /etc/systemd/system/dbportal.service
+#   systemctl daemon-reload && systemctl enable --now dbportal
+[Unit]
+Description=db-portal — PostgreSQL day-2 self-service portal
+Documentation=https://github.com/ios9000/db-portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dbportal
+Group=dbportal
+
+# All configuration is process env (12-factor); the file holds the real values
+# (0640, root:dbportal). PORTAL_DOTENV= (empty) disables the .env upward search
+# entirely (WU-045) so a stray .env on the host can never be adopted.
+EnvironmentFile=/etc/dbportal/portal.env
+Environment=PORTAL_DOTENV=
+WorkingDirectory=/opt/dbportal
+ExecStart=/opt/dbportal/portal
+
+# Crash recovery. The portal is stateless (state lives in Postgres), so a
+# restart is always safe; the boot orphan-sweep reconciles any run it left mid-flight.
+Restart=on-failure
+RestartSec=5s
+
+# Sandbox hardening — the binary embeds the SPA and writes nothing to disk
+# (DB is remote, logs go to the journal), so it needs no writable paths.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+# The reboot-survival guarantee: `systemctl enable` links this into
+# multi-user.target, which is reached on every boot.
+WantedBy=multi-user.target
