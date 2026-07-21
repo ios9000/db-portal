@@ -131,5 +131,12 @@ occurred, defects found later attributable to the session. Reviewable metrics:
 - escaped defects per milestone (found after the WU's verification passed)
 - how often the golden flow caught a regression
 
+**Filled (WU-047, end of MVP): [`RETROSPECTIVE.md`](RETROSPECTIVE.md)** — each metric above
+scored against the JOURNAL, plus the session-loss failure modes + mitigations, the
+architect/implementer delegation outcomes + cost, and concrete "next experiment" changes.
+Headline: ~47 WUs / 31 sessions, cold-start 3m42s, escaped defects 17→11→8 across M1→M3,
+zero guardrail invariants escaped, and repo-as-memory survived 3+ process deaths with no
+lost work.
+
 If a rule here is generating friction without value, change the rule — in this file, via
 a JOURNAL entry, so the change itself survives the session.

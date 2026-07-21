@@ -1168,7 +1168,7 @@ matching `PORTAL_ARTIFACT_RETENTION`, with `safety` artifacts in a lifecycle-exe
 (ADR-013/ADR-004: the portal reaps the registry, the store reaps the bytes; the portal never
 issues `mc rm`). For the MockEngine pilot `location` is NULL so there is nothing to expire.
 
-### WU-047 · Experiment retrospective (STRATEGY §8 metrics) — S · `todo`
+### WU-047 · Experiment retrospective (STRATEGY §8 metrics) — S · `done` (s31)
 The second ROADMAP M4 exit deliverable, and the true last WU. Docs-only: write the
 AI-agent-driven-development retrospective against STRATEGY.md §8's metrics — what the harness
 rules (repo-is-memory, one-WU-per-session, verify-don't-claim, the gate) actually bought;
@@ -1177,12 +1177,19 @@ twin-session hazard) and the mitigations that worked (tmux persistence, ps/tty t
 recover-don't-redo); the architect/implementer delegation outcomes + cost; and what to
 change for the next experiment. Ground every claim in JOURNAL evidence and the memory files.
 **AC:**
-- [ ] The retrospective is written (STRATEGY.md §8 filled or a linked `docs/agent/
+- [x] The retrospective is written (STRATEGY.md §8 filled or a linked `docs/agent/
       RETROSPECTIVE.md`) and covers each §8 metric with JOURNAL-cited evidence.
-- [ ] The recurring failure modes + their mitigations are named; concrete "next time" changes
+      — `docs/agent/RETROSPECTIVE.md` (all 4 §8 metrics scored w/ JOURNAL cites: throughput +
+      2 reopens; cold-start 3m42s; escaped defects 17→11→8; golden-flow canary); STRATEGY §8
+      links it.
+- [x] The recurring failure modes + their mitigations are named; concrete "next time" changes
       listed.
+      — ssh-reset (s21 left no journal line) + twin-session (14×) + compaction (2×) with
+      tmux/ps-tty/recover-don't-redo mitigations; 5 concrete "next experiment" changes
+      (CI parity from M0, twin lockfile, delegate-UI-from-WU-001, iceboxed-debt milestones,
+      checkpoint-before-workflow).
 **Verify:** the doc exists and each §8 metric is addressed; links resolve; `npm run check`
-green (docs-only).
+green (docs-only). — DONE: gate CHECK-EXIT:0.
 **Context brief:** docs/agent/STRATEGY.md §8, JOURNAL.md, the memory files ([[twin-session-
 hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS ADRs.
 

@@ -5,14 +5,33 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening) IN PROGRESS. WU-046 DONE (s31) —
-  packaging for a pilot deployment (the pilot-deployable-build M4 exit deliverable).** NEXT =
-  **START WU-047** (experiment retrospective, STRATEGY §8 metrics; S — docs-only; the TRUE
-  LAST WU). M4 order = **041 ✓ → 042 ✓ → 043 ✓ → 044 ✓ → 045 ✓ → 046 ✓ → 047** (seed →
-  concurrency locks → load test → retention/GC → docs-recon+CI → packaging → retrospective);
-  full ACs/context briefs in BACKLOG "Phase 4" §. After WU-047, close M4 with a milestone gate
-  review (author an `m4-gate-review` skill mirroring m3) — the M4 exit gate. The security-
-  vetting package (ARCHITECTURE §8.2) is submittable now (surfaced to the user at WU-045).
+- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening): ALL 7 WUs DONE. WU-047 DONE (s31) —
+  experiment retrospective (`docs/agent/RETROSPECTIVE.md`).** M4 order = **041 ✓ → 042 ✓ →
+  043 ✓ → 044 ✓ → 045 ✓ → 046 ✓ → 047 ✓** — the whole backlog is done. NEXT = **the M4
+  MILESTONE GATE REVIEW** (the M4 exit gate, user-opt-in per STRATEGY §6): author an
+  `m4-gate-review` skill mirroring `m3-gate-review` (5 Sonnet reviewers over the M4 diff —
+  041..047: seed/locks/load-test/retention/CI/packaging — architect verifies findings inline),
+  run it, file any fix WUs, then MVP is COMPLETE. This is Workflow-scale + billed → say "use a
+  workflow for the M4 gate review" (or run the skill). Milestone bookkeeping still open: mark
+  M4 EXIT in ROADMAP.md after the gate. The security-vetting package (ARCHITECTURE §8.2) is
+  submittable now (surfaced at WU-045).
+- **Status (s31, WU-047 DONE — experiment retrospective):** the TRUE LAST WU and the 2nd M4
+  exit deliverable (docs-only). Wrote `docs/agent/RETROSPECTIVE.md` against STRATEGY §8:
+  mined the JOURNAL (31 sessions) + gate reviews + memory files for cited evidence and scored
+  each metric — WU throughput (~47 done entries; rework = 2 literal reopens, WU-001R/011R;
+  escaped defects handled as fix WUs not reopens), **cold-start 3m42s** (s02, user-timed;
+  ≤5min target met), **escaped defects per milestone 17→11→8** (M1→M2→M3, declining; 0
+  guardrail invariants ever escaped), golden-flow = extended-per-milestone canary that never
+  went red in-session (the broader suite caught bugs mid-dev: WU-016 resurrection, WU-023
+  migrate-walk drift). Named the session-loss failure modes + mitigations: ssh-reset (7×; the
+  proof = s21 left NO journal line, killed pre-checkpoint, recovered by s22 → 30 journalled
+  sessions across s01–s31) + tmux/recover-don't-redo; twin-session (14×) + ps/tty checks;
+  compaction (only 2× — checkpoint discipline held). Delegation: 6 UI Sonnet delegations ALL
+  first-pass-green (~100–126k tok / ~5–10min each), architect kept security/concurrency, gates
+  are workflow-scale. 5 concrete "next experiment" changes (CI parity from M0; a twin-session
+  lockfile; delegate UI from WU-001; iceboxed debt gets a target milestone; checkpoint before
+  every workflow run). STRATEGY §8 links the retrospective. GATE: CHECK-EXIT:0 (docs-only —
+  golangci 0, go test -race all pkgs, vitest 116/116). No code change.
 - **Status (s31, WU-046 DONE — packaging for a pilot deployment):** turned the `build:release`
   binary (ADR-010) into a pilot-deployable, reboot-surviving service (the ROADMAP M4 exit
   deliverable). Docs/infra/security-hardening, no module → no SPEC. Architect-implemented (auth
@@ -417,19 +436,22 @@
 
 ## Next action (be exact)
 
-1. **START WU-047** (experiment retrospective — the TRUE LAST WU; S; docs-only; BACKLOG
-   "Phase 4" §). Write the AI-agent-driven-development retrospective against STRATEGY.md §8's
-   metrics: what the harness rules (repo-is-memory, one-WU-per-session, verify-don't-claim, the
-   gate) actually bought; the recurring session-loss failure modes (ssh reset killing pre-
-   checkpoint work, the [[twin-session-hazard]]) and the mitigations that worked (tmux
-   persistence, ps/tty twin checks, recover-don't-redo); the architect/implementer delegation
-   outcomes + cost ([[workflow-cost-sensitivity]]); what to change next experiment. GROUND every
-   claim in JOURNAL evidence + the memory files. Fill STRATEGY.md §8 or a linked
-   `docs/agent/RETROSPECTIVE.md`. Verify: doc exists, each §8 metric addressed w/ JOURNAL cites,
-   links resolve, `npm run check` green (docs-only). Read the WU-047 entry + context brief.
-   - After WU-047: M4 EXIT GATE — author an `m4-gate-review` skill mirroring `m3-gate-review`
-     (5 Sonnet reviewers over the M4 diff, architect verifies findings inline) and run it. That
-     is the M4 milestone close. Then MVP is complete.
+1. **RUN THE M4 MILESTONE GATE REVIEW** (the M4 exit gate — the whole BACKLOG is done). This
+   is the last thing between here and a complete MVP. It is Workflow-scale + billed and
+   user-opt-in per STRATEGY §6 — the user says "use a workflow for the M4 gate review" (or
+   invokes an `m4-gate-review` skill). STEPS: (a) author `.claude/skills/m4-gate-review` (or a
+   workflow) MIRRORING the m3 pattern — read `docs/agent/reviews/m3-gate.md` + the existing
+   `m3-gate-review` skill for the shape: 5 Sonnet reviewers over the M4 diff (WU-041..047 =
+   staging seed / concurrency locks / load test / retention-GC / docs-recon+CI / pilot
+   packaging / retrospective), dimensions like concurrency-locks / retention-safety /
+   deploy-hardening(systemd+break-glass+config-validate) / CI-supply-chain / docs-reconcile;
+   architect verifies findings INLINE (M1/M2/M3 light shape, no verifier agents). (b) Run it,
+   write `docs/agent/reviews/m4-gate.md`, file any fix WUs (WU-048+) as m3 did (037–040). (c)
+   Mark M4 EXIT in ROADMAP.md; then the MVP is COMPLETE. Cold-start note: the M4 diff spans
+   `git log`/`git diff` from the M3 close (the WU-040 commit) to HEAD — scope the reviewers to
+   that range.
+   - WU-047 (s31) is DONE — the retrospective is `docs/agent/RETROSPECTIVE.md` (STRATEGY §8
+     links it). All 7 M4 WUs done.
    - (DONE s31, user-authorized) The live `systemctl start/restart/stop` drill under the real
      `infra/dbportal.service` ran clean (service active under systemd, break-glass→mailpit,
      restart recovery, full teardown, demo untouched) — the WU-046 systemd path is fully
