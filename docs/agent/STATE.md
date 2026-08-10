@@ -5,16 +5,53 @@
 
 ## Now
 
-- **Active:** M3 CLOSED. **PHASE 4 (M4 — Hardening): ALL 7 WUs DONE. WU-047 DONE (s31) —
-  experiment retrospective (`docs/agent/RETROSPECTIVE.md`).** M4 order = **041 ✓ → 042 ✓ →
-  043 ✓ → 044 ✓ → 045 ✓ → 046 ✓ → 047 ✓** — the whole backlog is done. NEXT = **the M4
-  MILESTONE GATE REVIEW** (the M4 exit gate, user-opt-in per STRATEGY §6): author an
-  `m4-gate-review` skill mirroring `m3-gate-review` (5 Sonnet reviewers over the M4 diff —
-  041..047: seed/locks/load-test/retention/CI/packaging — architect verifies findings inline),
-  run it, file any fix WUs, then MVP is COMPLETE. This is Workflow-scale + billed → say "use a
-  workflow for the M4 gate review" (or run the skill). Milestone bookkeeping still open: mark
-  M4 EXIT in ROADMAP.md after the gate. The security-vetting package (ARCHITECTURE §8.2) is
-  submittable now (surfaced at WU-045).
+- **Active:** M3 CLOSED. PHASE 4 (M4 — Hardening): all 7 build WUs done (041✓ 042✓ 043✓ 044✓
+  045✓ 046✓ 047✓). **M4 GATE REVIEW RAN (s32) — and it did NOT pass clean: 1 CRITICAL + 2
+  HIGH + 1 LOW, all confirmed.** Record = `docs/agent/reviews/m4-gate.md`. Unlike M1/M2/M3
+  (no criticals → "passes with fix WUs"), the critical means **M4 EXIT / MVP-COMPLETE is
+  BLOCKED**. **NEXT = WU-048** (the CRITICAL — Patroni-restore guardrail re-validated at fire
+  time), THEN **WU-049** (the 2 deploy-packaging HIGHs + the dotenv-log LOW, so the pilot
+  packaging is actually deployable), THEN mark **M4 EXIT** in ROADMAP.md and the MVP is
+  complete. Both WUs are filed in BACKLOG (context briefs + ACs). Do NOT mark M4 EXIT yet.
+  The security-vetting package (ARCHITECTURE §8.2) is submittable now (surfaced at WU-045).
+- **Status (s32, M4 GATE REVIEW — 1 CRITICAL, gate BLOCKED):** authored
+  `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`) mirroring the m3 shape — 5
+  Sonnet reviewers over the M4 diff `24008da..HEAD` (WU-041..047), dimensions
+  concurrency-locks / retention-safety / deploy-hardening / ci-supply-chain-config /
+  seed-loadtest-specs; findings verified INLINE by the architect (no verifier agents), several
+  reproduced empirically on the VM. Committed the script BEFORE running (e463e9a — the
+  RETROSPECTIVE "checkpoint before every workflow run" lesson; the first launch also died with
+  "Login expired" mid-run, 0 tokens — re-ran clean). Run `wf_d38775e1-d1f`: 519k subagent
+  tokens / 189 calls / ~51.7 min. **4 findings, 4 confirmed, 0 refuted, 1 re-graded down, 1
+  CRITICAL.** (1) **CRITICAL** — the naive-Patroni-restore block (`ErrPatroniRestore`) is
+  enforced ONLY at `chain.Create` (chain.go:218); `Resume`/`drive`/`next`/`loadChain` never
+  re-read platform and `runs.Start` has no Patroni check (grep-confirmed sole site). An
+  instance re-platformed `vm→k8s_patroni` by an ordinary re-import between create and resume
+  (`inventory.upsertInstance` UPDATEs cluster_id in place; `resolveCluster` only quarantines a
+  same-name/diff-platform conflict) has its restore step fired by Resume with no block →
+  `pg_restore` behind Patroni's back. Asymmetry: `runs.Start` DOES re-check self-target
+  (service.go:183) + prod-ritual (:193) at every fire — Patroni is the one Create-time
+  guardrail not re-validated. Safety dump still runs (data protected); hazard is Patroni
+  divergence. → **WU-048** (BLOCKS exit). (2)+(3) **HIGH** (one root cause) —
+  `infra/portal.env.template` has trailing inline comments on value lines; systemd
+  `EnvironmentFile=` does NOT strip them (VM-reproduced, systemd 255) → typed config fields
+  (bool/duration, config.go:47-49,64,67) fail `config.Load` → the unit crash-loops, never
+  boots; the SAME comments break `deploy.md`'s `env $(…|grep|xargs)` migrate command (execs
+  `#`, VM-reproduced). WU-046's live drill missed both — it used hand-written clean values,
+  not a verbatim template copy. → **WU-049**. (4) **LOW** (re-graded from MED) —
+  `PORTAL_DOTENV=/missing` logs "loaded dotenv file" though nothing was read (main.go:59;
+  `LocateDotenv` returns it verbatim, `Load` silently skips a missing file); narrow (manual
+  runs only — the unit sets `PORTAL_DOTENV=` empty), no behavior corruption. → **WU-049**.
+  **CLEAN dimensions:** retention-safety + seed-loadtest-specs (0 findings). WHAT HELD: the
+  WU-042 instance lock under every interleaving (+ the WU-043 harness genuinely proves it), no
+  `safety` artifact reapable, the fail-safe non-positive-age guard, the observational audit
+  pass (append-only intact), session GC never touching a live session, the break-glass alarm
+  async/off-hot-path with NO password/token leak + `authn` not importing `notify`,
+  `config.Validate` fail-closed without blocking migrate/import/seed, the `.git`-bounded .env
+  walk, no secret in any infra/CI/deploy file, the seed generator's determinism +
+  import-clean rows. GATE: docs-only session (review doc + BACKLOG + STATE + JOURNAL); no
+  Go/FE change, tree unchanged since e463e9a except docs → CHECK not re-run (m3-gate
+  precedent). Commit pending.
 - **Status (s31, WU-047 DONE — experiment retrospective):** the TRUE LAST WU and the 2nd M4
   exit deliverable (docs-only). Wrote `docs/agent/RETROSPECTIVE.md` against STRATEGY §8:
   mined the JOURNAL (31 sessions) + gate reviews + memory files for cited evidence and scored
@@ -436,22 +473,28 @@
 
 ## Next action (be exact)
 
-1. **RUN THE M4 MILESTONE GATE REVIEW** (the M4 exit gate — the whole BACKLOG is done). This
-   is the last thing between here and a complete MVP. It is Workflow-scale + billed and
-   user-opt-in per STRATEGY §6 — the user says "use a workflow for the M4 gate review" (or
-   invokes an `m4-gate-review` skill). STEPS: (a) author `.claude/skills/m4-gate-review` (or a
-   workflow) MIRRORING the m3 pattern — read `docs/agent/reviews/m3-gate.md` + the existing
-   `m3-gate-review` skill for the shape: 5 Sonnet reviewers over the M4 diff (WU-041..047 =
-   staging seed / concurrency locks / load test / retention-GC / docs-recon+CI / pilot
-   packaging / retrospective), dimensions like concurrency-locks / retention-safety /
-   deploy-hardening(systemd+break-glass+config-validate) / CI-supply-chain / docs-reconcile;
-   architect verifies findings INLINE (M1/M2/M3 light shape, no verifier agents). (b) Run it,
-   write `docs/agent/reviews/m4-gate.md`, file any fix WUs (WU-048+) as m3 did (037–040). (c)
-   Mark M4 EXIT in ROADMAP.md; then the MVP is COMPLETE. Cold-start note: the M4 diff spans
-   `git log`/`git diff` from the M3 close (the WU-040 commit) to HEAD — scope the reviewers to
-   that range.
+1. **START WU-048 — the M4-gate CRITICAL (Patroni-restore re-validated at fire time). This
+   BLOCKS M4 EXIT.** The M4 gate RAN (s32) and did NOT pass clean — see
+   `docs/agent/reviews/m4-gate.md` (1 CRITICAL + 2 HIGH + 1 LOW, all confirmed). Full brief +
+   ACs are in BACKLOG (WU-048). Core: the `ErrPatroniRestore` block is enforced ONLY at
+   `chain.Create` (chain.go:218); re-fire paths (`chain.Resume` → `drive`/`next`/`loadChain`,
+   driver.go) never re-read cluster platform and `runs.Start` has no Patroni check — so a
+   restore step re-fired after the target is re-platformed `vm→k8s_patroni` (ordinary
+   re-import) runs `pg_restore` behind Patroni's back. Fix = read platform FRESH at fire time
+   (driver `next`/`drive` before firing a `restore` step, and/or `Resume` before the flip),
+   halt + `guardrail.denied` audit, keep dumps allowed on Patroni. Model the fix on the
+   self-target/prod-ritual precedents that ARE re-checked in `runs.Start` (service.go:183,193).
+   Then **WU-049** (the 2 deploy-packaging HIGHs — strip inline comments from
+   `portal.env.template` so systemd `EnvironmentFile=` + `config.Load` parse it, fix
+   `deploy.md`'s migrate command; + the dotenv-log LOW). THEN mark **M4 EXIT** in ROADMAP.md
+   → MVP complete. Do NOT mark M4 EXIT before WU-048+049 land + a re-confirm.
+   - M4 GATE ARTIFACTS (s32): record `docs/agent/reviews/m4-gate.md`; workflow
+     `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`, committed e463e9a before
+     the run). Run `wf_d38775e1-d1f` = 519k tok / 189 calls / ~51.7 min, 5 Sonnet reviewers
+     over `24008da..HEAD`, verified inline (2 findings VM-reproduced empirically). To re-run
+     after WU-048/049: same workflow, or `Skill m4-gate-review`.
    - WU-047 (s31) is DONE — the retrospective is `docs/agent/RETROSPECTIVE.md` (STRATEGY §8
-     links it). All 7 M4 WUs done.
+     links it). All 7 M4 build WUs done; the gate fix WUs (048/049) are the remaining work.
    - (DONE s31, user-authorized) The live `systemctl start/restart/stop` drill under the real
      `infra/dbportal.service` ran clean (service active under systemd, break-glass→mailpit,
      restart recovery, full teardown, demo untouched) — the WU-046 systemd path is fully

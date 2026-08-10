@@ -1195,6 +1195,95 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 
 ---
 
+## M4-gate fix WUs (filed s32 from `docs/agent/reviews/m4-gate.md`)
+
+> The M4 milestone gate (5 Sonnet reviewers, architect-verified inline) raised 4 findings,
+> all confirmed: 1 CRITICAL, 2 HIGH (one root cause), 1 LOW. Unlike M1/M2/M3, a CRITICAL
+> means **M4 EXIT is BLOCKED until WU-048 lands**. WU-049 unblocks a real pilot deploy.
+
+## WU-048 — Patroni-restore guardrail re-validated at fire time (M4-gate CRITICAL) — S/M
+**Status:** TODO (blocks M4 exit). **Finding:** m4-gate finding 1.
+**Problem:** the naive-Patroni-restore block (`ErrPatroniRestore`, SPEC-042 mini-ADR 6) is
+enforced ONLY at `chain.Create` (chain.go:218), reading the target platform at creation time.
+`chain.Resume` (chain.go:278-300) and the driver (`drive`/`next`/`loadChain`, driver.go) never
+re-read platform, and `runs.Start` has no Patroni check (grep-confirmed: chain.go:218 is the
+sole enforcement site). Every step re-fires through `runs.Start`, which DOES re-check the
+self-target ban (service.go:183) and the prod ritual (service.go:193) at fire time — the
+Patroni block is the one Create-time guardrail not given that treatment. An instance
+re-platformed `vm → k8s_patroni` between create and resume (an ordinary re-import:
+`inventory.upsertInstance` UPDATEs `cluster_id` in place for a new/renamed cluster;
+`resolveCluster` only quarantines a same-name/different-platform conflict) then has its
+restore step fired by Resume with no block → `pg_restore` runs against a Patroni cluster
+behind Patroni's back (research gotcha #1). Safety dump still runs (data is protected); the
+hazard is Patroni divergence on a live target.
+**AC:**
+- [ ] A restore step whose target's CURRENT cluster platform is `k8s_patroni` is refused
+      before the job starts, even when the chain was created while the target was `vm` and
+      re-platformed afterward — verified by a test that re-platforms the instance (or its
+      cluster) between `Create` and the restore step firing (via `Resume`, and ideally also
+      mid-chain without a resume).
+- [ ] The refusal reads platform FRESH from the DB at fire time (in `drive`/`next` right
+      before firing a `restore` step, and/or in `Resume` before the state flip) — not from a
+      value cached at Create.
+- [ ] The refusal halts the chain visibly (mail, resumable-after-fix posture) and records a
+      `guardrail.denied` audit row (`patroni-restore`), consistent with the Create-time path.
+- [ ] Dumps (incl. the chain's own `safety_dump`) remain ALLOWED on `k8s_patroni` — the block
+      is narrow to `restore` (SPEC-042 mini-ADR 6 unchanged); a non-restore chain is unaffected.
+- [ ] Consider the self-target ban for the same fire-time treatment IF cheap, but note it is
+      already re-checked by `runs.Start` (service.go:183) on every fire — Patroni is the gap.
+**Verify:** `npm run check` green; the new re-platform-then-fire test fails before the fix and
+passes after; existing chain/restore tests still pass; a live drill (isolated portal + scratch
+DB, per [[live-drill-isolation]]) — create a restore chain on a `vm` target, halt it,
+re-import the instance under a `k8s_patroni` cluster, resume → chain HALTS with
+`patroni-restore` denial, no `pg_restore` on the target.
+**Context brief:** `docs/agent/reviews/m4-gate.md` (finding 1); `backend/internal/chain/
+{chain.go,driver.go}`; `backend/internal/runs/service.go` (Start's guardrail block, the
+self-target/prod-ritual precedents); `backend/internal/inventory/import.go` (the re-platform
+path); `docs/specs/concurrency-locks.md` (mini-ADR 5/6); DECISIONS ADR-012.
+
+## WU-049 — pilot-packaging fixes: env-template + runbook + dotenv-log (M4-gate HIGH×2 + LOW) — S
+**Status:** TODO (unblocks a real pilot deploy). **Findings:** m4-gate findings 2, 3, 4.
+**Problem A (HIGH, findings 2+3 — one root cause):** `infra/portal.env.template` puts
+explanatory comments AFTER the value on the same line (lines 13, 15, 16, 20, 21, 26-29, 33,
+37, 45, 60-62). systemd's `EnvironmentFile=` (dbportal.service:25) does NOT strip trailing
+`# …` — the comment becomes part of the value (empirically confirmed on the VM, systemd 255).
+The typed config fields (`CookieSecure`/`LDAPInsecure bool`, the three retention
+`time.Duration`s — config.go:47-49,64,67) then fail `ParseBool`/`ParseDuration` in
+`env.ParseWithOptions` → `config.Load` errors → the unit crash-loops (`Restart=on-failure`)
+and never boots. The SAME comments break `docs/deploy.md:74-75`'s migrate command
+(`env $(cat|grep -v '^#'|xargs) …` execs `#` → `env: '#': No such file or directory`,
+empirically confirmed). The WU-046 live drill missed both because it used hand-written clean
+values, not a verbatim template copy.
+**Problem B (LOW, finding 4):** `PORTAL_DOTENV=/missing/path` logs "loaded dotenv file"
+(main.go:59-60) though `Load` read nothing (`LocateDotenv` returns it verbatim, config.go:197;
+`Load` treats not-exist as silent no-dotenv, config.go:163). Narrow (manual runs only — the
+systemd unit sets `PORTAL_DOTENV=` empty → correct branch), no behavior corruption, just a
+misleading provenance line.
+**AC:**
+- [ ] `portal.env.template` has NO trailing inline comments on value lines — every note is a
+      `#`-prefixed line above its `KEY=VALUE` (match `.env.example`'s style). All values load
+      cleanly through a real `EnvironmentFile=` and through `config.Load`.
+- [ ] The template loaded via `EnvironmentFile=` boots the binary (or at least parses in
+      `config.Load` without a type error on the bool/duration fields) — ideally a cheap smoke
+      check (`systemd-analyze` or a `systemd-run -p EnvironmentFile=… env` assertion) guards
+      against regressions.
+- [ ] `docs/deploy.md`'s migrate step uses a comment-safe recipe (`set -a; . file; set +a;
+      sudo -u dbportal … migrate up`), not `env $(cat|grep|xargs)`; the `migrate status`
+      follow-up matches.
+- [ ] `main`/`config.Load` log "loaded dotenv file" ONLY when a file was actually read; an
+      explicit `PORTAL_DOTENV` path that doesn't exist logs a distinct "configured but not
+      found" line. (Covered by a config_test case.)
+**Verify:** `npm run check` green; a live systemd drill (isolated, per the WU-046 s31 drill
+recipe) with `/etc/dbportal/portal.env` copied VERBATIM from the fixed template + only the
+required values filled → `systemctl start` reaches `active` (not crash-loop) and the migrate
+command from deploy.md runs; the dotenv-log test passes.
+**Context brief:** `docs/agent/reviews/m4-gate.md` (findings 2-4); `infra/portal.env.template`,
+`infra/dbportal.service`, `docs/deploy.md`; `backend/internal/config/config.go` (LocateDotenv/
+Load), `backend/cmd/portal/main.go` (the log lines), `backend/internal/config/config_test.go`;
+`.env.example` (the safe comment style to mirror).
+
+---
+
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
 - CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today) — **→ WU-045**
