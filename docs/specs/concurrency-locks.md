@@ -136,10 +136,23 @@ implement; a naive `pg_restore` behind Patroni's back diverges the cluster.
 Dumps are safe (even desirable from a replica), so the block is narrow:
 **`chain.Create` refuses a chain containing a `restore` step when the target's
 cluster platform is `k8s_patroni`** (`ErrPatroniRestore`, audited
-`guardrail.denied`). Restore is the only chain-only, non-launchable op, so
-`chain.Create` is the sole gate — no `runs.Start` change. Full leader/replica
-sequencing stays post-MVP; recorded in DECISIONS.md. (The golden flow's restore
-targets `crm-test`/`hr-test`, both `vm` — unaffected.)
+`guardrail.denied`). Full leader/replica sequencing stays post-MVP; recorded in
+DECISIONS.md. (The golden flow's restore targets `crm-test`/`hr-test`, both
+`vm` — unaffected.)
+
+**Amended by WU-048 (m4-gate finding 1, CRITICAL):** this mini-ADR originally
+said "`chain.Create` is the sole gate — no `runs.Start` change". That was
+wrong: the check read platform at *creation* time only, and an ordinary
+re-import can re-platform the target `vm → k8s_patroni` between create and a
+step's (re-)fire (`inventory.upsertInstance` UPDATEs `cluster_id` in place) —
+a resumed chain then ran `pg_restore` behind Patroni's back. Since WU-048,
+**`runs.Start` re-validates the block with a FRESH platform read at every
+fire** (the same per-fire treatment as the self-target ban and the prod
+ritual), so every fire path — create-drive, Resume, mid-chain — inherits it;
+a refused fire halts the chain visibly (mail, resumable) with a
+`patroni-restore` denial on auth_event. `chain.Create`'s check remains as the
+synchronous front-door 403. Dumps/verify (incl. the chain's safety dump) stay
+allowed on Patroni.
 
 ## HTTP mapping
 
@@ -174,7 +187,13 @@ first step, visibly, with the standard halt mail. `ErrSelfTarget` /
   refusal + `guardrail.denied` row. Existing Start/List tests unchanged (they
   `waitTerminal` between same-instance Starts → finalize releases first).
 - `chain`: self-target + Patroni-restore refusal at `Create` (no chain row,
-  denial audited); an existing `vm` restore chain still creates.
+  denial audited); an existing `vm` restore chain still creates. WU-048:
+  re-platform between create and fire — via Resume
+  (`TestRePlatformHaltsResumedRestore`) and mid-chain
+  (`TestRePlatformMidChainBlocksRestore`) — halts at the restore step with the
+  denial audited; verify + safety_dump still succeed on the Patroni target.
+- `runs` (WU-048): `TestPatroniRestoreRefusedAtStart` — fire-time refusal, no
+  run row, denial row; verify/safety_dump on Patroni + restore on vm allowed.
 - `schedule`: `ErrInstanceLocked` → `statusSkipped` (probe-independent path).
 - `server`: 409 / 403 mappings on `/api/runs` + `/api/restore`.
 - Golden flow: green as-is (the restore + chain beats target `vm` instances,

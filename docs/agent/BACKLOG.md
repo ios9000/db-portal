@@ -1202,7 +1202,30 @@ hazard]], [[workflow-cost-sensitivity]], [[accidental-rejections]]), DECISIONS A
 > means **M4 EXIT is BLOCKED until WU-048 lands**. WU-049 unblocks a real pilot deploy.
 
 ## WU-048 — Patroni-restore guardrail re-validated at fire time (M4-gate CRITICAL) — S/M
-**Status:** TODO (blocks M4 exit). **Finding:** m4-gate finding 1.
+**Status:** DONE (s33) — the M4-exit blocker is cleared. **Finding:** m4-gate finding 1.
+**Done note:** fix site = `runs.Start` (service.go), NOT the driver: Start is the fire-time
+choke point where the self-target ban and prod ritual are already re-validated (the exact
+asymmetry the finding names), so create-drive, Resume, and mid-chain all inherit the check
+and the driver's existing fire-error branch supplies halt + one mail + resumable posture with
+zero new driver machinery. Start's instance lookup now JOINs cluster for platform (fresh read
+every fire); `op.ID == "restore" && platform == "k8s_patroni"` → `RecordGuardrailDenial`
+("patroni-restore") + `ErrPatroniRestore` BEFORE any row (no run, no lock). chain.Create's
+door check kept (403 UX). ACs: all met — tests written first and RED pre-fix (chains reached
+`success` with restore fired on Patroni), green post-fix: `TestPatroniRestoreRefusedAtStart`
+(runs — fire-time refusal, zero run rows, denial actor+detail; verify/safety_dump on Patroni +
+restore on vm still allowed), `TestRePlatformHaltsResumedRestore` (chain — halt → re-platform
+via in-place `cluster_id` UPDATE → Resume → verify+safety_dump SUCCEED on Patroni, restore
+step pending/NULL, denial `chain:dba-resumer`, 2 mails), `TestRePlatformMidChainBlocksRestore`
+(no resume needed — flip mid-step-1, halt at restore, 1 mail). AC-5: self-target already
+re-checked per-fire at service.go:183 — no change needed. LIVE DRILL (isolated :8096 + scratch
+`portal_patroni_drill`, auth off, MockEngine; demo :8080 untouched, torn down): restore chain
+on vm target → cancel → halted; REAL `portal import` re-platformed the instance under a NEW
+`k8s_patroni` cluster ("updated 1, quarantined 0" — the exact upsertInstance leg); resume →
+verify+safety_dump success, restore run=NULL, chain HALTED, `guardrail.denied |
+patroni-restore: drill-target` on auth_event; door check 403 confirmed post-flip. Gate:
+CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116). Docs: SPEC-042 mini-ADR 6
+amended (the falsified "sole gate" sentence corrected), ADR-012 annotated. NO migration, NO
+UI, NO seam change.
 **Problem:** the naive-Patroni-restore block (`ErrPatroniRestore`, SPEC-042 mini-ADR 6) is
 enforced ONLY at `chain.Create` (chain.go:218), reading the target platform at creation time.
 `chain.Resume` (chain.go:278-300) and the driver (`drive`/`next`/`loadChain`, driver.go) never
@@ -1217,19 +1240,19 @@ restore step fired by Resume with no block → `pg_restore` runs against a Patro
 behind Patroni's back (research gotcha #1). Safety dump still runs (data is protected); the
 hazard is Patroni divergence on a live target.
 **AC:**
-- [ ] A restore step whose target's CURRENT cluster platform is `k8s_patroni` is refused
+- [x] A restore step whose target's CURRENT cluster platform is `k8s_patroni` is refused
       before the job starts, even when the chain was created while the target was `vm` and
       re-platformed afterward — verified by a test that re-platforms the instance (or its
       cluster) between `Create` and the restore step firing (via `Resume`, and ideally also
       mid-chain without a resume).
-- [ ] The refusal reads platform FRESH from the DB at fire time (in `drive`/`next` right
+- [x] The refusal reads platform FRESH from the DB at fire time (in `drive`/`next` right
       before firing a `restore` step, and/or in `Resume` before the state flip) — not from a
       value cached at Create.
-- [ ] The refusal halts the chain visibly (mail, resumable-after-fix posture) and records a
+- [x] The refusal halts the chain visibly (mail, resumable-after-fix posture) and records a
       `guardrail.denied` audit row (`patroni-restore`), consistent with the Create-time path.
-- [ ] Dumps (incl. the chain's own `safety_dump`) remain ALLOWED on `k8s_patroni` — the block
+- [x] Dumps (incl. the chain's own `safety_dump`) remain ALLOWED on `k8s_patroni` — the block
       is narrow to `restore` (SPEC-042 mini-ADR 6 unchanged); a non-restore chain is unaffected.
-- [ ] Consider the self-target ban for the same fire-time treatment IF cheap, but note it is
+- [x] Consider the self-target ban for the same fire-time treatment IF cheap, but note it is
       already re-checked by `runs.Start` (service.go:183) on every fire — Patroni is the gap.
 **Verify:** `npm run check` green; the new re-platform-then-fire test fails before the fix and
 passes after; existing chain/restore tests still pass; a live drill (isolated portal + scratch

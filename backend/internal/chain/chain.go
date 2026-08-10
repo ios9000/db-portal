@@ -208,7 +208,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Chain, error) 
 	}
 	// Target guardrails (SPEC-042), refused synchronously before any chain row
 	// so the restore handler answers with the distinct error instead of an
-	// async halt. Both record the denial on the security ledger.
+	// async halt. Both record the denial on the security ledger. These door
+	// checks are UX, not the enforcement of record: runs.Start re-validates
+	// the self-target ban and (since WU-048) the Patroni block with a FRESH
+	// platform read at every step fire, so a target re-platformed after
+	// create halts the chain at the restore step instead of slipping past.
 	if s.isProtected(req.Instance) {
 		if derr := runs.RecordGuardrailDenial(ctx, s.pool, req.Actor, "self-target", req.Instance); derr != nil {
 			s.log.Error("guardrail denial write failed", "kind", "self-target", "err", derr.Error())

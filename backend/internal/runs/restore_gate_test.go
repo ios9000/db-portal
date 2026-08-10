@@ -40,18 +40,57 @@ func TestStartRefusesBareInternalOps(t *testing.T) {
 // With Internal set (the driver's posture), the same operations run through
 // the identical Start path — full guardrail + audit — and finalize normally.
 // verify and restore produce no artifact (only the dump template does), so
-// they register nothing.
+// they register nothing. crm-test (vm): restore on the Patroni fixture
+// instance is refused at fire time since WU-048 — that path has its own test.
 func TestStartAcceptsInternalOps(t *testing.T) {
 	svc, pool := newService(t)
 	ctx := context.Background()
 
 	for _, op := range []string{"verify", "restore"} {
-		run, err := svc.Start(ctx, internalReq("billing-test", op))
+		run, err := svc.Start(ctx, internalReq("crm-test", op))
 		require.NoError(t, err, op)
 		final := waitTerminal(t, svc, run.ID)
 		require.Equal(t, "success", final.State, op)
 		require.Nil(t, final.Artifact, "%q is artifact-less — registers nothing", op)
 		require.Empty(t, registryRowsFor(t, pool, run.ID), op)
+	}
+}
+
+// WU-048 (m4-gate finding 1): the Patroni-restore guardrail is enforced at
+// runs.Start — fire time — reading the target's CURRENT cluster platform
+// fresh, so every fire path (create-drive, Resume re-drive, mid-chain step)
+// inherits it exactly like the self-target ban and the prod ritual. Refused
+// before any row: no run, no lock, denial on the security ledger. The block
+// stays narrow — verify and the safety dump run fine on the same Patroni
+// target, and a restore onto a vm target is untouched.
+func TestPatroniRestoreRefusedAtStart(t *testing.T) {
+	svc, pool := newService(t)
+	ctx := context.Background()
+
+	_, err := svc.Start(ctx, internalReq("billing-test", "restore"))
+	require.ErrorIs(t, err, runs.ErrPatroniRestore)
+
+	var runRows int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM run WHERE instance_id = $1`,
+		instanceID(t, pool, "billing-test")).Scan(&runRows))
+	require.Zero(t, runRows, "a refused Patroni restore never becomes a run")
+
+	var actor, detail string
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT actor, detail FROM auth_event WHERE action = 'guardrail.denied'`).
+		Scan(&actor, &detail))
+	require.Equal(t, testActor, actor)
+	require.Equal(t, "patroni-restore: billing-test", detail)
+
+	for _, tc := range []struct{ instance, op string }{
+		{"billing-test", "verify"},
+		{"billing-test", "safety_dump"},
+		{"crm-test", "restore"},
+	} {
+		run, err := svc.Start(ctx, internalReq(tc.instance, tc.op))
+		require.NoError(t, err, "%s on %s must stay allowed", tc.op, tc.instance)
+		require.Equal(t, "success", waitTerminal(t, svc, run.ID).State)
 	}
 }
 

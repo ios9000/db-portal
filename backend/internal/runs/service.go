@@ -56,9 +56,18 @@ var (
 	// ErrPatroniRestore refuses a restore into a Patroni-managed cluster
 	// (research gotcha #1 / SPEC-042 mini-ADR 6): the portal does not implement
 	// the pause/detach → restore → reinit sequencing a safe Patroni restore
-	// needs. Dumps stay allowed. Lives here so chain.Create reuses the runs
-	// error vocabulary and handlers map it once.
+	// needs. Dumps stay allowed. Enforced at chain.Create (the front door) AND
+	// re-validated in Start at every fire (WU-048), so a target re-platformed
+	// after the chain exists is still refused.
 	ErrPatroniRestore = errors.New("runs: restore into a Patroni-managed cluster is not supported")
+)
+
+// opRestore and platformPatroni are the restore operation id and 0002's
+// Patroni platform value — string twins of catalog/schema vocabulary, the
+// same seam rule chain.go follows for its run-state constants.
+const (
+	opRestore       = "restore"
+	platformPatroni = "k8s_patroni"
 )
 
 // Notifier receives a copy of every run that ends not-success (SPEC-014).
@@ -165,11 +174,13 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 	}
 
 	var instanceID int64
-	var env string
+	var env, platform string
 	var maintenanceWindow *string
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, env, maintenance_window FROM instance WHERE name = $1`, req.Instance).
-		Scan(&instanceID, &env, &maintenanceWindow)
+	err := s.pool.QueryRow(ctx, `
+		SELECT i.id, i.env, i.maintenance_window, c.platform
+		FROM instance i JOIN cluster c ON c.id = i.cluster_id
+		WHERE i.name = $1`, req.Instance).
+		Scan(&instanceID, &env, &maintenanceWindow, &platform)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return Run{}, fmt.Errorf("%w: %q", ErrUnknownInstance, req.Instance)
@@ -185,6 +196,21 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (Run, error) {
 			s.log.Error("guardrail denial write failed", "kind", "self-target", "err", derr.Error())
 		}
 		return Run{}, fmt.Errorf("%w: %q", ErrSelfTarget, req.Instance)
+	}
+
+	// The Patroni-restore block, re-validated at FIRE time (WU-048 / m4-gate
+	// finding 1): chain.Create refuses at the door, but an ordinary re-import
+	// can re-platform the target vm → k8s_patroni between create and a step's
+	// (re-)fire — so platform is read fresh HERE, the same per-fire treatment
+	// the self-target ban above and the prod ritual below get. Narrow to
+	// restore: dumps (incl. the chain's safety dump) and verify stay allowed
+	// on Patroni (SPEC-042 mini-ADR 6). A refused fire halts the chain
+	// visibly via the driver's fire-error path.
+	if op.ID == opRestore && platform == platformPatroni {
+		if derr := RecordGuardrailDenial(ctx, s.pool, req.Actor, "patroni-restore", req.Instance); derr != nil {
+			s.log.Error("guardrail denial write failed", "kind", "patroni-restore", "err", derr.Error())
+		}
+		return Run{}, fmt.Errorf("%w: %q", ErrPatroniRestore, req.Instance)
 	}
 
 	// The prod ritual, enforced where env is authoritative (SPEC-021 mini-

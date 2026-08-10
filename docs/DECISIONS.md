@@ -157,6 +157,11 @@ The M4 correctness hardening (SPEC-042 = docs/specs/concurrency-locks.md; ARCHIT
   portal has no primary/replica visibility (inventory has only `cluster.platform`), so
   chain.Create refuses any chain with a `restore` step onto a Patroni target
   (`ErrPatroniRestore`, 403, audited). Dumps stay allowed (safe, even desirable from a replica).
+  **Amended (WU-048, m4-gate finding 1):** the Create-time check alone was bypassable — a
+  re-import re-platforming the target `vm → k8s_patroni` between create and resume let the
+  restore step fire. `runs.Start` now re-validates the block with a fresh platform read at
+  EVERY fire (the same per-fire treatment as the self-target ban and the prod ritual);
+  chain.Create's check remains as the front-door 403. SPEC-042 mini-ADR 6 carries the detail.
   **Deferred to post-MVP (research gotcha #1 remainder):** the real pause/detach → restore →
   reinit-replicas leader/replica sequencing — the "hard engineering item" ARCHITECTURE §7 names;
   and per-instance role awareness (needs an inventory schema addition).

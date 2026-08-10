@@ -6,21 +6,42 @@
 ## Now
 
 - **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from any
-  prior conversation).** Active WU = **WU-048**. Read, in order: (1) this "Now" block +
-  "Next action" below; (2) the **WU-048** entry in `docs/agent/BACKLOG.md` and ONLY the files
-  its context brief lists; (3) for the finding's full detail/proof, `docs/agent/reviews/
-  m4-gate.md`. The older `Status (s31…s27)` blocks below and the per-WU notes under "Next
-  action" are REFERENCE — skip them unless a brief sends you there. Tree is clean at commit
-  `3312c10` (untracked `auto_proof.txt` + `settings.local.json` are long-standing, ignore).
+  prior conversation).** Active WU = **WU-049**. Read, in order: (1) this "Now" block +
+  "Next action" below; (2) the **WU-049** entry in `docs/agent/BACKLOG.md` and ONLY the files
+  its context brief lists; (3) for the findings' full detail/proof, `docs/agent/reviews/
+  m4-gate.md` (findings 2-4). The older `Status (s31…s27)` blocks below and the per-WU notes
+  under "Next action" are REFERENCE — skip them unless a brief sends you there.
 - **Active:** M3 CLOSED. PHASE 4 (M4 — Hardening): all 7 build WUs done (041✓ 042✓ 043✓ 044✓
-  045✓ 046✓ 047✓). **M4 GATE REVIEW RAN (s32) — and it did NOT pass clean: 1 CRITICAL + 2
-  HIGH + 1 LOW, all confirmed.** Record = `docs/agent/reviews/m4-gate.md`. Unlike M1/M2/M3
-  (no criticals → "passes with fix WUs"), the critical means **M4 EXIT / MVP-COMPLETE is
-  BLOCKED**. **NEXT = WU-048** (the CRITICAL — Patroni-restore guardrail re-validated at fire
-  time), THEN **WU-049** (the 2 deploy-packaging HIGHs + the dotenv-log LOW, so the pilot
-  packaging is actually deployable), THEN mark **M4 EXIT** in ROADMAP.md and the MVP is
-  complete. Both WUs are filed in BACKLOG (context briefs + ACs). Do NOT mark M4 EXIT yet.
-  The security-vetting package (ARCHITECTURE §8.2) is submittable now (surfaced at WU-045).
+  045✓ 046✓ 047✓). The M4 gate (s32, `docs/agent/reviews/m4-gate.md`) raised 1 CRITICAL + 2
+  HIGH + 1 LOW. **WU-048 (the CRITICAL) is DONE (s33) — the M4-exit blocker is cleared.**
+  **NEXT = WU-049** (the 2 deploy-packaging HIGHs — env-template inline comments break systemd
+  `EnvironmentFile=` + deploy.md's migrate recipe — plus the dotenv-log LOW), THEN a gate
+  re-confirm (re-run `m4-gate-review` or spot-verify the 4 findings' fixes), THEN mark
+  **M4 EXIT** in ROADMAP.md and the MVP is complete. Do NOT mark M4 EXIT before WU-049 + the
+  re-confirm. The security-vetting package (ARCHITECTURE §8.2) is submittable now.
+- **Status (s33, WU-048 DONE — Patroni-restore re-validated at fire time; the M4 CRITICAL):**
+  fix site = **`runs.Start`**, not the driver — Start is the fire-time choke point where the
+  self-target ban (service.go) and prod ritual are already re-checked per fire (the exact
+  asymmetry m4-gate finding 1 named), so create-drive/Resume/mid-chain all inherit it and the
+  driver's existing fire-error branch supplies halt + one mail + resumable posture unchanged.
+  Start's instance lookup now JOINs cluster for platform (FRESH read every fire);
+  `restore`+`k8s_patroni` → `RecordGuardrailDenial("patroni-restore")` + `ErrPatroniRestore`
+  before any row (no run, no lock). chain.Create's door 403 kept. Tests RED-then-green
+  (written first; pre-fix the chains reached success with restore fired on Patroni):
+  TestPatroniRestoreRefusedAtStart (runs), TestRePlatformHaltsResumedRestore +
+  TestRePlatformMidChainBlocksRestore (chain — re-platform via in-place cluster_id UPDATE;
+  verify+safety_dump SUCCEED on Patroni proving the block stays narrow; restore step
+  pending/NULL; denial actor `chain:dba-resumer`/`chain:dba-test`). TestStartAcceptsInternalOps
+  retargeted billing-test→crm-test (billing-test is the Patroni fixture — refusal now correct).
+  LIVE DRILL (isolated :8096 + scratch `portal_patroni_drill`, auth off, MockEngine, per
+  [[live-drill-isolation]]; demo :8080 untouched, torn down): restore chain on vm → cancel →
+  halted → REAL `portal import` re-platformed the instance under a NEW k8s_patroni cluster
+  ("updated 1, quarantined 0" — the exact upsertInstance leg) → resume → verify+safety_dump
+  success, restore run=NULL, chain HALTED, `guardrail.denied | patroni-restore: drill-target`
+  on auth_event; door check 403 post-flip. GATE: CHECK-EXIT:0 (golangci 0, go test -race all
+  pkgs, vitest 116/116). Docs: SPEC-042 mini-ADR 6 amended (the falsified "chain.Create is the
+  sole gate" sentence corrected), ADR-012 annotated, BACKLOG WU-048 DONE. NO migration/UI/seam
+  change.
 - **Status (s32, M4 GATE REVIEW — 1 CRITICAL, gate BLOCKED):** authored
   `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`) mirroring the m3 shape — 5
   Sonnet reviewers over the M4 diff `24008da..HEAD` (WU-041..047), dimensions
@@ -480,21 +501,28 @@
 
 ## Next action (be exact)
 
-1. **START WU-048 — the M4-gate CRITICAL (Patroni-restore re-validated at fire time). This
-   BLOCKS M4 EXIT.** The M4 gate RAN (s32) and did NOT pass clean — see
-   `docs/agent/reviews/m4-gate.md` (1 CRITICAL + 2 HIGH + 1 LOW, all confirmed). Full brief +
-   ACs are in BACKLOG (WU-048). Core: the `ErrPatroniRestore` block is enforced ONLY at
-   `chain.Create` (chain.go:218); re-fire paths (`chain.Resume` → `drive`/`next`/`loadChain`,
-   driver.go) never re-read cluster platform and `runs.Start` has no Patroni check — so a
-   restore step re-fired after the target is re-platformed `vm→k8s_patroni` (ordinary
-   re-import) runs `pg_restore` behind Patroni's back. Fix = read platform FRESH at fire time
-   (driver `next`/`drive` before firing a `restore` step, and/or `Resume` before the flip),
-   halt + `guardrail.denied` audit, keep dumps allowed on Patroni. Model the fix on the
-   self-target/prod-ritual precedents that ARE re-checked in `runs.Start` (service.go:183,193).
-   Then **WU-049** (the 2 deploy-packaging HIGHs — strip inline comments from
-   `portal.env.template` so systemd `EnvironmentFile=` + `config.Load` parse it, fix
-   `deploy.md`'s migrate command; + the dotenv-log LOW). THEN mark **M4 EXIT** in ROADMAP.md
-   → MVP complete. Do NOT mark M4 EXIT before WU-048+049 land + a re-confirm.
+1. **START WU-049 — the pilot-packaging fixes (M4-gate HIGH×2 + LOW).** Full brief + ACs in
+   BACKLOG (WU-049); finding detail in `docs/agent/reviews/m4-gate.md` (findings 2-4). Core:
+   (A) `infra/portal.env.template` has trailing inline comments on value lines — systemd
+   `EnvironmentFile=` does NOT strip them (VM-reproduced) → the bool/duration config fields
+   fail `config.Load` → the unit crash-loops; the SAME comments break `docs/deploy.md`'s
+   `env $(cat|grep|xargs)` migrate recipe. Fix = comments on their own `#` lines (mirror
+   `.env.example`), replace the migrate recipe with `set -a; . file; set +a`, and add a cheap
+   regression guard. (B) LOW: `PORTAL_DOTENV=/missing` logs "loaded dotenv file" though
+   nothing was read (main.go:59; `LocateDotenv` returns the path verbatim) — log "loaded"
+   only when a file was actually parsed, distinct "configured but not found" line otherwise
+   (+ config_test case). Verify per BACKLOG: live systemd drill with the fixed template
+   copied VERBATIM (isolated, per the WU-046 s31 drill recipe) → unit reaches `active`.
+   **WU-048 is DONE (s33)** — after WU-049: re-confirm the gate (re-run `m4-gate-review` or
+   spot-verify all 4 fixes), then mark **M4 EXIT** in ROADMAP.md → MVP complete. Do NOT mark
+   M4 EXIT before WU-049 + the re-confirm.
+   - WU-048 (s33) is DONE — Patroni fire-time re-validation. If revisiting: the check is in
+     `runs.Service.Start` (service.go, after the self-target ban — `opRestore`/
+     `platformPatroni` consts, platform JOINed fresh in Start's instance lookup); chain.Create
+     keeps the door 403 (chain.go:218 area, comment updated). Tests:
+     runs/restore_gate_test.go (TestPatroniRestoreRefusedAtStart) + chain/chain_lock_test.go
+     (TestRePlatformHaltsResumedRestore, TestRePlatformMidChainBlocksRestore). SPEC-042
+     mini-ADR 6 amended; ADR-012 annotated. NO migration.
    - M4 GATE ARTIFACTS (s32): record `docs/agent/reviews/m4-gate.md`; workflow
      `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`, committed e463e9a before
      the run). Run `wf_d38775e1-d1f` = 519k tok / 189 calls / ~51.7 min, 5 Sonnet reviewers
