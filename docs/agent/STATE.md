@@ -5,6 +5,13 @@
 
 ## Now
 
+- **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from any
+  prior conversation).** Active WU = **WU-048**. Read, in order: (1) this "Now" block +
+  "Next action" below; (2) the **WU-048** entry in `docs/agent/BACKLOG.md` and ONLY the files
+  its context brief lists; (3) for the finding's full detail/proof, `docs/agent/reviews/
+  m4-gate.md`. The older `Status (s31…s27)` blocks below and the per-WU notes under "Next
+  action" are REFERENCE — skip them unless a brief sends you there. Tree is clean at commit
+  `3312c10` (untracked `auto_proof.txt` + `settings.local.json` are long-standing, ignore).
 - **Active:** M3 CLOSED. PHASE 4 (M4 — Hardening): all 7 build WUs done (041✓ 042✓ 043✓ 044✓
   045✓ 046✓ 047✓). **M4 GATE REVIEW RAN (s32) — and it did NOT pass clean: 1 CRITICAL + 2
   HIGH + 1 LOW, all confirmed.** Record = `docs/agent/reviews/m4-gate.md`. Unlike M1/M2/M3
