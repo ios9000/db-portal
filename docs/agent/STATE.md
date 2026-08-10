@@ -39,7 +39,8 @@
   ("updated 1, quarantined 0" — the exact upsertInstance leg) → resume → verify+safety_dump
   success, restore run=NULL, chain HALTED, `guardrail.denied | patroni-restore: drill-target`
   on auth_event; door check 403 post-flip. GATE: CHECK-EXIT:0 (golangci 0, go test -race all
-  pkgs, vitest 116/116). Docs: SPEC-042 mini-ADR 6 amended (the falsified "chain.Create is the
+  pkgs, vitest 116/116); **CI GREEN** (run 31423009840 on d909cbb, DB tests ran). Docs:
+  SPEC-042 mini-ADR 6 amended (the falsified "chain.Create is the
   sole gate" sentence corrected), ADR-012 annotated, BACKLOG WU-048 DONE. NO migration/UI/seam
   change.
 - **Status (s32, M4 GATE REVIEW — 1 CRITICAL, gate BLOCKED):** authored
