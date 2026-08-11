@@ -208,3 +208,32 @@ re-confirm, then **WU-049** (the deploy-packaging HIGH bundle + the dotenv-log L
 pilot packaging is genuinely deployable, then mark **M4 EXIT** in ROADMAP.md and the MVP is
 complete. This is the same fix-WU protocol as M1/M2/M3, except the presence of a critical
 means the exit is gated on the fix rather than granted with follow-ups.
+
+---
+
+## Re-confirm (s35, 2026-08-11) — all 4 findings FIXED, gate CLEAR
+
+Method: **inline spot-verify** (user-chosen over a full workflow re-run — every fix already
+carried live-drill proof from its WU). Each finding re-checked at HEAD (220a496 + docs):
+the enforcement/fix site grepped in the committed tree AND the finding's tests re-run fresh
+(`-race -count=1`), on top of the empirical drill evidence recorded per WU.
+
+1. **CRITICAL, Patroni fire-time — FIXED (WU-048, s33, d909cbb).** `runs.Start` re-validates
+   with a FRESH platform read on every fire (service.go — the same per-fire treatment as the
+   self-target ban/prod ritual); chain.go:222 keeps the door 403. Tests fresh-green:
+   `TestPatroniRestoreRefusedAtStart`, `TestRePlatformHaltsResumedRestore`,
+   `TestRePlatformMidChainBlocksRestore` (written first, red pre-fix). Live drill: real
+   re-import re-platform → resume → chain HALTED, restore step run=NULL, denial row.
+2. **HIGH, env-template — FIXED (WU-049, s34, 220a496).** Zero value lines carry `#`
+   (grep-confirmed); `TestDeployEnvTemplateSystemdSafe` (red vs the old template) fresh-green
+   and guards CI. Live: `systemd-run EnvironmentFile=` env-dump clean ×5 typed values; the
+   real unit booted a VERBATIM template copy to **active, NRestarts=0**, ldap mode.
+3. **HIGH, deploy.md migrate — FIXED (WU-049, s34).** §4 uses the sourcing recipe (`set -a;
+   . …; set +a; exec … migrate up` inside the service user's shell); the only `xargs` mention
+   left is the warning naming the old form. Live: the recipe ran VERBATIM → schema v12.
+4. **LOW, dotenv log — FIXED (WU-049, s34).** `config.Load` returns `loaded`; main has the
+   three honest branches (grep-confirmed); `TestLoadReportsWhetherDotenvWasRead` fresh-green.
+   Live: `PORTAL_DOTENV=/typo` → the distinct WARN.
+
+CI green on both fix commits (runs 31423009840, 31529946640). **M4 EXITS; the MVP is
+complete** (ROADMAP.md updated s35).

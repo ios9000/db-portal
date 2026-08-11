@@ -56,6 +56,15 @@ docs-vs-reality reconciliation, packaging for a pilot deployment.
 
 **Exit:** pilot-deployable build; experiment retrospective written (STRATEGY.md §8 metrics).
 
+**Exited** (s35; WU-041…047 + gate fix WUs 048/049): all exit criteria met — the packaging
+is pilot-deployable (WU-046 unit/template/runbook, live-drilled under systemd twice: s31 and
+the s34 verbatim-template walk), the retrospective is `docs/agent/RETROSPECTIVE.md` (WU-047).
+The M4 gate review is `docs/agent/reviews/m4-gate.md`: 4 findings incl. 1 CRITICAL — unlike
+M1–M3 the exit was BLOCKED until the fixes landed; WU-048 (Patroni fire-time re-validation)
++ WU-049 (deploy packaging) closed all 4, re-confirmed in the gate doc's s35 section.
+**With M4 exited, the MVP (VISION scope: backup + restore, DBA-only, prod guardrails, audit
+trail) is COMPLETE.** Post-MVP work routes through DECISIONS.md + fresh grooming.
+
 ## Sequencing rules
 
 - Grooming is a deliverable: each phase's WUs get ACs + context briefs at the prior

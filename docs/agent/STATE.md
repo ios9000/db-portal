@@ -5,23 +5,21 @@
 
 ## Now
 
-- **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from any
-  prior conversation).** Next action = **the M4-gate re-confirm decision, then M4 EXIT** (see
-  "Next action" below — the user picks re-confirm depth). Both gate fix WUs are DONE:
-  WU-048 (s33) + WU-049 (s34). The older `Status` blocks below and the per-WU notes under
-  "Next action" are REFERENCE — skip them unless needed.
-- **Active:** M3 CLOSED. PHASE 4 (M4 — Hardening): all 7 build WUs done (041✓ 042✓ 043✓ 044✓
-  045✓ 046✓ 047✓). The M4 gate (s32, `docs/agent/reviews/m4-gate.md`) raised 1 CRITICAL + 2
-  HIGH + 1 LOW — **ALL FOUR ARE NOW FIXED**: WU-048 (s33, the CRITICAL) + WU-049 (s34, the 2
-  HIGHs + the LOW), every fix empirically drilled. Remaining before **M4 EXIT / MVP-COMPLETE**:
-  the gate re-confirm (user decision: cheap inline spot-verify — all 4 fixes already carry
-  live-drill proof — vs. a full `m4-gate-review` re-run at ~500k tokens/~50min), then mark M4
-  EXIT in ROADMAP.md (+ the still-open M3 EXIT bookkeeping line). The security-vetting package
-  (ARCHITECTURE §8.2) is submittable now. DRILL LEFTOVER (s34, deletion declined at the
-  prompt): `/etc/dbportal` (portal.env holds the DEV db password, 0640 root:dbportal),
-  `/opt/dbportal` (drill binary), and the `dbportal` system user remain on the VM; the unit
-  itself is stopped/disabled/removed — nothing runs. Remove with: `rm -rf /etc/dbportal
-  /opt/dbportal && userdel dbportal` when the user says so.
+- **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from
+  any prior conversation).** **THE MVP IS COMPLETE (s35): M4 EXITED** — see "Next action"
+  below (post-MVP posture: no active WU; new work needs user direction + fresh grooming).
+  The older `Status` blocks below are REFERENCE — skip them unless needed.
+- **Active: NONE — M0–M4 all exited.** The M4 gate's 4 findings (1 CRITICAL) were fixed by
+  WU-048 (s33) + WU-049 (s34) and **re-confirmed s35 by user-chosen inline spot-verify**
+  (each fix grep-checked at HEAD + its tests re-run fresh `-race -count=1` + the per-WU
+  live-drill proof; record = the "Re-confirm (s35)" section of `docs/agent/reviews/
+  m4-gate.md`). ROADMAP marks **M4 Exited** with the MVP-COMPLETE statement. CI green on
+  both fix commits (31423009840, 31529946640). s34's drill leftovers (/etc/dbportal,
+  /opt/dbportal, dbportal user) are REMOVED (s35, user-authorized — note: the earlier
+  teardown auto-denials were the standing `rm -rf` DENY guardrail, not user clicks; explicit
+  `rm`/`rmdir` per path is the teardown form that passes). Organizational: the
+  security-vetting package (ARCHITECTURE §8.2) is submittable — awaiting the user taking it
+  to the security team; nothing blocks on the repo side.
 - **Status (s34, WU-049 DONE — pilot-packaging fixes; findings 2+3+4):** (A) HIGHs:
   `infra/portal.env.template` rewritten — every note its own `#` line, header states the HARD
   RULE (systemd `EnvironmentFile=` does NOT strip trailing comments); NEW regression guard
@@ -525,18 +523,16 @@
 
 ## Next action (be exact)
 
-1. **M4-GATE RE-CONFIRM (user decision), then M4 EXIT.** Both fix WUs are DONE and drilled
-   (WU-048 s33, WU-049 s34). Ask the user to pick the re-confirm depth (workflow-cost
-   sensitivity: state cost first): (a) **inline spot-verify** — re-read the 4 findings in
-   `docs/agent/reviews/m4-gate.md` against the landed fixes; each already carries live-drill
-   proof (s33: re-platform→resume halts + denial row; s34: EnvironmentFile= env-dump clean,
-   unit active under verbatim template, migrate recipe runs, dotenv WARN) — ~0 cost,
-   recommended; or (b) **full `m4-gate-review` re-run** (Skill m4-gate-review; s32 cost 519k
-   subagent tokens / ~52min) over the new diff. After the re-confirm: mark **M4 EXIT** in
-   ROADMAP.md (and close the still-open M3 EXIT bookkeeping line there, s22/demo-m3.md), add
-   a gate-re-confirm note to `docs/agent/reviews/m4-gate.md`, journal → **MVP COMPLETE**.
-   Also surface: the security-vetting package (ARCHITECTURE §8.2) is submittable; the s34
-   drill leftovers (see "Now") await a removal decision.
+1. **NO ACTIVE WU — the MVP is complete (M4 exited s35).** A fresh session should NOT start
+   building: post-MVP scope routes through DECISIONS.md + user direction, then fresh grooming
+   into BACKLOG WUs (the M-close grooming ritual). Standing candidates if the user asks
+   "what's next": the Icebox in BACKLOG.md (post-MVP section — Patroni-aware sequencing,
+   PITR, approvals, SSO, bulk ops, SIEM export, role-admin CLI, schedules-UI cron×window
+   hint…), the RETROSPECTIVE's 5 "next experiment" changes, a real pilot deployment (the
+   runbook is drilled), or wiring a real LDAP/estate. Organizational: the security-vetting
+   package (ARCHITECTURE §8.2) is submittable now — user's move. M3 exit bookkeeping is
+   closed (WU-045 marked it; verified s35). Dev stack (compose) + demo :8080 still run on
+   the VM as before.
    - WU-048 (s33) is DONE — Patroni fire-time re-validation. If revisiting: the check is in
      `runs.Service.Start` (service.go, after the self-target ban — `opRestore`/
      `platformPatroni` consts, platform JOINed fresh in Start's instance lookup); chain.Create
