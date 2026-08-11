@@ -40,8 +40,8 @@
   unit → deploy.md migrate VERBATIM → v12 → `enable --now` → **active, NRestarts=0**, healthz
   200, API 401, journal `auth mode: ldap` + correct dotenv line; `PORTAL_DOTENV=/typo` →
   the new WARN live. Teardown: unit stopped/disabled/removed, scratch DB dropped (dirs/user
-  left — above). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116).
-  NO migration/UI/seam change.
+  left — above). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116);
+  **CI GREEN** (run 31529946640 on 220a496). NO migration/UI/seam change.
 - **Status (s33, WU-048 DONE — Patroni-restore re-validated at fire time; the M4 CRITICAL):**
   fix site = **`runs.Start`**, not the driver — Start is the fire-time choke point where the
   self-target ban (service.go) and prod ritual are already re-checked per fire (the exact
