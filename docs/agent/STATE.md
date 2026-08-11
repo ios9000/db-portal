@@ -533,6 +533,13 @@
    package (ARCHITECTURE §8.2) is submittable now — user's move. M3 exit bookkeeping is
    closed (WU-045 marked it; verified s35). Dev stack (compose) + demo :8080 still run on
    the VM as before.
+   - s35 postscript: the M4-exit commit's CI came back RED — a pre-existing flake
+     (`TestInstanceLockReapsExpiredDeadHolder`: at the 1ms mock delay the run finalizes —
+     and release-rides-finalize deletes the lock row — before the test's SELECT on a slow
+     CI runner; docs-only commit, code identical to a green run; mechanism repro'd with a
+     50ms gap, then the repro deleted). Fixed via the serialize-test pattern (300ms delay),
+     commit 1906a6b, **CI GREEN** (run 31532284785). main is green end-to-end; the flake was
+     test-vantage only, the lock release semantics are correct — M4 EXIT unaffected.
    - WU-048 (s33) is DONE — Patroni fire-time re-validation. If revisiting: the check is in
      `runs.Service.Start` (service.go, after the self-target ban — `opRestore`/
      `platformPatroni` consts, platform JOINed fresh in Start's instance lookup); chain.Create
