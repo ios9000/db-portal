@@ -69,15 +69,18 @@ and keep `PORTAL_COOKIE_SECURE=true` (TLS in front).
 ## 4. Migrate the database
 
 Run migrations once (and on every upgrade that adds them), as the service user
-with the service env:
+with the service env — **source the file, never word-split it** (an
+`env $(cat … | xargs)` pipeline mangles values and chokes on comments;
+WU-049 / m4-gate finding 3):
 
 ```
-sudo -u dbportal env $(sudo cat /etc/dbportal/portal.env | grep -v '^#' | xargs) \
-  /opt/dbportal/portal migrate up
-sudo -u dbportal env $(...) /opt/dbportal/portal migrate status   # confirm
+sudo -u dbportal bash -c 'set -a; . /etc/dbportal/portal.env; set +a; exec /opt/dbportal/portal migrate up'
+sudo -u dbportal bash -c 'set -a; . /etc/dbportal/portal.env; set +a; exec /opt/dbportal/portal migrate status'
 ```
 
-(`migrate` needs only `PORTAL_DB_*`; it does not require the auth vars.)
+(`dbportal` group-reads the 0640 file, so no `sudo cat` indirection is needed;
+sourcing inside the target user's shell also sidesteps sudo's env_reset.
+`migrate` needs only `PORTAL_DB_*`; it does not require the auth vars.)
 
 ## 5. Enable + start (survives reboot)
 

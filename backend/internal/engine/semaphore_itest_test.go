@@ -19,7 +19,7 @@ import (
 // skip-without-compose pattern). On the VM, where the compose service is up
 // and .env carries the bootstrap token, it runs.
 func TestSemaphoreIntegration(t *testing.T) {
-	cfg, err := config.Load(config.LocateDotenv())
+	cfg, _, err := config.Load(config.LocateDotenv())
 	require.NoError(t, err)
 	if cfg.SemaphoreAPIToken == "" {
 		t.Skip("PORTAL_SEMAPHORE_API_TOKEN unset (run infra/semaphore-bootstrap.sh) — skipping live Semaphore itest")

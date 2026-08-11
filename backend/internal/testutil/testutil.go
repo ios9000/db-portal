@@ -21,7 +21,7 @@ import (
 // env over the repo-root .env (found by upward search) over defaults.
 func Config(t *testing.T) config.Config {
 	t.Helper()
-	cfg, err := config.Load(config.LocateDotenv())
+	cfg, _, err := config.Load(config.LocateDotenv())
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

@@ -153,17 +153,24 @@ func (c Config) Validate() error {
 // Load builds a Config. dotenvPath may be "" (no file) or point at a dotenv
 // file; a missing file is not an error. The process environment is never
 // mutated — file values are merged below process env before parsing.
-func Load(dotenvPath string) (Config, error) {
+//
+// loaded reports whether a dotenv file was ACTUALLY read — false for "" and
+// for a path that does not exist. Callers must log provenance from this, not
+// from the path string: an explicit PORTAL_DOTENV pointing at a missing file
+// otherwise claims "loaded" while every value silently fell back to process
+// env + defaults (WU-049 / m4-gate finding 4).
+func Load(dotenvPath string) (cfg Config, loaded bool, err error) {
 	vals := map[string]string{}
 	if dotenvPath != "" {
 		fileVals, err := godotenv.Read(dotenvPath)
 		switch {
 		case err == nil:
 			vals = fileVals
+			loaded = true
 		case errors.Is(err, fs.ErrNotExist):
 			// no dotenv file — env + defaults only
 		default:
-			return Config{}, fmt.Errorf("config: read %s: %w", dotenvPath, err)
+			return Config{}, false, fmt.Errorf("config: read %s: %w", dotenvPath, err)
 		}
 	}
 	for _, kv := range os.Environ() {
@@ -172,11 +179,10 @@ func Load(dotenvPath string) (Config, error) {
 		}
 	}
 
-	var cfg Config
 	if err := env.ParseWithOptions(&cfg, env.Options{Environment: vals}); err != nil {
-		return Config{}, fmt.Errorf("config: %w", err)
+		return Config{}, false, fmt.Errorf("config: %w", err)
 	}
-	return cfg, nil
+	return cfg, loaded, nil
 }
 
 // LocateDotenv returns the path to the .env file config.Load should read, or

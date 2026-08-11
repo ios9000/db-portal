@@ -1265,7 +1265,30 @@ self-target/prod-ritual precedents); `backend/internal/inventory/import.go` (the
 path); `docs/specs/concurrency-locks.md` (mini-ADR 5/6); DECISIONS ADR-012.
 
 ## WU-049 — pilot-packaging fixes: env-template + runbook + dotenv-log (M4-gate HIGH×2 + LOW) — S
-**Status:** TODO (unblocks a real pilot deploy). **Findings:** m4-gate findings 2, 3, 4.
+**Status:** DONE (s34) — the pilot packaging is genuinely deployable. **Findings:** 2, 3, 4.
+**Done note:** (A) `portal.env.template` rewritten — every note on its own `#` line
+(.env.example style), header now states the HARD RULE (EnvironmentFile= does not strip
+trailing comments); regression guard = `TestDeployEnvTemplateSystemdSafe` (config pkg, runs in
+check+CI): asserts every value line is `KEY=VALUE` with no `#`/whitespace/quotes in the value,
+then round-trips the values VERBATIM (t.Setenv, exactly as EnvironmentFile= delivers them)
+through `config.Load` + `config.Validate` — red against the old template (proven), so a
+reintroduced inline comment fails in CI, not on a pilot host. deploy.md §4 migrate recipe
+replaced with `sudo -u dbportal bash -c 'set -a; . /etc/dbportal/portal.env; set +a; exec
+/opt/dbportal/portal migrate up'` (source inside the target user's shell — no word-split, no
+sudo env_reset, no `sudo cat`; status twin matches). (B) `config.Load` now returns
+`(Config, loaded bool, error)` — loaded=true ONLY when a dotenv file was actually read; main
+logs three distinct branches (loaded / configured-but-not-found WARN / none);
+`TestLoadReportsWhetherDotenvWasRead`. LIVE DRILL (isolated per the WU-046 s31 recipe; demo
+:8080 untouched): (1) `systemd-run -p EnvironmentFile=<fixed template>` env-dump — the s32
+bug repro INVERTED: all 5 typed values arrive clean; (2) full runbook walk — provision user/
+dirs, install binary + env (template VERBATIM, diff-proven: only DB password/name + :18081
+port filled) + real unit, deploy.md migrate recipe VERBATIM → v12, `systemctl enable --now` →
+**active, NRestarts=0** (no crash-loop, 8s soak), healthz 200, API 401, journal shows `auth
+mode: ldap` + correct dotenv branch; (3) `PORTAL_DOTENV=/typo` live → the new WARN "dotenv
+path configured but not found". Teardown: unit stopped/disabled/removed, scratch DB dropped
+(drill dirs+user removal was declined at the prompt — left in place, surfaced to the user).
+Gate: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116). NO migration, NO UI,
+NO seam change (Load signature is internal; 3 callers updated).
 **Problem A (HIGH, findings 2+3 — one root cause):** `infra/portal.env.template` puts
 explanatory comments AFTER the value on the same line (lines 13, 15, 16, 20, 21, 26-29, 33,
 37, 45, 60-62). systemd's `EnvironmentFile=` (dbportal.service:25) does NOT strip trailing
@@ -1283,17 +1306,17 @@ values, not a verbatim template copy.
 systemd unit sets `PORTAL_DOTENV=` empty → correct branch), no behavior corruption, just a
 misleading provenance line.
 **AC:**
-- [ ] `portal.env.template` has NO trailing inline comments on value lines — every note is a
+- [x] `portal.env.template` has NO trailing inline comments on value lines — every note is a
       `#`-prefixed line above its `KEY=VALUE` (match `.env.example`'s style). All values load
       cleanly through a real `EnvironmentFile=` and through `config.Load`.
-- [ ] The template loaded via `EnvironmentFile=` boots the binary (or at least parses in
+- [x] The template loaded via `EnvironmentFile=` boots the binary (or at least parses in
       `config.Load` without a type error on the bool/duration fields) — ideally a cheap smoke
       check (`systemd-analyze` or a `systemd-run -p EnvironmentFile=… env` assertion) guards
       against regressions.
-- [ ] `docs/deploy.md`'s migrate step uses a comment-safe recipe (`set -a; . file; set +a;
+- [x] `docs/deploy.md`'s migrate step uses a comment-safe recipe (`set -a; . file; set +a;
       sudo -u dbportal … migrate up`), not `env $(cat|grep|xargs)`; the `migrate status`
       follow-up matches.
-- [ ] `main`/`config.Load` log "loaded dotenv file" ONLY when a file was actually read; an
+- [x] `main`/`config.Load` log "loaded dotenv file" ONLY when a file was actually read; an
       explicit `PORTAL_DOTENV` path that doesn't exist logs a distinct "configured but not
       found" line. (Covered by a config_test case.)
 **Verify:** `npm run check` green; a live systemd drill (isolated, per the WU-046 s31 drill

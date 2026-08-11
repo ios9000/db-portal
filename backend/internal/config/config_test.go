@@ -3,6 +3,8 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,7 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 	unsetenv(t, "PORTAL_DB_NAME")
 	unsetenv(t, "PORTAL_AUTH_MODE")
 	unsetenv(t, "PORTAL_BREAKGLASS_HASH")
-	cfg, err := config.Load("")
+	cfg, _, err := config.Load("")
 	require.NoError(t, err)
 	require.Equal(t, ":8080", cfg.HTTPAddr)
 	require.Equal(t, "portal", cfg.DBName)
@@ -42,8 +44,62 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadMissingDotenvIsNotAnError(t *testing.T) {
-	_, err := config.Load(filepath.Join(t.TempDir(), "no-such-file"))
+	_, _, err := config.Load(filepath.Join(t.TempDir(), "no-such-file"))
 	require.NoError(t, err)
+}
+
+// WU-049 (m4-gate finding 4): Load reports whether a dotenv file was ACTUALLY
+// read, so main logs "loaded dotenv file" only when one was — an explicit
+// PORTAL_DOTENV pointing at a missing path must not masquerade as loaded
+// while every value silently fell back to process env + defaults.
+func TestLoadReportsWhetherDotenvWasRead(t *testing.T) {
+	_, loaded, err := config.Load(writeDotenv(t, "PORTAL_DB_HOST=filehost\n"))
+	require.NoError(t, err)
+	require.True(t, loaded, "a real file was read")
+
+	_, loaded, err = config.Load(filepath.Join(t.TempDir(), "typo.env"))
+	require.NoError(t, err)
+	require.False(t, loaded, "a missing explicit path reads nothing")
+
+	_, loaded, err = config.Load("")
+	require.NoError(t, err)
+	require.False(t, loaded, "no path, no file")
+}
+
+// WU-049 (m4-gate findings 2+3): the deploy env template must stay parseable
+// by systemd's EnvironmentFile=, which — unlike dev's godotenv — does NOT
+// strip a trailing `# comment` after a value: the comment becomes part of the
+// value, the typed config fields fail ParseBool/ParseDuration, and the pilot
+// unit crash-loops. Guard both legs: (a) no `#` (and no stray whitespace/
+// quoting) in any value; (b) the template's values, taken VERBATIM the way
+// EnvironmentFile= delivers them, round-trip through config.Load and pass
+// config.Validate — so a regression fails here, not on a fresh pilot host.
+func TestDeployEnvTemplateSystemdSafe(t *testing.T) {
+	raw, err := os.ReadFile("../../../infra/portal.env.template")
+	require.NoError(t, err)
+
+	keyRe := regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	for n, line := range strings.Split(string(raw), "\n") {
+		if line == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue // blank or whole-line comment — fine
+		}
+		key, value, ok := strings.Cut(line, "=")
+		require.True(t, ok, "line %d: not KEY=VALUE nor a comment: %q", n+1, line)
+		require.Regexp(t, keyRe, key, "line %d: bad key (no `export`, no leading space)", n+1)
+		require.NotContains(t, value, "#",
+			"line %d: EnvironmentFile= does not strip trailing comments — put the note on its own line", n+1)
+		require.Equal(t, strings.TrimSpace(value), value,
+			"line %d: stray whitespace around the value", n+1)
+		require.NotContains(t, value, `"`, "line %d: unquoted plain values only", n+1)
+
+		t.Setenv(key, value) // verbatim, exactly as EnvironmentFile= would
+	}
+
+	cfg, _, err := config.Load("")
+	require.NoError(t, err, "template values must parse (bool/duration/int fields)")
+	require.NoError(t, cfg.Validate(), "the template's ldap mode must ship its required vars")
+	require.Equal(t, "ldap", cfg.AuthMode, "a pilot template must not ship auth off")
+	require.True(t, cfg.CookieSecure, "a pilot template ships Secure cookies")
 }
 
 func TestLoadPrecedence(t *testing.T) {
@@ -53,7 +109,7 @@ func TestLoadPrecedence(t *testing.T) {
 	dotenv := writeDotenv(t, "PORTAL_HTTP_ADDR=:9999\nPORTAL_DB_HOST=filehost\n")
 
 	// dotenv beats defaults
-	cfg, err := config.Load(dotenv)
+	cfg, _, err := config.Load(dotenv)
 	require.NoError(t, err)
 	require.Equal(t, ":9999", cfg.HTTPAddr)
 	require.Equal(t, "filehost", cfg.DBHost)
@@ -61,7 +117,7 @@ func TestLoadPrecedence(t *testing.T) {
 
 	// process env beats dotenv
 	t.Setenv("PORTAL_HTTP_ADDR", ":7777")
-	cfg, err = config.Load(dotenv)
+	cfg, _, err = config.Load(dotenv)
 	require.NoError(t, err)
 	require.Equal(t, ":7777", cfg.HTTPAddr)
 	require.Equal(t, "filehost", cfg.DBHost) // other file values still apply
@@ -70,7 +126,7 @@ func TestLoadPrecedence(t *testing.T) {
 func TestLoadDoesNotMutateProcessEnv(t *testing.T) {
 	unsetenv(t, "PORTAL_DB_HOST")
 	dotenv := writeDotenv(t, "PORTAL_DB_HOST=filehost\n")
-	_, err := config.Load(dotenv)
+	_, _, err := config.Load(dotenv)
 	require.NoError(t, err)
 	_, present := os.LookupEnv("PORTAL_DB_HOST")
 	require.False(t, present, "Load must not leak dotenv values into the process env")
@@ -208,7 +264,7 @@ func TestValidate(t *testing.T) {
 
 func TestEngineNonProdDefaultsToMock(t *testing.T) {
 	unsetenv(t, "PORTAL_ENGINE_NONPROD")
-	cfg, err := config.Load("")
+	cfg, _, err := config.Load("")
 	require.NoError(t, err)
 	require.Equal(t, "mock", cfg.EngineNonProd, "the forever-default engine (ADR-002); semaphore is opt-in")
 }

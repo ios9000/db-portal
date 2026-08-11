@@ -52,13 +52,19 @@ func run(log *slog.Logger, args []string) error {
 	}
 
 	dotenv := config.LocateDotenv()
-	cfg, err := config.Load(dotenv)
+	cfg, dotenvLoaded, err := config.Load(dotenv)
 	if err != nil {
 		return err
 	}
-	if dotenv != "" {
+	// Provenance from what Load actually READ, not from the resolved path — a
+	// PORTAL_DOTENV pointing at a missing file must not claim "loaded" while
+	// every value fell back to process env (WU-049 / m4-gate finding 4).
+	switch {
+	case dotenvLoaded:
 		log.Info("loaded dotenv file", "path", dotenv)
-	} else {
+	case dotenv != "":
+		log.Warn("dotenv path configured but not found; using process env + defaults", "path", dotenv)
+	default:
 		log.Info("no dotenv file found; using process env + defaults")
 	}
 

@@ -6,19 +6,42 @@
 ## Now
 
 - **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from any
-  prior conversation).** Active WU = **WU-049**. Read, in order: (1) this "Now" block +
-  "Next action" below; (2) the **WU-049** entry in `docs/agent/BACKLOG.md` and ONLY the files
-  its context brief lists; (3) for the findings' full detail/proof, `docs/agent/reviews/
-  m4-gate.md` (findings 2-4). The older `Status (s31…s27)` blocks below and the per-WU notes
-  under "Next action" are REFERENCE — skip them unless a brief sends you there.
+  prior conversation).** Next action = **the M4-gate re-confirm decision, then M4 EXIT** (see
+  "Next action" below — the user picks re-confirm depth). Both gate fix WUs are DONE:
+  WU-048 (s33) + WU-049 (s34). The older `Status` blocks below and the per-WU notes under
+  "Next action" are REFERENCE — skip them unless needed.
 - **Active:** M3 CLOSED. PHASE 4 (M4 — Hardening): all 7 build WUs done (041✓ 042✓ 043✓ 044✓
   045✓ 046✓ 047✓). The M4 gate (s32, `docs/agent/reviews/m4-gate.md`) raised 1 CRITICAL + 2
-  HIGH + 1 LOW. **WU-048 (the CRITICAL) is DONE (s33) — the M4-exit blocker is cleared.**
-  **NEXT = WU-049** (the 2 deploy-packaging HIGHs — env-template inline comments break systemd
-  `EnvironmentFile=` + deploy.md's migrate recipe — plus the dotenv-log LOW), THEN a gate
-  re-confirm (re-run `m4-gate-review` or spot-verify the 4 findings' fixes), THEN mark
-  **M4 EXIT** in ROADMAP.md and the MVP is complete. Do NOT mark M4 EXIT before WU-049 + the
-  re-confirm. The security-vetting package (ARCHITECTURE §8.2) is submittable now.
+  HIGH + 1 LOW — **ALL FOUR ARE NOW FIXED**: WU-048 (s33, the CRITICAL) + WU-049 (s34, the 2
+  HIGHs + the LOW), every fix empirically drilled. Remaining before **M4 EXIT / MVP-COMPLETE**:
+  the gate re-confirm (user decision: cheap inline spot-verify — all 4 fixes already carry
+  live-drill proof — vs. a full `m4-gate-review` re-run at ~500k tokens/~50min), then mark M4
+  EXIT in ROADMAP.md (+ the still-open M3 EXIT bookkeeping line). The security-vetting package
+  (ARCHITECTURE §8.2) is submittable now. DRILL LEFTOVER (s34, deletion declined at the
+  prompt): `/etc/dbportal` (portal.env holds the DEV db password, 0640 root:dbportal),
+  `/opt/dbportal` (drill binary), and the `dbportal` system user remain on the VM; the unit
+  itself is stopped/disabled/removed — nothing runs. Remove with: `rm -rf /etc/dbportal
+  /opt/dbportal && userdel dbportal` when the user says so.
+- **Status (s34, WU-049 DONE — pilot-packaging fixes; findings 2+3+4):** (A) HIGHs:
+  `infra/portal.env.template` rewritten — every note its own `#` line, header states the HARD
+  RULE (systemd `EnvironmentFile=` does NOT strip trailing comments); NEW regression guard
+  `TestDeployEnvTemplateSystemdSafe` (config pkg → check+CI): value lines must be clean
+  `KEY=VALUE` (no `#`/whitespace/quotes) AND the values round-trip VERBATIM (t.Setenv, exactly
+  as EnvironmentFile= delivers) through `config.Load`+`Validate` — proven red vs the old
+  template. deploy.md §4 migrate recipe = `sudo -u dbportal bash -c 'set -a; .
+  /etc/dbportal/portal.env; set +a; exec /opt/dbportal/portal migrate up'` (+status twin) —
+  source in the target user's shell, no word-split/env_reset/`sudo cat`. (B) LOW:
+  `config.Load` → `(Config, loaded bool, error)`, loaded=true ONLY when a file was actually
+  read; main logs loaded / configured-but-not-found WARN / none (3 callers updated:
+  testutil, semaphore itest, main). LIVE DRILL (isolated, WU-046 s31 recipe; demo :8080
+  untouched): systemd-run EnvironmentFile= env-dump of the fixed template → all 5 typed
+  values clean (the s32 repro inverted); full runbook walk — dbportal user + /opt + /etc,
+  binary + VERBATIM template env (diff-proven: only DB password/name + :18081 filled) + real
+  unit → deploy.md migrate VERBATIM → v12 → `enable --now` → **active, NRestarts=0**, healthz
+  200, API 401, journal `auth mode: ldap` + correct dotenv line; `PORTAL_DOTENV=/typo` →
+  the new WARN live. Teardown: unit stopped/disabled/removed, scratch DB dropped (dirs/user
+  left — above). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116).
+  NO migration/UI/seam change.
 - **Status (s33, WU-048 DONE — Patroni-restore re-validated at fire time; the M4 CRITICAL):**
   fix site = **`runs.Start`**, not the driver — Start is the fire-time choke point where the
   self-target ban (service.go) and prod ritual are already re-checked per fire (the exact
@@ -502,21 +525,18 @@
 
 ## Next action (be exact)
 
-1. **START WU-049 — the pilot-packaging fixes (M4-gate HIGH×2 + LOW).** Full brief + ACs in
-   BACKLOG (WU-049); finding detail in `docs/agent/reviews/m4-gate.md` (findings 2-4). Core:
-   (A) `infra/portal.env.template` has trailing inline comments on value lines — systemd
-   `EnvironmentFile=` does NOT strip them (VM-reproduced) → the bool/duration config fields
-   fail `config.Load` → the unit crash-loops; the SAME comments break `docs/deploy.md`'s
-   `env $(cat|grep|xargs)` migrate recipe. Fix = comments on their own `#` lines (mirror
-   `.env.example`), replace the migrate recipe with `set -a; . file; set +a`, and add a cheap
-   regression guard. (B) LOW: `PORTAL_DOTENV=/missing` logs "loaded dotenv file" though
-   nothing was read (main.go:59; `LocateDotenv` returns the path verbatim) — log "loaded"
-   only when a file was actually parsed, distinct "configured but not found" line otherwise
-   (+ config_test case). Verify per BACKLOG: live systemd drill with the fixed template
-   copied VERBATIM (isolated, per the WU-046 s31 drill recipe) → unit reaches `active`.
-   **WU-048 is DONE (s33)** — after WU-049: re-confirm the gate (re-run `m4-gate-review` or
-   spot-verify all 4 fixes), then mark **M4 EXIT** in ROADMAP.md → MVP complete. Do NOT mark
-   M4 EXIT before WU-049 + the re-confirm.
+1. **M4-GATE RE-CONFIRM (user decision), then M4 EXIT.** Both fix WUs are DONE and drilled
+   (WU-048 s33, WU-049 s34). Ask the user to pick the re-confirm depth (workflow-cost
+   sensitivity: state cost first): (a) **inline spot-verify** — re-read the 4 findings in
+   `docs/agent/reviews/m4-gate.md` against the landed fixes; each already carries live-drill
+   proof (s33: re-platform→resume halts + denial row; s34: EnvironmentFile= env-dump clean,
+   unit active under verbatim template, migrate recipe runs, dotenv WARN) — ~0 cost,
+   recommended; or (b) **full `m4-gate-review` re-run** (Skill m4-gate-review; s32 cost 519k
+   subagent tokens / ~52min) over the new diff. After the re-confirm: mark **M4 EXIT** in
+   ROADMAP.md (and close the still-open M3 EXIT bookkeeping line there, s22/demo-m3.md), add
+   a gate-re-confirm note to `docs/agent/reviews/m4-gate.md`, journal → **MVP COMPLETE**.
+   Also surface: the security-vetting package (ARCHITECTURE §8.2) is submittable; the s34
+   drill leftovers (see "Now") await a removal decision.
    - WU-048 (s33) is DONE — Patroni fire-time re-validation. If revisiting: the check is in
      `runs.Service.Start` (service.go, after the self-target ban — `opRestore`/
      `platformPatroni` consts, platform JOINed fresh in Start's instance lookup); chain.Create
