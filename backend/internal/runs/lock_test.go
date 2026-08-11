@@ -96,9 +96,12 @@ func ctxCount(ctx context.Context, pool *pgxpool.Pool, instance string, out *int
 
 // SPEC-042 mini-ADR 3: an expired lock whose holder run is no longer live is
 // reaped by the next acquire (the TTL backstop). A crashed holder never wedges
-// the instance permanently.
+// the instance permanently. The generous mock delay keeps the new run LIVE
+// while the lock row is asserted — at the 1ms delay the run can finalize (and
+// finalize releases the lock) before the SELECT on a slow CI runner
+// (flaked in CI run 31531854861, s35).
 func TestInstanceLockReapsExpiredDeadHolder(t *testing.T) {
-	svc, pool := newService(t)
+	svc, pool := newServiceWithDelay(t, 300*time.Millisecond)
 	ctx := context.Background()
 	iid := instanceID(t, pool, "billing-test")
 
