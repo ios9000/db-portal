@@ -82,7 +82,42 @@ sudo -u dbportal bash -c 'set -a; . /etc/dbportal/portal.env; set +a; exec /opt/
 sourcing inside the target user's shell also sidesteps sudo's env_reset.
 `migrate` needs only `PORTAL_DB_*`; it does not require the auth vars.)
 
-## 5. Enable + start (survives reboot)
+## 5. Grant the DBA role(s)
+
+In `ldap` mode the portal grants **no roles at boot** (dev/fake modes seed dev
+users; SPEC-021 mini-ADR 8). Every mutation route requires the `dba` role, so a
+fresh pilot is login-only-read until the pilot DBAs are granted. Grants are
+admin INSERTs into the portal DB (a `portal role` CLI is post-MVP) — run once
+per DBA, username = the LDAP login name the portal sees:
+
+```sql
+INSERT INTO user_role (username, role_id)
+SELECT 'jdoe', id FROM role WHERE name = 'dba'
+ON CONFLICT DO NOTHING;
+```
+
+The `break-glass` account is granted by migration 0006 out of the box — no
+INSERT needed for it.
+
+## 6. Import the estate inventory
+
+The fleet starts empty; the MVP import is CLI-only (SPEC-010, CSV — no UI
+upload). Run as the service user with the service env (same sourcing form as
+migrate):
+
+```
+sudo -u dbportal bash -c 'set -a; . /etc/dbportal/portal.env; set +a; exec /opt/dbportal/portal import /path/to/estate.csv'
+```
+
+CSV columns (header required):
+`instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window`
+— `platform` is `k8s_patroni` | `vm`; `env` is `dev` | `test` | `prod`;
+`maintenance_window` is optional ("Sat 02:00-06:00"). Re-import is idempotent
+(natural key `instance_name`) and re-platforms in place; a same-name cluster
+with a different platform quarantines the row. Do **not** run `portal seed`
+against a pilot — it generates a synthetic staging estate.
+
+## 7. Enable + start (survives reboot)
 
 ```
 sudo systemctl enable --now dbportal
@@ -93,7 +128,7 @@ systemctl is-enabled dbportal      # -> "enabled" = it starts on every boot
 `enable` links the unit into `multi-user.target`, reached on every boot — that
 **is** the reboot-survival guarantee. `--now` also starts it immediately.
 
-## 6. Verify the deploy
+## 8. Verify the deploy
 
 ```
 # health (unauthenticated)
@@ -107,6 +142,9 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/instances   #
 ```
 
 - **Auth on:** every `/api/*` route except health returns 401 without a session.
+- **Roles + fleet live:** a §5-granted DBA logs in through the TLS front and
+  sees the §6-imported instances; an ungranted login gets read-only 403s on
+  mutations.
 - **Prod ritual on:** a `POST /api/restore` / `POST /api/runs` against a `prod`
   target without the exact typed instance name is refused 400 (server-side).
 - **Notify wired:** a failing run mails `PORTAL_NOTIFY_TO`; verify by watching
@@ -120,7 +158,7 @@ Reboot survival can be confirmed without a real reboot: `systemctl is-enabled`
 is `enabled`, and `sudo systemctl restart dbportal` brings it back healthy (the
 boot orphan-sweep reconciles any in-flight run).
 
-## 7. Break-glass (emergency access)
+## 9. Break-glass (emergency access)
 
 When AD is down, the local `break-glass` account (if `PORTAL_BREAKGLASS_HASH` is
 set) logs in. **Every use is alarmed three ways** (SPEC-020, WU-046): an
@@ -129,14 +167,14 @@ append-only `auth.break_glass` row, an `slog` Error line, and a **mail alarm to
 time — never the password). Treat an unexpected alarm as a possible compromise:
 review the auth trail and rotate `PORTAL_BREAKGLASS_HASH`.
 
-## 8. TLS / cookie guidance
+## 10. TLS / cookie guidance
 
 The portal serves plain HTTP; terminate TLS in front and forward. Keep
 `PORTAL_COOKIE_SECURE=true` so the session cookie is only sent over HTTPS — the
 boot logs a Warn if it is false in `ldap` mode. Set `PORTAL_BASE_URL` to the
 public `https://…` origin so mail links resolve.
 
-## 9. Object-store retention (real engine only)
+## 11. Object-store retention (real engine only)
 
 The maintenance loop reaps the artifact **registry** (SPEC-044); for a real
 object store, add a **bucket lifecycle-expiry** rule matching
@@ -144,11 +182,11 @@ object store, add a **bucket lifecycle-expiry** rule matching
 key space (ADR-004/ADR-013 — the portal never issues `mc rm`). Under the mock
 pilot, `location` is NULL, so there is nothing to expire.
 
-## 10. Upgrade / rollback
+## 12. Upgrade / rollback
 
 - **Upgrade:** build a new artifact, `sha256sum -c`, `systemctl stop dbportal`,
   replace `/opt/dbportal/portal`, run `migrate up` if the release adds
-  migrations, `systemctl start dbportal`. Verify §6.
+  migrations, `systemctl start dbportal`. Verify §8.
 - **Rollback:** migrations are backward-compatible within a release train; to
   roll back the binary, restore the previous `portal` and (only if the newer
   release added migrations you must undo) `migrate down` the delta. Prefer
