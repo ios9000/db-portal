@@ -65,6 +65,23 @@ M1–M3 the exit was BLOCKED until the fixes landed; WU-048 (Patroni fire-time r
 **With M4 exited, the MVP (VISION scope: backup + restore, DBA-only, prod guardrails, audit
 trail) is COMPLETE.** Post-MVP work routes through DECISIONS.md + fresh grooming.
 
+## M5 — Local Ansible engine & playbook platform (post-MVP pivot, ADR-014)
+
+The portal becomes a self-service execution and delivery platform for **Ansible playbook
+developers**: a new in-process `engine/local` adapter (os/exec over locally-installed
+`ansible-playbook`) behind the unchanged Adapter seam; dynamic inventory from the fleet
+model (instances gain a connection tuple); a validated extra_vars contract; a
+manifest-driven playbook library replacing the fixed catalog; Semaphore removed entirely
+once parity is proven. Guardrails, locks, chains, scheduler, and the append-only audit
+are inherited unchanged by construction. WU-050…057; spec = `docs/specs/local-engine.md`.
+
+**Exit:** the WU-036 restore rehearsal passes end-to-end on `engine=local` against a
+compose target with Semaphore fully deleted from the tree; a new operation lands by
+dropping a playbook + manifest into the library — no Go change (the drill IS the
+criterion); MockEngine still carries dev + the whole test suite; the `m5-gate-review`
+(exec-security · inventory least-privilege · seam parity · decommission completeness)
+passes per the M1–M4 fix-WU protocol.
+
 ## Sequencing rules
 
 - Grooming is a deliverable: each phase's WUs get ACs + context briefs at the prior

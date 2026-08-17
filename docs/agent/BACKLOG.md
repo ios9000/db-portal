@@ -1330,8 +1330,189 @@ Load), `backend/cmd/portal/main.go` (the log lines), `backend/internal/config/co
 
 ---
 
+## Phase 5 — Local Ansible engine & playbook platform (M5, post-MVP)
+
+> Groomed 2026-08-12 (s37, user-directed pivot — ADR-014). Target user broadens to
+> **Ansible playbook developers**; Semaphore goes to zero; the portal executes playbooks
+> itself via os/exec behind the UNCHANGED Adapter seam. Module spec = **SPEC-050**
+> (`docs/specs/local-engine.md`, written at grooming per user ask — each mini-ADR is
+> re-confirmed by its implementing WU). **Order is 050 → 051 → 052 → 053 → 054 → 055 →
+> 056 → 057**: the adapter core first (everything else feeds it), inventory before the
+> playbook port needs it, manifests before the UI renders their schemas, PARITY (055)
+> strictly before decommission (056), docs sweep last. Delegation: WU-054 (UI form) is
+> Sonnet-brief material (6/6 first-pass-green precedent); the exec supervisor, inventory/
+> secrets surface, and manifest loader stay architect-implemented (security-sensitive).
+> MockEngine remains the suite default throughout (ADR-002); CI needs no Ansible — the
+> adapter tests run against a stub binary (SPEC-050 testing strategy). M5 exit gate =
+> author `m5-gate-review` after 057 (dimensions incl. exec-security: injection surface,
+> env scrubbing, secrets-off-DB; inventory least-privilege; seam-contract parity;
+> decommission completeness).
+
+## WU-050 — `engine/local` adapter core (SPEC-050 mini-ADRs 1–4) — L
+**Status:** TODO.
+**Goal:** the os/exec supervisor behind the unchanged seam: fixed-argv `ansible-playbook`
+spawn (no shell, params via `--extra-vars @file` from day one), own process group,
+Cancel = SIGINT→grace→SIGKILL group, manifest-less template resolution v0
+(`<library>/<template>.yml`), per-job 0700 workdir (inventory/extravars land there in
+051/052), `Pdeathsig`, concurrency cap + FIFO queued state, JobID `local-<nonce>-<seq>`,
+exit-code map → JobState, merged-pipe replay-then-follow log streaming with line/total
+caps, `DBPORTAL_RESULT` parse (same regex + WU-040 field guard as semaphore.go). Config:
+`PORTAL_ENGINE_PROD` (NEW, default mock), `local` accepted by both class knobs,
+`PORTAL_ANSIBLE_BIN/_LIBRARY/_WORKDIR/_MAX_CONCURRENT/_CANCEL_GRACE/_TIMEOUT_CAP`;
+`config.Validate` local-mode arm (fail-closed).
+**AC:**
+- [ ] All adapter behavior proven under `go test -race` with the STUB ansible binary —
+      no Ansible in CI: happy path, exit-code map, cancel-kills-the-process-group (no
+      orphan child), timeout kill + honest Error, queue cap (N+1th holds queued, FIFO),
+      result-line artifact, malformed-result nil, restart → ErrUnknownJob, workdir
+      created 0700/removed on terminal.
+- [ ] Seam contract intact: existing runs/chain/schedule suites + golden flow untouched
+      and green on MockEngine; registry wiring accepts `local` for either class.
+- [ ] `config.Validate` refuses a `local` boot with missing library/workdir/binary,
+      naming each — migrate/import/seed unaffected.
+**Verify:** `npm run check` green; a manual VM smoke with real ansible-playbook against
+localhost (ping-style playbook) via an isolated portal ([[live-drill-isolation]]).
+**Context brief:** SPEC-050; `backend/internal/engine/{engine.go,mock.go,semaphore.go}`
+(the seam + the two adapter precedents — result-line code lifts from semaphore.go);
+`backend/internal/config/config.go`; `backend/cmd/portal/main.go` (registry wiring);
+ADR-014.
+
+## WU-051 — instance connection tuple + dynamic inventory (mini-ADR 5) — M
+**Status:** TODO.
+**Goal:** migration 0013 (`instance.host text NULL`, `instance.port int NULL`); CSV
+import optional trailing `host,port` columns (absent → NULL; existing fixtures/tests
+byte-untouched; re-import updates in place); per-job inventory JSON render into the job
+workdir 0600 — `target` group with exactly the target instance (`ansible_host`,
+`dbportal_*` hostvars), `cluster` group only when the op declares it; NO credentials in
+the file; missing tuple → StartJob fails closed with "instance has no connection info".
+**AC:**
+- [ ] 0013 up/down/up pinned in migrate_test; import round-trips host/port and stays
+      idempotent; an old-format CSV imports unchanged.
+- [ ] Inventory render golden-tested (exact JSON for a fixture instance); file mode
+      0600; fleet never leaks (a 2nd instance's host absent from the render).
+- [ ] Missing-tuple run finalizes failed with the clear message; audit trail intact.
+**Verify:** `npm run check` green; VM smoke: real playbook pings the compose `pgtarget`
+via a rendered inventory.
+**Context brief:** SPEC-050 mini-ADR 5; `backend/internal/inventory/{import.go,seed.go}`;
+`backend/internal/db/migrations/` (0002 for the instance shape); WU-050's workdir code.
+
+## WU-052 — extra_vars contract + exec hardening (mini-ADR 6) — M
+**Status:** TODO.
+**Goal:** the reserved `dbportal_*` injected namespace (instance/environment/operation +
+artifact refs — porting the semaphore forwardVars allowlist); client params rejected on
+the reserved prefix; scrubbed child env (allowlist PATH/HOME/LANG/ANSIBLE_* + configured
+extras — portal DB creds must never reach a playbook); extravars file 0600 + argv
+assertion (no param ever in argv); log caps enforced end-to-end; workdir removal on
+every terminal path incl. cancel/timeout.
+**AC:**
+- [ ] A test asserts the spawned argv contains NO param value and the child env lacks
+      `PORTAL_DB_PASSWORD` (the stub echoes its env/argv for assertion).
+- [ ] Reserved-prefix client param → rejected before any row; `params_digest` audit
+      unchanged (existing tests green).
+- [ ] Caps: a stub emitting >cap output yields the truncation marker, portal RSS sane.
+**Verify:** `npm run check` green.
+**Context brief:** SPEC-050 mini-ADR 6; WU-050 adapter; `backend/internal/engine/
+semaphore.go` (forwardVars precedent); `backend/internal/runs/service.go` (paramsDigest).
+
+## WU-053 — playbook manifests + data-driven catalog (mini-ADR 7) — L
+**Status:** TODO.
+**Goal:** `manifest.yml` schema + loader (boot-time, fail-closed: malformed/dup-id/
+entrypoint-escapes-library refuse the SERVER boot with a clear message; optional
+`--syntax-check` per entrypoint, on by default); catalog becomes manifest-backed with
+the four built-ins as the first manifests (parity: existing catalog tests pass
+unchanged); Start validates client params against the manifest schema (unknown/missing/
+type/enum → 400 vocabulary); `launchable`/`retention_class`/`targets`/`timeout`/
+`guardrails.patroni_restore_block` honored (the Patroni fire-time check keys off the
+flag, not the hardcoded op id — WU-048's check generalizes); `/api/operations` serves
+the params schema.
+**AC:**
+- [ ] Drop-a-playbook drill in tests: a fixture library with a NEW op (id not in Go)
+      loads, lists, launches through MockEngine — no Go change.
+- [ ] Fail-closed loader cases each named (dup id, bad type, traversal entrypoint,
+      syntax-check failure); migrate/import/seed boot unaffected.
+- [ ] Built-in parity: dump/verify/safety_dump/restore behave byte-identically
+      (existing runs/chain/restore suites untouched and green).
+**Verify:** `npm run check` green; VM smoke: the fixture op fires through `local`.
+**Context brief:** SPEC-050 mini-ADR 7; `backend/internal/catalog/catalog.go` (+ every
+`catalog.ByID` caller); `backend/internal/runs/service.go` (Start's gates, WU-048
+Patroni check); `backend/internal/server/runs_http.go` (400 vocabulary).
+
+## WU-054 — UI: dynamic launch-form params from the op schema — M (delegate)
+**Status:** TODO. **Delegation candidate** (Sonnet brief; UI precedent 6/6 first-pass).
+**Goal:** the launch drawer renders each operation's params schema (string/int/bool/enum
+inputs, required markers, defaults) and submits them; client-side validation mirrors the
+server (server stays authoritative); RunDetail unchanged (digest only — params are never
+echoed back, D7). Prod ritual/typed-confirm UI untouched.
+**AC:**
+- [ ] Schema-driven form for a fixture op with all four types; required blocks submit;
+      enum renders as select. vitest suite extended; 116+ stays green.
+- [ ] An op with no params renders today's drawer exactly (no regression).
+**Verify:** `npm run check` green; visual check on the dev portal.
+**Context brief:** `/api/operations` shape from WU-053; `frontend/src` launch-drawer
+component + its tests; design brief (`docs/specs/design-brief.md`) form patterns.
+
+## WU-055 — port the built-in playbooks to `local` + PARITY DRILL — M/L
+**Status:** TODO. **The gate for WU-056 — Semaphore must not be removed before this.**
+**Goal:** dump/verify/restore playbooks adapted to run under `engine/local` (host-side
+creds via `~dbportal/.pgpass`/vault — NO secret in repo/DB/extra_vars; object store
+optional: keep `mc` upload for compose-minio dev parity AND document/decide the local
+artifacts-root default — the SPEC-050 open question lands here); skip-gated real-Ansible
+itest (the semaphore-itest pattern); the WU-034/036 rehearsal re-run END TO END on
+`engine=local`: real `pg_dump` of compose `pgtarget` → registry row with real checksum →
+`pg_restore --list` OK → tamper → chain halts at verify with ONE mail → fix → resume →
+success; secrets absent from DB/logs/task output.
+**AC:**
+- [ ] The rehearsal transcript matches the WU-036 shape beat for beat on `local`.
+- [ ] Artifact-bytes decision recorded (SPEC-050 open question → resolved in the spec +
+      ADR-014 note); retention story stated (who reaps bytes).
+- [ ] All 5 dev secrets absent from portal DB, logs, and rendered files (the WU-036
+      assertion, re-run).
+**Verify:** `npm run check` green; the live drill above on the VM ([[live-drill-
+isolation]]); CI unaffected (stub-based tests only).
+**Context brief:** `playbooks/{dump,verify,restore}.yml` (semaphore-era versions);
+SPEC-034/035/036; WU-050..053 machinery; `infra/fixtures/pgtarget-init.sql`; demo-m3.md
+(the rehearsal twin to mirror).
+
+## WU-056 — Semaphore decommission — S/M
+**Status:** TODO. **Blocked on WU-055 parity.**
+**Goal:** remove `engine/semaphore.go` + its tests + the webhook route/shared secret +
+`infra/semaphore-bootstrap.sh` + `infra/semaphore.Dockerfile` + the compose service +
+the `PORTAL_SEMAPHORE_*` config block + `.env.example` entries; `PORTAL_ENGINE_*=
+semaphore` → boot error naming ADR-014; docs sweep of load-bearing semaphore references
+(README, ARCHITECTURE handled in 057). Git history is the archive — no code parked.
+**AC:**
+- [ ] `grep -ri semaphore backend/ infra/ frontend/` → zero load-bearing hits (docs/
+      journal history exempt); check + CI green; compose up runs without the service.
+- [ ] The webhook route 404s; config knob rejects with the clear error.
+**Verify:** `npm run check` green; dev stack restart clean without semaphore; demo
+:8080 unaffected (or consciously rebuilt).
+**Context brief:** `backend/internal/engine/semaphore*.go`; `backend/internal/server/`
+(webhook route); `infra/docker-compose.yml`; `backend/internal/config/config.go`;
+`.env.example`.
+
+## WU-057 — docs pivot reconciliation + deploy/package update — M
+**Status:** TODO (last; the WU-045 pattern).
+**Goal:** VISION (target user = playbook developers; platform statement), ARCHITECTURE
+§2/§6/§7 (engine component rewritten, deployment without an engine tier, guardrail
+layer 3 restated per ADR-014), deploy.md (ansible-core prereq + library/workdir
+provisioning + new knobs + package contents), `portal.env.template` + `.env.example`
+(new PORTAL_ENGINE_* knobs — template stays systemd-comment-safe, the WU-049 test
+guards it), build/package: `dist` tarball gains the playbook library; cold-start
+recipe refreshed. Then author + run the **M5 gate review** (`m5-gate-review` skill,
+the m1–m4 pattern) and file its fix WUs.
+**AC:**
+- [ ] Doc-vs-reality sweep finds zero stale Semaphore/engine claims in the five
+      load-bearing docs (VISION/ARCHITECTURE/deploy/README/CLAUDE.md).
+- [ ] The WU-049 template test still green with the new knobs; a verbatim-template
+      systemd drill boots `local` mode fail-closed until library/workdir are set.
+- [ ] M5 gate review record exists with a verdict + fix WUs filed.
+**Verify:** `npm run check` green; gate review run.
+**Context brief:** ADR-014; SPEC-050; every doc named above; `infra/build-release.sh`;
+the WU-046/049 drill recipes.
+
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
+- M5-spawned (ADR-014/SPEC-050 deferrals): playbook upload/versioning/signing API (delivery v2 — v1 is git/filesystem); per-playbook RBAC (D2/D3 revisit); `ansible-runner` structured events as an opt-in manifest flag; local artifact-bytes retention owner (open q → decided at WU-055); OpenBao vault integration (the ADR-004 commitment — now has ONE obvious integration point); dry-run/`--check` button (research module 14, cheap under the local engine); separate runner user per env class (guardrail layer 3 hardening)
 - CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today) — **→ WU-045**
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`) — **→ WU-045**
 - CI: pin the golangci-lint installer to the VM's v2.12.2 instead of `curl | sh` from HEAD (M1-gate item 14 — supply-chain + silent lint drift; check.yml:18) — **→ WU-045**

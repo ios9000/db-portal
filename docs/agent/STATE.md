@@ -6,20 +6,43 @@
 ## Now
 
 - **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from
-  any prior conversation).** **THE MVP IS COMPLETE (s35): M4 EXITED** — see "Next action"
-  below (post-MVP posture: no active WU; new work needs user direction + fresh grooming).
-  The older `Status` blocks below are REFERENCE — skip them unless needed.
-- **Active: NONE — M0–M4 all exited.** The M4 gate's 4 findings (1 CRITICAL) were fixed by
-  WU-048 (s33) + WU-049 (s34) and **re-confirmed s35 by user-chosen inline spot-verify**
-  (each fix grep-checked at HEAD + its tests re-run fresh `-race -count=1` + the per-WU
-  live-drill proof; record = the "Re-confirm (s35)" section of `docs/agent/reviews/
-  m4-gate.md`). ROADMAP marks **M4 Exited** with the MVP-COMPLETE statement. CI green on
-  both fix commits (31423009840, 31529946640). s34's drill leftovers (/etc/dbportal,
-  /opt/dbportal, dbportal user) are REMOVED (s35, user-authorized — note: the earlier
-  teardown auto-denials were the standing `rm -rf` DENY guardrail, not user clicks; explicit
-  `rm`/`rmdir` per path is the teardown form that passes). Organizational: the
-  security-vetting package (ARCHITECTURE §8.2) is submittable — awaiting the user taking it
-  to the security team; nothing blocks on the repo side.
+  any prior conversation).** Active WU = **WU-050** (`engine/local` adapter core — the
+  first Phase 5 WU). Read, in order: (1) this "Now" block + "Next action" below; (2) the
+  **WU-050** entry in `docs/agent/BACKLOG.md` and ONLY the files its context brief lists;
+  (3) the module spec `docs/specs/local-engine.md` (SPEC-050) + **ADR-014** in DECISIONS.md
+  (the pivot's why). The older `Status` blocks below are REFERENCE.
+- **Active: PHASE 5 (M5 — Local Ansible engine & playbook platform), groomed s37, no WU
+  started yet.** THE PIVOT (user directive 2026-08-12, ADR-014): target user broadens to
+  **Ansible playbook developers**; the portal executes playbooks ITSELF via os/exec
+  (`ansible-playbook` on the host) behind the UNCHANGED Adapter seam; **Semaphore goes to
+  zero** (decommission WU-056, strictly AFTER the WU-055 parity drill); the catalog becomes
+  a manifest-driven playbook library (the delivery-platform half). Groomed **WU-050 → 051 →
+  052 → 053 → 054 → 055 → 056 → 057** (order rationale in the BACKLOG phase header;
+  WU-054 UI = Sonnet delegation candidate; exec/inventory/manifest-loader stay architect).
+  MockEngine stays the dev + test default forever (ADR-002 reaffirmed); CI needs no
+  Ansible (stub-binary strategy, SPEC-050). ROADMAP has the M5 section + exit criteria
+  (rehearsal on `local`, drop-a-playbook drill, gate review). M0–M4 remain exited; the MVP
+  demo (:8080) and compose dev stack still run. Organizational: security-vetting package
+  (ARCHITECTURE §8.2) still awaits the user; NOTE the pivot will amend its engine sections
+  (WU-057 reconciles docs — until then ADR-014 wins conflicts, ADR-006 precedence).
+- **Status (s37, M5 GROOMED — the post-MVP pivot recorded):** wrote **ADR-014** (local
+  engine vs Semaphore: why ADR-002's 6-12-month verdict flips post-MVP — the portal already
+  owns the value layer, Semaphore's residual role is process supervision + a key store;
+  secrets posture restated with the DB-boundary invariant INTACT and creds moving to
+  service-user-readable host files; guardrail layer 3 restated honestly WEAKER + hardening
+  path; rejected: keep-Semaphore/AWX/CPython-embed/Go-native-SSH/ansible-runner-required);
+  **SPEC-050** (`docs/specs/local-engine.md`, 8 mini-ADRs: process model w/ pgroup+grace+
+  Pdeathsig+concurrency-cap, in-memory JobID w/ nonce (restart-forgets = the existing
+  orphan-sweep story), exit-code map + DBPORTAL_RESULT carried verbatim, replay-then-follow
+  log streaming w/ caps, least-privilege per-job JSON inventory (0013 adds nullable
+  instance.host/port; NO creds in files; missing tuple fails closed), extra_vars @file
+  (never argv) + reserved `dbportal_*` namespace + scrubbed child env, playbook manifests
+  (fail-closed boot loader, path-traversal guard, params schema, patroni-block flag
+  generalizing WU-048), integration invariants unchanged BY CONSTRUCTION; config table;
+  stub-binary test strategy; open questions incl. artifact-bytes destination → WU-055);
+  **BACKLOG Phase 5** = 8 sized WUs w/ ACs + context briefs + icebox deferral line;
+  **ROADMAP M5** + exit criteria. Docs-only session; no Go/FE change; CHECK not run
+  (precedent), CI covers the push.
 - **Status (s34, WU-049 DONE — pilot-packaging fixes; findings 2+3+4):** (A) HIGHs:
   `infra/portal.env.template` rewritten — every note its own `#` line, header states the HARD
   RULE (systemd `EnvironmentFile=` does NOT strip trailing comments); NEW regression guard
@@ -523,16 +546,20 @@
 
 ## Next action (be exact)
 
-1. **NO ACTIVE WU — the MVP is complete (M4 exited s35).** A fresh session should NOT start
-   building: post-MVP scope routes through DECISIONS.md + user direction, then fresh grooming
-   into BACKLOG WUs (the M-close grooming ritual). Standing candidates if the user asks
-   "what's next": the Icebox in BACKLOG.md (post-MVP section — Patroni-aware sequencing,
-   PITR, approvals, SSO, bulk ops, SIEM export, role-admin CLI, schedules-UI cron×window
-   hint…), the RETROSPECTIVE's 5 "next experiment" changes, a real pilot deployment (the
-   runbook is drilled), or wiring a real LDAP/estate. Organizational: the security-vetting
-   package (ARCHITECTURE §8.2) is submittable now — user's move. M3 exit bookkeeping is
-   closed (WU-045 marked it; verified s35). Dev stack (compose) + demo :8080 still run on
-   the VM as before.
+1. **START WU-050 — `engine/local` adapter core (the first M5 WU).** Full brief + ACs in
+   BACKLOG (WU-050); module spec = SPEC-050 (`docs/specs/local-engine.md`) mini-ADRs 1–4;
+   the why = ADR-014. Core: an os/exec supervisor behind the UNCHANGED `engine.Adapter`
+   seam — fixed argv (no shell; params via `--extra-vars @file` from day one), own process
+   group with SIGINT→grace→SIGKILL cancel + timeout + `Pdeathsig`, concurrency cap w/ FIFO
+   queued state, `local-<nonce>-<seq>` JobIDs (restart-forgets → the existing orphan sweep),
+   exit-code map, merged-pipe replay-then-follow log streaming w/ caps, `DBPORTAL_RESULT`
+   parse lifted from semaphore.go, per-job 0700 workdir, new config knobs incl.
+   `PORTAL_ENGINE_PROD` + a `config.Validate` local arm. EVERYTHING testable in CI via the
+   stub ansible binary (`PORTAL_ANSIBLE_BIN`) — no Ansible dependency in tests; MockEngine
+   stays the suite default. Then 051 (inventory) → 052 (extra_vars hardening) → 053
+   (manifests) → 054 (UI, delegate) → 055 (parity drill — GATES 056) → 056 (Semaphore
+   removal) → 057 (docs sweep + m5 gate). Do NOT remove any Semaphore code before WU-055's
+   rehearsal passes on `local`.
    - s35 postscript: the M4-exit commit's CI came back RED — a pre-existing flake
      (`TestInstanceLockReapsExpiredDeadHolder`: at the 1ms mock delay the run finalizes —
      and release-rides-finalize deletes the lock row — before the test's SELECT on a slow

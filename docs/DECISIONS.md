@@ -210,6 +210,81 @@ maintenance loop to the engine seam and minting spurious run/audit rows). Also i
 (m3-gate finding 8): dump.yml's post-`pg_dump` tasks are wrapped in a `block:`/`always:` so a
 failed upload never orphans real dump bytes on the runner volume.
 
+### ADR-014 · Post-MVP pivot: in-process Local Ansible engine replaces Semaphore; playbooks become platform content — `accepted` (user directive 2026-08-12, M5)
+
+**Context (the product pivot).** Post-MVP, the target user broadens: from "a DBA pressing
+buttons on a fixed two-operation catalog" to **Ansible playbook developers** — the portal
+becomes a self-service **execution and delivery platform** for their playbooks (backups,
+upgrades, maintenance). Hard product constraints set by the owner: **zero dependency on an
+external execution engine** (no Semaphore); the portal must stay **self-contained, compact,
+lightweight** — the ADR-010 single-binary ideal, extended to the whole runtime. VISION's own
+formulation ("buttons are data, execution is Ansible behind an adapter") already points here;
+what changes is who authors the buttons and where Ansible runs.
+
+**Decision.**
+1. **New `engine/local` adapter** implements the UNCHANGED `engine.Adapter` seam
+   (StartJob/Status/StreamLogs/Cancel) by supervising locally-executed `ansible-playbook`
+   processes via `os/exec` — streaming stdout as LogLines, mapping exit codes to job states,
+   parsing the existing `DBPORTAL_RESULT` artifact line, killing the process group on
+   Cancel/timeout. SPEC-050 (`docs/specs/local-engine.md`) is the module spec.
+2. **The engine moves in-process**: same binary, same host, no engine API/webhook/bootstrap.
+   "Engine-side" (ADR-004, ADR-013, SPEC-035) now reads "portal-host-side, service-user-side".
+3. **Playbooks become first-class platform content**: a playbook library on disk with
+   per-playbook manifests (id, params schema, guardrail flags — SPEC-050 mini-ADR 7)
+   replaces the fixed template-id mapping; the operation catalog becomes manifest-driven,
+   which is the "delivery platform" half of the pivot. Delivery v1 is git/filesystem —
+   playbooks ship with the deploy package; an upload/signing API is deliberately deferred.
+4. **SemaphoreAdapter is removed** (code, webhook route, bootstrap script, compose service,
+   config) — but only AFTER the local engine proves parity on the WU-034/036 rehearsal
+   (M5 decommission WU). Git history is the archive.
+5. **MockEngine remains the default for dev and ALL tests, forever** — the ADR-002 seam +
+   mock halves are REAFFIRMED; only the "Semaphore in M3" half is superseded.
+
+**Why the ADR-002 cost verdict flips.** ADR-002 priced a custom executor at "6–12 dev-months
+of commodity machinery" — against the FULL research product (distributed runners, template
+store, engine RBAC, engine UI). Post-MVP the portal already owns the entire value layer:
+catalog, guardrails, locks, chains, scheduler, audit, artifact registry, notifications, log
+streaming UI. What Semaphore actually provides the shipped product today is process
+supervision of `ansible-playbook`, a template-id lookup, and a key store. Behind the proven
+seam that is weeks of Go, not months — and it deletes an entire external system (API client,
+webhook + shared secret, bootstrap, compose service, poll fallback) that cost real M3
+sessions to integrate and would cost every operator a second system to run, secure, and
+upgrade. The research verdict was right for the product it priced; it is not the product
+being built now.
+
+**Secrets posture (ADR-004 restated, invariants intact).** The load-bearing invariant
+SURVIVES UNCHANGED: the portal DB stores no target credentials, ever; logs/mails carry no
+secrets or params. What changes is where engine-side credentials live: not a separate
+engine's key store but the **portal host, readable only by the service user** — Ansible
+Vault files (password file 0600, outside git), `~dbportal/.pgpass`, or host env; referenced
+by playbooks, never stored in or passed through the portal DB/API/extra_vars. The OpenBao
+commitment ("first post-MVP infra item") stands and now has a single obvious integration
+point. Consequence to state honestly: portal compromise and credential compromise are no
+longer separated by a network boundary — the mitigation is the service-user file boundary,
+the systemd sandbox (WU-046), and the M5 gate's exec-security review dimension.
+
+**Guardrail layer 3 (disjoint prod/nonprod) restated.** Was "disjoint engine credentials";
+becomes: separate Registry entries per class remain mandatory, each `local` instance gets
+its own library root and credential namespace (e.g. distinct vault password files), and a
+mis-routed job still fails closed (no adapter, or a credential namespace it cannot read).
+This is honestly WEAKER than two network-separated engines; the hardening path (separate
+prod portal instance, or a distinct runner user per class) is an M5-gate/icebox concern.
+
+**Rejected.** Keeping Semaphore (contradicts the zero-dependency directive; a second system
+to operate; the integration surface cost real sessions and its webhook/poll duality is the
+kind of complexity the pivot deletes). AWX/Tower (heavier in every axis). Embedding Ansible
+in-process via CPython bindings (absurd coupling). A Go-native SSH executor without Ansible
+(abandons the playbook-developer target user — the playbook IS the product's content).
+`ansible-runner` as the required runtime (structured events are attractive, but it adds a
+second runtime contract; raw `ansible-playbook` matches the existing LogLine seam and the
+proven `DBPORTAL_RESULT` contract — runner events stay a recorded option, SPEC-050).
+
+**Amends:** ADR-002 (Semaphore half), ADR-004 (location of engine-side secrets),
+SPEC-035/O-1 (object store becomes optional; artifact-bytes destination is an M5 open
+question), ARCHITECTURE §2/§6 (engine component + deployment), VISION (target user) —
+doc reconciliation is an M5 WU; until it lands, THIS ADR wins where they conflict
+(ADR-006 precedence).
+
 ## Open (inherited from architecture doc §10)
 
 - **O-1** dump artifact storage (rec: S3-compatible; minio in dev) — needed by WU-012 (mock ok) / WU-035 (real).
