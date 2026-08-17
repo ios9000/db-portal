@@ -42,7 +42,10 @@
   stub-binary test strategy; open questions incl. artifact-bytes destination → WU-055);
   **BACKLOG Phase 5** = 8 sized WUs w/ ACs + context briefs + icebox deferral line;
   **ROADMAP M5** + exit criteria. Docs-only session; no Go/FE change; CHECK not run
-  (precedent), CI covers the push.
+  (precedent); **CI GREEN** (run 31983616967 on e648457). Also standing from s36: the pilot
+  distribution package lives at `dist/dbportal-0.0.1-b6e0151.tar.gz` (+.sha256, gitignored,
+  VM-only, rebuildable via `npm run build:release`); pilot plan twin = `PILOT-PLAN.md`
+  inside it.
 - **Status (s34, WU-049 DONE — pilot-packaging fixes; findings 2+3+4):** (A) HIGHs:
   `infra/portal.env.template` rewritten — every note its own `#` line, header states the HARD
   RULE (systemd `EnvironmentFile=` does NOT strip trailing comments); NEW regression guard
