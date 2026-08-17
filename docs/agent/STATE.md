@@ -55,10 +55,11 @@
   echoed every dbportal_* fact), run success 0.45s job `local-a671b333-1`; missing-tuple run
   → failed w/ the exact message + full trail; re-import WITH tuple ("updated 1, unchanged
   1") → next run SUCCESS (the message's recovery path, live); workdir empty post-terminal.
-  GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116). Fixtures + seed
-  byte-untouched; MockEngine/semaphore untouched; SPEC-050 mini-ADR 5 gained WU-051
+  GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116); **CI GREEN**
+  (run 31992600859 on c48ccc3 — the 0013 walk + inventory suites ran in CI). Fixtures +
+  seed byte-untouched; MockEngine/semaphore untouched; SPEC-050 mini-ADR 5 gained WU-051
   delivery notes; icebox self-target-auto-detect note updated (tuple now exists). NO UI
-  change.
+  change. Commits 2b2e483 (code, 14 files +679/−36) + c48ccc3 (docs).
 - **Status (s38, WU-050 DONE — `engine/local` adapter core, the first M5 WU):** the
   os/exec ansible-playbook supervisor behind the UNCHANGED seam, `local.go` in `package
   engine` (mock/semaphore precedent; SPEC-050 header records the deviations). Mechanics:
