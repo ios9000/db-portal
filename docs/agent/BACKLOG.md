@@ -1349,7 +1349,22 @@ Load), `backend/cmd/portal/main.go` (the log lines), `backend/internal/config/co
 > decommission completeness).
 
 ## WU-050 — `engine/local` adapter core (SPEC-050 mini-ADRs 1–4) — L
-**Status:** TODO.
+**Status:** DONE (s38, commit 28dd420 + bookkeeping). `backend/internal/engine/local.go`
+in `package engine` (mock/semaphore precedent; shares `resultFromLine` — SPEC-050 header
+note records the deviations). Whole adapter proven under `go test -race` via a stub
+ansible binary (TestMain re-exec, `PORTAL_TEST_ANSIBLE_STUB`; no Ansible in CI): 15 new
+engine tests + 2 config tests. Beyond the spec: post-exit group SIGKILL reap (a playbook
+exiting 0 with a backgrounded sleeper leaves NO straggler — tested);
+`PORTAL_ENGINE_PROD=semaphore` refused at wiring (single Semaphore config block must not
+span classes, guardrail 3). VM smoke (ansible-core 2.16.3 installed; isolated portal
+:8095 + scratch DB, [[live-drill-isolation]]): boot REFUSED without library/workdir
+naming both; engine=local boot → POST /api/runs dump on pgtarget → real ansible-playbook
+→ run success in 0.6s, job_id `local-fd49abbe-1`, REAL PLAY/TASK log replay over the
+API, artifact registered from the playbook's real DBPORTAL_RESULT line; cancel mid-run
+(sleep-120 task) → 202 → `canceled`, zero leftover ansible/sleep processes, workdir
+removed. Teardown incident: `pgrep -x portal` matched the demo binary too → demo killed
++ RESTORED via the s16 systemd-run recipe (fresh bcrypt of the documented demo-glass;
+healthz ok, dba1 login 200) — kill drills by exact PID, never by name.
 **Goal:** the os/exec supervisor behind the unchanged seam: fixed-argv `ansible-playbook`
 spawn (no shell, params via `--extra-vars @file` from day one), own process group,
 Cancel = SIGINT→grace→SIGKILL group, manifest-less template resolution v0
@@ -1361,15 +1376,18 @@ caps, `DBPORTAL_RESULT` parse (same regex + WU-040 field guard as semaphore.go).
 `PORTAL_ANSIBLE_BIN/_LIBRARY/_WORKDIR/_MAX_CONCURRENT/_CANCEL_GRACE/_TIMEOUT_CAP`;
 `config.Validate` local-mode arm (fail-closed).
 **AC:**
-- [ ] All adapter behavior proven under `go test -race` with the STUB ansible binary —
+- [x] All adapter behavior proven under `go test -race` with the STUB ansible binary —
       no Ansible in CI: happy path, exit-code map, cancel-kills-the-process-group (no
       orphan child), timeout kill + honest Error, queue cap (N+1th holds queued, FIFO),
       result-line artifact, malformed-result nil, restart → ErrUnknownJob, workdir
-      created 0700/removed on terminal.
-- [ ] Seam contract intact: existing runs/chain/schedule suites + golden flow untouched
-      and green on MockEngine; registry wiring accepts `local` for either class.
-- [ ] `config.Validate` refuses a `local` boot with missing library/workdir/binary,
-      naming each — migrate/import/seed unaffected.
+      created 0700/removed on terminal. (local_test.go — incl. a SIGINT-immune
+      grandchild reaped by the group kill, and Started-stays-zero while queued.)
+- [x] Seam contract intact: existing runs/chain/schedule suites + golden flow untouched
+      and green on MockEngine (CHECK-EXIT:0); registry wiring accepts `local` for either
+      class (main.go classAdapter; live-proven nonprod, prod arm same builder + tests).
+- [x] `config.Validate` refuses a `local` boot with missing library/workdir/binary,
+      naming each — migrate/import/seed unaffected (TestValidateLocalEngine + live boot
+      refusal in the smoke).
 **Verify:** `npm run check` green; a manual VM smoke with real ansible-playbook against
 localhost (ping-style playbook) via an isolated portal ([[live-drill-isolation]]).
 **Context brief:** SPEC-050; `backend/internal/engine/{engine.go,mock.go,semaphore.go}`

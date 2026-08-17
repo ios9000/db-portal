@@ -22,6 +22,15 @@ API (delivery v1 is git/filesystem — ADR-014); per-playbook authorization (DBA
 stands, D2); Windows targets; `ansible-runner` structured events (recorded option, not
 required runtime).
 
+> **WU-050 (s38) re-confirmed mini-ADRs 1–4** with three recorded adjustments:
+> (1) the adapter lives in **`package engine` as `local.go`** (not a sub-package) —
+> consistent with the mock/semaphore precedent and sharing the result-line parser
+> (`resultFromLine`, WU-040 guard) directly; (2) mini-ADR 1 gained a **post-exit
+> group SIGKILL reap**: after the child exits (any path, not just cancel), the
+> whole process group is killed so a backgrounded straggler can never outlive its
+> job (proven by test — a playbook that exits 0 leaving a sleeper behind);
+> (3) `PORTAL_ENGINE_PROD=semaphore` is **refused at wiring** (see config table).
+
 ## Mini-ADR 1 — Process model: one supervised `ansible-playbook` child per job
 
 - Direct `exec` of `PORTAL_ANSIBLE_BIN` (default `ansible-playbook` from PATH) with a
@@ -148,7 +157,7 @@ untouched; the golden flow stays on MockEngine.
 | var | default | meaning |
 |---|---|---|
 | `PORTAL_ENGINE_NONPROD` | `mock` | `mock` \| `local` (`semaphore` until WU-056 removes it) |
-| `PORTAL_ENGINE_PROD` | `mock` | NEW — prod-class engine, same values |
+| `PORTAL_ENGINE_PROD` | `mock` | NEW — `mock` \| `local`. `semaphore` is REFUSED at wiring (WU-050): the Semaphore config block is single-instance and env classes must never share engine credentials (guardrail 3) — moot at WU-056 anyway |
 | `PORTAL_ANSIBLE_BIN` | `ansible-playbook` | executable path |
 | `PORTAL_ENGINE_LIBRARY` | — | playbook library root ([REQUIRED] for `local`) |
 | `PORTAL_ENGINE_WORKDIR` | — | per-job private dirs ([REQUIRED] for `local`) |

@@ -6,13 +6,13 @@
 ## Now
 
 - **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from
-  any prior conversation).** Active WU = **WU-050** (`engine/local` adapter core — the
-  first Phase 5 WU). Read, in order: (1) this "Now" block + "Next action" below; (2) the
-  **WU-050** entry in `docs/agent/BACKLOG.md` and ONLY the files its context brief lists;
-  (3) the module spec `docs/specs/local-engine.md` (SPEC-050) + **ADR-014** in DECISIONS.md
-  (the pivot's why). The older `Status` blocks below are REFERENCE.
-- **Active: PHASE 5 (M5 — Local Ansible engine & playbook platform), groomed s37, no WU
-  started yet.** THE PIVOT (user directive 2026-08-12, ADR-014): target user broadens to
+  any prior conversation).** Active WU = **WU-051** (instance connection tuple + dynamic
+  inventory — migration 0013). Read, in order: (1) this "Now" block + "Next action" below;
+  (2) the **WU-051** entry in `docs/agent/BACKLOG.md` and ONLY the files its context brief
+  lists; (3) SPEC-050 mini-ADR 5 (`docs/specs/local-engine.md`) + **ADR-014** in
+  DECISIONS.md (the pivot's why). The older `Status` blocks below are REFERENCE.
+- **Active: PHASE 5 (M5 — Local Ansible engine & playbook platform), groomed s37;
+  WU-050 DONE (s38) — 051..057 remain.** THE PIVOT (user directive 2026-08-12, ADR-014): target user broadens to
   **Ansible playbook developers**; the portal executes playbooks ITSELF via os/exec
   (`ansible-playbook` on the host) behind the UNCHANGED Adapter seam; **Semaphore goes to
   zero** (decommission WU-056, strictly AFTER the WU-055 parity drill); the catalog becomes
@@ -25,6 +25,41 @@
   demo (:8080) and compose dev stack still run. Organizational: security-vetting package
   (ARCHITECTURE §8.2) still awaits the user; NOTE the pivot will amend its engine sections
   (WU-057 reconciles docs — until then ADR-014 wins conflicts, ADR-006 precedence).
+- **Status (s38, WU-050 DONE — `engine/local` adapter core, the first M5 WU):** the
+  os/exec ansible-playbook supervisor behind the UNCHANGED seam, `local.go` in `package
+  engine` (mock/semaphore precedent; SPEC-050 header records the deviations). Mechanics:
+  fixed argv (params ONLY via `--extra-vars @<workdir>/extravars.json` 0600, semaphore
+  forwardVars allowlist until WU-052), template v0 = `<library>/<template>.yml`
+  (traversal-guarded name regex, missing playbook fails closed at StartJob), own process
+  group + `Pdeathsig` + SIGINT→grace→SIGKILL on cancel/timeout **+ post-exit group
+  SIGKILL reap** (a straggler backgrounded by an exit-0 playbook dies too — tested),
+  FIFO queue over `PORTAL_ENGINE_MAX_CONCURRENT` (queued jobs Started-zero, cancelable
+  in place), `local-<nonce>-<seq>` in-memory JobIDs (restart-forgets → orphan sweep;
+  fresh adapter answers ErrUnknownJob on all 4 methods), ansible exit-code map (1/2/4/5/
+  99/250) + last-output context, merged-pipe replay-then-follow streaming w/ line cap
+  (in-place truncation) + total cap (single marker + tail ring flushed at finish),
+  `DBPORTAL_RESULT` via `resultFromLine` EXTRACTED from semaphore.go (WU-040 field guard
+  shared, parseResultLine behavior identical). Config: `PORTAL_ENGINE_PROD` (NEW, mock
+  default; `semaphore` REFUSED at wiring — single Semaphore block must not span classes,
+  guardrail 3) + `PORTAL_ANSIBLE_BIN/_ENGINE_LIBRARY/_ENGINE_WORKDIR/_ENGINE_MAX_
+  CONCURRENT/_ENGINE_CANCEL_GRACE/_ENGINE_TIMEOUT_CAP`; `config.Validate` local arm
+  fail-closed naming each gap (lib/workdir/binary via LookPath); main.go `classAdapter`
+  builds both classes (mock|local either, semaphore nonprod-only). TESTS: 15 local_test
+  cases under -race driven by a STUB ansible = the test binary re-exec'd (TestMain +
+  `PORTAL_TEST_ANSIBLE_STUB`; `GORACE=atexit_sleep_ms=0` spares the stub's 1s race-
+  runtime exit sleep) — no Ansible in CI; +TestValidateLocalEngine/EngineProdDefaults
+  (config). VM SMOKE (ansible-core 2.16.3 apt-installed — now a host prereq per the
+  pivot; isolated :8095 + scratch DB per [[live-drill-isolation]]): boot refused naming
+  LIBRARY+WORKDIR; local boot → dump on pgtarget → REAL ansible-playbook success 0.6s
+  (`job_id local-fd49abbe-1`), real PLAY/TASK replay over /api/runs/1/logs, artifact
+  registered from the playbook's real result line; cancel mid-`sleep 120` task → 202 →
+  canceled, ZERO leftover ansible/sleep procs, workdir removed; torn down. INCIDENT:
+  teardown `pgrep -x portal` matched the DEMO binary too → demo killed; RESTORED via the
+  s16 `systemd-run --unit=dbportal-demo` recipe w/ fresh bcrypt of the documented demo
+  password (healthz ok, dba1 login 200, new invocation ID) — kill drill portals by EXACT
+  PID only. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl. golden flow,
+  vitest 116/116). Commit 28dd420 (6 files, +1375/−41) + docs bookkeeping commit; NO
+  migration/UI/seam change; MockEngine untouched (ADR-002).
 - **Status (s37, M5 GROOMED — the post-MVP pivot recorded):** wrote **ADR-014** (local
   engine vs Semaphore: why ADR-002's 6-12-month verdict flips post-MVP — the portal already
   owns the value layer, Semaphore's residual role is process supervision + a key store;
@@ -549,20 +584,22 @@
 
 ## Next action (be exact)
 
-1. **START WU-050 — `engine/local` adapter core (the first M5 WU).** Full brief + ACs in
-   BACKLOG (WU-050); module spec = SPEC-050 (`docs/specs/local-engine.md`) mini-ADRs 1–4;
-   the why = ADR-014. Core: an os/exec supervisor behind the UNCHANGED `engine.Adapter`
-   seam — fixed argv (no shell; params via `--extra-vars @file` from day one), own process
-   group with SIGINT→grace→SIGKILL cancel + timeout + `Pdeathsig`, concurrency cap w/ FIFO
-   queued state, `local-<nonce>-<seq>` JobIDs (restart-forgets → the existing orphan sweep),
-   exit-code map, merged-pipe replay-then-follow log streaming w/ caps, `DBPORTAL_RESULT`
-   parse lifted from semaphore.go, per-job 0700 workdir, new config knobs incl.
-   `PORTAL_ENGINE_PROD` + a `config.Validate` local arm. EVERYTHING testable in CI via the
-   stub ansible binary (`PORTAL_ANSIBLE_BIN`) — no Ansible dependency in tests; MockEngine
-   stays the suite default. Then 051 (inventory) → 052 (extra_vars hardening) → 053
+1. **START WU-051 — instance connection tuple + dynamic inventory (SPEC-050 mini-ADR 5).**
+   Full brief + ACs in BACKLOG (WU-051). Core: migration 0013 (`instance.host text NULL`,
+   `instance.port int NULL`, up/down/up pinned in migrate_test); CSV import optional
+   trailing `host,port` columns (absent → NULL; existing fixtures/tests byte-untouched;
+   re-import updates in place under natural-key idempotency); per-job inventory JSON
+   rendered into the WU-050 job workdir 0600 — `target` group holding exactly the target
+   instance (`ansible_host` + `dbportal_*` hostvars), `cluster` group only when declared,
+   NEVER the fleet, NO credentials; missing tuple → StartJob fails closed ("instance has
+   no connection info"). Golden-test the exact render JSON. Context brief:
+   `backend/internal/inventory/{import.go,seed.go}`, migrations (0002 instance shape),
+   WU-050's workdir code (`engine/local.go`). Then 052 (extra_vars hardening) → 053
    (manifests) → 054 (UI, delegate) → 055 (parity drill — GATES 056) → 056 (Semaphore
    removal) → 057 (docs sweep + m5 gate). Do NOT remove any Semaphore code before WU-055's
-   rehearsal passes on `local`.
+   rehearsal passes on `local`. NOTE for 055: ansible-core 2.16.3 is now installed on the
+   VM (apt, s38); WU-050's smoke recipe (stub tests + isolated :8095 drill) is in the
+   BACKLOG done-entry.
    - s35 postscript: the M4-exit commit's CI came back RED — a pre-existing flake
      (`TestInstanceLockReapsExpiredDeadHolder`: at the 1ms mock delay the run finalizes —
      and release-rides-finalize deletes the lock row — before the test's SELECT on a slow
