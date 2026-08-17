@@ -197,24 +197,35 @@ func (a *SemaphoreAdapter) fetchArtifact(ctx context.Context, id JobID) *Artifac
 // un-restorable row).
 func parseResultLine(lines []semOutputLine) *Artifact {
 	for i := len(lines) - 1; i >= 0; i-- {
-		m := dbportalResultRE.FindStringSubmatch(lines[i].Output)
-		if m == nil {
-			continue
+		if art, matched := resultFromLine(lines[i].Output); matched {
+			return art
 		}
-		raw, err := base64.StdEncoding.DecodeString(m[1])
-		if err != nil {
-			return nil
-		}
-		var r semDumpResult
-		if err := json.Unmarshal(raw, &r); err != nil {
-			return nil
-		}
-		if r.Name == "" || r.SHA256 == "" || r.SizeBytes <= 0 {
-			return nil
-		}
-		return &Artifact{Name: r.Name, SizeBytes: r.SizeBytes, Checksum: r.SHA256, Location: r.Location}
 	}
 	return nil
+}
+
+// resultFromLine parses one output line's DBPORTAL_RESULT sentinel. matched
+// reports whether the sentinel was present at all; a matched line with bad
+// base64/JSON or missing fields yields (nil, true) — found but untrusted,
+// exactly the guard above. Shared with the local adapter (SPEC-050 mini-ADR
+// 3): the result-line contract is engine-portable by design.
+func resultFromLine(line string) (*Artifact, bool) {
+	m := dbportalResultRE.FindStringSubmatch(line)
+	if m == nil {
+		return nil, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		return nil, true
+	}
+	var r semDumpResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, true
+	}
+	if r.Name == "" || r.SHA256 == "" || r.SizeBytes <= 0 {
+		return nil, true
+	}
+	return &Artifact{Name: r.Name, SizeBytes: r.SizeBytes, Checksum: r.SHA256, Location: r.Location}, true
 }
 
 // logf logs at Info if a logger is set (the adapter tolerates a nil logger in

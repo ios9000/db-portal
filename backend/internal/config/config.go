@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -66,19 +67,34 @@ type Config struct {
 	SessionTTL       time.Duration `env:"PORTAL_SESSION_TTL"        envDefault:"12h"`
 	CookieSecure     bool          `env:"PORTAL_COOKIE_SECURE"      envDefault:"false"`
 
-	// Engine (SPEC-033). EngineNonProd picks the NON-PROD class adapter:
-	// mock (default, forever per ADR-002) | semaphore (opt-in real engine).
-	// Prod stays mock in dev. An unknown value fails at wiring (main), not
-	// here. The Semaphore* fields are a disjoint config object (guardrail 3);
-	// secrets live in .env only (ADR-004). ProjectID scopes the task API
-	// (paths are /api/project/{id}/tasks).
+	// Engine (SPEC-033, SPEC-050). EngineNonProd / EngineProd pick each env
+	// class's adapter: mock (default, forever per ADR-002) | local (in-process
+	// ansible-playbook, ADR-014) | semaphore (non-prod only, until WU-056
+	// removes it — the Semaphore config block is single-instance and classes
+	// must never share engine credentials, guardrail 3). An unknown value
+	// fails at wiring (main), not here. The Semaphore* fields are a disjoint
+	// config object (guardrail 3); secrets live in .env only (ADR-004).
+	// ProjectID scopes the task API (paths are /api/project/{id}/tasks).
 	EngineNonProd          string        `env:"PORTAL_ENGINE_NONPROD"          envDefault:"mock"`
+	EngineProd             string        `env:"PORTAL_ENGINE_PROD"             envDefault:"mock"`
 	SemaphoreURL           string        `env:"PORTAL_SEMAPHORE_URL"           envDefault:"http://127.0.0.1:3000"`
 	SemaphoreAPIToken      string        `env:"PORTAL_SEMAPHORE_API_TOKEN"`
 	SemaphoreProjectID     int           `env:"PORTAL_SEMAPHORE_PROJECT_ID"    envDefault:"1"`
 	SemaphoreWebhookSecret string        `env:"PORTAL_SEMAPHORE_WEBHOOK_SECRET"`
 	SemaphoreTemplates     string        `env:"PORTAL_SEMAPHORE_TEMPLATES"`
 	SemaphorePollInterval  time.Duration `env:"PORTAL_SEMAPHORE_POLL_INTERVAL" envDefault:"3s"`
+
+	// Local engine (SPEC-050, WU-050): the in-process ansible-playbook
+	// supervisor's knobs. Library and Workdir are [REQUIRED] when either
+	// class is `local` (Validate names them); the rest default per the SPEC
+	// config table. TimeoutCap is the per-job wall-clock ceiling (manifest
+	// timeouts, WU-053, may only shorten it).
+	AnsibleBin          string        `env:"PORTAL_ANSIBLE_BIN"            envDefault:"ansible-playbook"`
+	EngineLibrary       string        `env:"PORTAL_ENGINE_LIBRARY"`
+	EngineWorkdir       string        `env:"PORTAL_ENGINE_WORKDIR"`
+	EngineMaxConcurrent int           `env:"PORTAL_ENGINE_MAX_CONCURRENT"  envDefault:"8"`
+	EngineCancelGrace   time.Duration `env:"PORTAL_ENGINE_CANCEL_GRACE"    envDefault:"10s"`
+	EngineTimeoutCap    time.Duration `env:"PORTAL_ENGINE_TIMEOUT_CAP"     envDefault:"2h"`
 }
 
 // SemaphoreTemplateMap parses PORTAL_SEMAPHORE_TEMPLATES ("tag:id,tag:id")
@@ -130,22 +146,50 @@ func (c Config) ProtectedInstanceSet() map[string]bool {
 // e.g. CookieSecure). Called on the server path only; the migrate/import/seed
 // subcommands don't need auth config. Fails closed, listing every missing var.
 func (c Config) Validate() error {
-	var missing []string
+	var problems []string
 	if c.AuthMode == "ldap" {
 		// SPEC-020 mini-ADR 4 keeps the door LOCKED on misconfig (ldap with no
 		// URL → every login 401). That is safe but SILENT — a portal nobody can
 		// enter that looks healthy. Refuse to boot instead, so the operator sees
 		// the misconfiguration immediately rather than at the first failed login.
+		var missing []string
 		if strings.TrimSpace(c.LDAPURL) == "" {
 			missing = append(missing, "PORTAL_LDAP_URL")
 		}
 		if strings.TrimSpace(c.LDAPBindTemplate) == "" {
 			missing = append(missing, "PORTAL_LDAP_BIND_TEMPLATE")
 		}
+		if len(missing) > 0 {
+			problems = append(problems,
+				fmt.Sprintf("PORTAL_AUTH_MODE=%s requires %s to be set (see the deploy runbook / .env template)",
+					c.AuthMode, strings.Join(missing, ", ")))
+		}
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("config: PORTAL_AUTH_MODE=%s requires %s to be set (see the deploy runbook / .env template)",
-			c.AuthMode, strings.Join(missing, ", "))
+	// Same posture for the local engine (SPEC-050, WU-050): a `local` class
+	// with no library/workdir/binary would boot a portal whose every launch
+	// fails — refuse instead, naming each gap.
+	if c.EngineNonProd == "local" || c.EngineProd == "local" {
+		var missing []string
+		if strings.TrimSpace(c.EngineLibrary) == "" {
+			missing = append(missing, "PORTAL_ENGINE_LIBRARY")
+		}
+		if strings.TrimSpace(c.EngineWorkdir) == "" {
+			missing = append(missing, "PORTAL_ENGINE_WORKDIR")
+		}
+		if len(missing) > 0 {
+			problems = append(problems,
+				fmt.Sprintf("PORTAL_ENGINE_*=local requires %s to be set (see the deploy runbook / .env template)",
+					strings.Join(missing, ", ")))
+		}
+		if strings.TrimSpace(c.AnsibleBin) == "" {
+			problems = append(problems, "PORTAL_ANSIBLE_BIN must not be empty with a local engine")
+		} else if _, err := exec.LookPath(c.AnsibleBin); err != nil {
+			problems = append(problems,
+				fmt.Sprintf("PORTAL_ANSIBLE_BIN=%q: ansible-playbook not found (%v)", c.AnsibleBin, err))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("config: %s", strings.Join(problems, "; "))
 	}
 	return nil
 }

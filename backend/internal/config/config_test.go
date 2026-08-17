@@ -262,6 +262,49 @@ func TestValidate(t *testing.T) {
 	require.NoError(t, config.Config{AuthMode: "off"}.Validate())
 }
 
+func TestValidateLocalEngine(t *testing.T) {
+	// A `local` engine class with nothing configured refuses to boot,
+	// naming every gap (SPEC-050, WU-050) — same posture as the ldap arm.
+	err := config.Config{AuthMode: "off", EngineNonProd: "local"}.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PORTAL_ENGINE_LIBRARY")
+	require.Contains(t, err.Error(), "PORTAL_ENGINE_WORKDIR")
+	require.Contains(t, err.Error(), "PORTAL_ANSIBLE_BIN")
+
+	// The prod-class knob triggers the same arm.
+	err = config.Config{AuthMode: "off", EngineProd: "local"}.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PORTAL_ENGINE_LIBRARY")
+
+	// A binary that cannot be resolved is named too.
+	err = config.Config{
+		AuthMode: "off", EngineNonProd: "local",
+		EngineLibrary: t.TempDir(), EngineWorkdir: t.TempDir(),
+		AnsibleBin: "definitely-not-ansible-xyz",
+	}.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ansible-playbook not found")
+
+	// Fully configured local validates (any resolvable executable will do).
+	require.NoError(t, config.Config{
+		AuthMode: "off", EngineNonProd: "local", EngineProd: "local",
+		EngineLibrary: t.TempDir(), EngineWorkdir: t.TempDir(),
+		AnsibleBin: "/bin/sh",
+	}.Validate())
+
+	// Mock/semaphore classes never require the local-engine vars —
+	// and migrate/import/seed never call Validate at all (main dispatch).
+	require.NoError(t, config.Config{AuthMode: "off", EngineNonProd: "semaphore"}.Validate())
+	require.NoError(t, config.Config{AuthMode: "off"}.Validate())
+}
+
+func TestEngineProdDefaultsToMock(t *testing.T) {
+	unsetenv(t, "PORTAL_ENGINE_PROD")
+	cfg, _, err := config.Load("")
+	require.NoError(t, err)
+	require.Equal(t, "mock", cfg.EngineProd, "prod stays mock unless explicitly opted into local (ADR-014)")
+}
+
 func TestEngineNonProdDefaultsToMock(t *testing.T) {
 	unsetenv(t, "PORTAL_ENGINE_NONPROD")
 	cfg, _, err := config.Load("")

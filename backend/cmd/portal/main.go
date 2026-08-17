@@ -104,16 +104,22 @@ func run(log *slog.Logger, args []string) error {
 	defer pool.Close()
 
 	// Composition root for the engine seam (ADR-002): one adapter instance
-	// per env class, never shared (guardrail layer 3). Prod stays MockEngine
-	// in dev; the non-prod class is opt-in (SPEC-033 mini-ADR 6) — mock by
-	// default, real Semaphore when PORTAL_ENGINE_NONPROD=semaphore. Disjoint
-	// config per class; an unknown value fails closed here, before serving.
-	nonprod, err := nonProdAdapter(cfg, log)
+	// per env class, never shared (guardrail layer 3) — even two `local`
+	// classes get separate instances (own nonce, own job table). Each class
+	// is mock by default (forever, ADR-002) and opt-in real: `local`
+	// (in-process ansible-playbook, ADR-014/SPEC-050) for either class,
+	// `semaphore` for non-prod only until WU-056 removes it. An unknown
+	// value fails closed here, before serving.
+	nonprod, err := classAdapter(cfg, engine.ClassNonProd, cfg.EngineNonProd, "PORTAL_ENGINE_NONPROD", log)
+	if err != nil {
+		return err
+	}
+	prod, err := classAdapter(cfg, engine.ClassProd, cfg.EngineProd, "PORTAL_ENGINE_PROD", log)
 	if err != nil {
 		return err
 	}
 	registry := engine.NewRegistry()
-	registry.Register(engine.ClassProd, engine.NewMockEngine(engine.MockConfig{Name: "mock-prod"}))
+	registry.Register(engine.ClassProd, prod)
 	registry.Register(engine.ClassNonProd, nonprod)
 
 	runSvc := runs.NewService(pool, registry, log)
@@ -221,17 +227,32 @@ func run(log *slog.Logger, args []string) error {
 	}).Run(ctx)
 }
 
-// devGrants names the principals each non-ldap auth mode must be able to
-// act as, so dev and demo work out of the box.
-// nonProdAdapter builds the non-prod engine class adapter from config
-// (SPEC-033 mini-ADR 6): mock by default, real Semaphore when opt-in.
-// A disjoint SemaphoreConfig keeps prod/nonprod credentials apart (guardrail
-// 3); an unknown mode or a malformed template map fails closed.
-func nonProdAdapter(cfg config.Config, log *slog.Logger) (engine.Adapter, error) {
-	switch cfg.EngineNonProd {
+// classAdapter builds one env class's engine adapter from its mode knob
+// (SPEC-033 mini-ADR 6, SPEC-050): mock by default, opt-in real. Every class
+// gets its OWN adapter instance — the Registry panics on a shared one
+// (guardrail layer 3). Semaphore is refused for prod: its config block is
+// single-instance, and prod/nonprod must never share engine credentials
+// (it leaves entirely with WU-056, ADR-014). An unknown mode or a malformed
+// config fails closed at boot.
+func classAdapter(cfg config.Config, class engine.EnvClass, mode, knob string, log *slog.Logger) (engine.Adapter, error) {
+	switch mode {
 	case "mock":
-		return engine.NewMockEngine(engine.MockConfig{Name: "mock-nonprod"}), nil
+		return engine.NewMockEngine(engine.MockConfig{Name: "mock-" + string(class)}), nil
+	case "local":
+		log.Info("engine: local ansible-playbook (ADR-014)", "class", string(class),
+			"bin", cfg.AnsibleBin, "library", cfg.EngineLibrary, "workdir", cfg.EngineWorkdir)
+		return engine.NewLocalAdapter(engine.LocalConfig{
+			AnsibleBin:    cfg.AnsibleBin,
+			Library:       cfg.EngineLibrary,
+			Workdir:       cfg.EngineWorkdir,
+			MaxConcurrent: cfg.EngineMaxConcurrent,
+			CancelGrace:   cfg.EngineCancelGrace,
+			Timeout:       cfg.EngineTimeoutCap,
+		}, log)
 	case "semaphore":
+		if class == engine.ClassProd {
+			return nil, fmt.Errorf("%s=semaphore is not supported: the Semaphore config block is single-instance and env classes must never share engine credentials (guardrail layer 3; Semaphore is removed by ADR-014/WU-056)", knob)
+		}
 		templates, err := cfg.SemaphoreTemplateMap()
 		if err != nil {
 			return nil, err
@@ -246,10 +267,12 @@ func nonProdAdapter(cfg config.Config, log *slog.Logger) (engine.Adapter, error)
 			PollInterval: cfg.SemaphorePollInterval,
 		}, log), nil
 	default:
-		return nil, fmt.Errorf("PORTAL_ENGINE_NONPROD=%q: want %q or %q", cfg.EngineNonProd, "mock", "semaphore")
+		return nil, fmt.Errorf("%s=%q: want %q, %q or %q", knob, mode, "mock", "local", "semaphore")
 	}
 }
 
+// devGrants names the principals each non-ldap auth mode must be able to
+// act as, so dev and demo work out of the box.
 func devGrants(mode string) []string {
 	switch mode {
 	case "fake":
