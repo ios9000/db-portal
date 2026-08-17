@@ -109,12 +109,14 @@ func run(log *slog.Logger, args []string) error {
 	// is mock by default (forever, ADR-002) and opt-in real: `local`
 	// (in-process ansible-playbook, ADR-014/SPEC-050) for either class,
 	// `semaphore` for non-prod only until WU-056 removes it. An unknown
-	// value fails closed here, before serving.
-	nonprod, err := classAdapter(cfg, engine.ClassNonProd, cfg.EngineNonProd, "PORTAL_ENGINE_NONPROD", log)
+	// value fails closed here, before serving. The shared store doubles as
+	// the local engine's InventorySource (SPEC-050 mini-ADR 5) — reads only.
+	invStore := inventory.NewStore(pool)
+	nonprod, err := classAdapter(cfg, engine.ClassNonProd, cfg.EngineNonProd, "PORTAL_ENGINE_NONPROD", invStore, log)
 	if err != nil {
 		return err
 	}
-	prod, err := classAdapter(cfg, engine.ClassProd, cfg.EngineProd, "PORTAL_ENGINE_PROD", log)
+	prod, err := classAdapter(cfg, engine.ClassProd, cfg.EngineProd, "PORTAL_ENGINE_PROD", invStore, log)
 	if err != nil {
 		return err
 	}
@@ -211,7 +213,7 @@ func run(log *slog.Logger, args []string) error {
 	log.Info("starting portal", "version", version.Version, "commit", version.Commit, "addr", cfg.HTTPAddr)
 	return server.New(cfg.HTTPAddr, log, server.Deps{
 		DB:        pool,
-		Instances: inventory.NewStore(pool),
+		Instances: invStore,
 		Runs:      runSvc,
 		Artifacts: runSvc,
 		Schedules: sched,
@@ -234,7 +236,9 @@ func run(log *slog.Logger, args []string) error {
 // single-instance, and prod/nonprod must never share engine credentials
 // (it leaves entirely with WU-056, ADR-014). An unknown mode or a malformed
 // config fails closed at boot.
-func classAdapter(cfg config.Config, class engine.EnvClass, mode, knob string, log *slog.Logger) (engine.Adapter, error) {
+func classAdapter(cfg config.Config, class engine.EnvClass, mode, knob string,
+	inv engine.InventorySource, log *slog.Logger,
+) (engine.Adapter, error) {
 	switch mode {
 	case "mock":
 		return engine.NewMockEngine(engine.MockConfig{Name: "mock-" + string(class)}), nil
@@ -248,6 +252,7 @@ func classAdapter(cfg config.Config, class engine.EnvClass, mode, knob string, l
 			MaxConcurrent: cfg.EngineMaxConcurrent,
 			CancelGrace:   cfg.EngineCancelGrace,
 			Timeout:       cfg.EngineTimeoutCap,
+			Inventory:     inv,
 		}, log)
 	case "semaphore":
 		if class == engine.ClassProd {

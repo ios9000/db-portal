@@ -123,6 +123,19 @@ func ansibleStubMain() int {
 			if !printed {
 				fmt.Println("EXTRAVARS=none")
 			}
+		case "dump-inventory":
+			// One line so awaitLine can grab it; newlines fold to |.
+			printed := false
+			for i, a := range os.Args {
+				if a == "--inventory" && i+1 < len(os.Args) {
+					b, _ := os.ReadFile(os.Args[i+1])
+					fmt.Println("INVENTORY=" + strings.ReplaceAll(string(b), "\n", "|"))
+					printed = true
+				}
+			}
+			if !printed {
+				fmt.Println("INVENTORY=none")
+			}
 		case "exit":
 			code, _ := strconv.Atoi(arg)
 			return code
@@ -570,4 +583,107 @@ func TestNewLocalAdapterFailClosed(t *testing.T) {
 	noWorkdir.Workdir = ""
 	_, err = engine.NewLocalAdapter(noWorkdir, logger)
 	require.ErrorContains(t, err, "PORTAL_ENGINE_WORKDIR")
+}
+
+// fakeInvSource is an in-memory engine.InventorySource holding a "fleet" of
+// several instances — the render must expose exactly the target's facts.
+type fakeInvSource struct {
+	hosts map[string]engine.InventoryHost
+}
+
+func (f *fakeInvSource) InventoryHost(_ context.Context, name string) (engine.InventoryHost, error) {
+	h, ok := f.hosts[name]
+	if !ok {
+		return engine.InventoryHost{}, fmt.Errorf("inventory: instance not found: %q", name)
+	}
+	return h, nil
+}
+
+func testFleet() *fakeInvSource {
+	return &fakeInvSource{hosts: map[string]engine.InventoryHost{
+		"billing-test": {
+			Name: "billing-test", Host: "10.0.0.5", Port: 5433,
+			Env: "test", Platform: "vm", Cluster: "billing",
+		},
+		"hr-test": {
+			Name: "hr-test", Host: "10.9.9.9", Port: 5432,
+			Env: "test", Platform: "vm", Cluster: "hr",
+		},
+		"crm-dev": {Name: "crm-dev", Env: "dev", Platform: "vm", Cluster: "crm"}, // no tuple
+	}}
+}
+
+// SPEC-050 mini-ADR 5 (WU-051): the per-job inventory reaches the child via
+// --inventory, is 0600 in the job workdir, matches the golden render EXACTLY
+// (the internal twin TestRenderInventoryGolden pins the same bytes), and
+// never leaks a second instance's address — least privilege by construction.
+func TestLocalInventoryRendered(t *testing.T) {
+	lib := t.TempDir()
+	writePlaybook(t, lib, "dump", "dump-inventory\nexit 0\n")
+	var workroot string
+	a := newLocalAdapter(t, lib, func(c *engine.LocalConfig) {
+		c.Inventory = testFleet()
+		c.KeepWorkdir = true
+		workroot = c.Workdir
+	})
+
+	id, err := a.StartJob(context.Background(), "dump", map[string]string{"instance": "billing-test"})
+	require.NoError(t, err)
+	ch, err := a.StreamLogs(context.Background(), id)
+	require.NoError(t, err)
+
+	// The child received --inventory and could read the file.
+	seen := awaitLine(t, ch, "INVENTORY=")
+	require.Contains(t, seen, "10.0.0.5")
+	waitState(t, a, id, engine.StateSuccess)
+
+	invPath := filepath.Join(workroot, string(id), "inventory.json")
+	info, err := os.Stat(invPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "inventory must be private")
+
+	b, err := os.ReadFile(invPath)
+	require.NoError(t, err)
+	golden := `{
+  "target": {
+    "hosts": {
+      "billing-test": {
+        "ansible_host": "10.0.0.5",
+        "dbportal_cluster": "billing",
+        "dbportal_env": "test",
+        "dbportal_instance": "billing-test",
+        "dbportal_platform": "vm",
+        "dbportal_port": 5433
+      }
+    }
+  }
+}
+`
+	require.Equal(t, golden, string(b))
+	require.NotContains(t, string(b), "10.9.9.9", "the fleet must never leak into a job's inventory")
+	require.NotContains(t, string(b), "hr-test")
+}
+
+// A wired source FAILS CLOSED at StartJob: no recorded tuple or an
+// unresolvable instance never becomes a job (mini-ADR 5) — while a job with
+// no instance param (adapter-level smoke) still runs, without an inventory.
+func TestLocalInventoryFailsClosed(t *testing.T) {
+	lib := t.TempDir()
+	writePlaybook(t, lib, "dump", "dump-inventory\nexit 0\n")
+	a := newLocalAdapter(t, lib, func(c *engine.LocalConfig) { c.Inventory = testFleet() })
+	ctx := context.Background()
+
+	_, err := a.StartJob(ctx, "dump", map[string]string{"instance": "crm-dev"})
+	require.ErrorContains(t, err, `instance "crm-dev" has no connection info`)
+
+	_, err = a.StartJob(ctx, "dump", map[string]string{"instance": "ghost"})
+	require.ErrorContains(t, err, `resolve connection info for "ghost"`)
+
+	id, err := a.StartJob(ctx, "dump", nil)
+	require.NoError(t, err)
+	ch, err := a.StreamLogs(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "none", awaitLine(t, ch, "INVENTORY="),
+		"no instance param → no inventory flag")
+	waitState(t, a, id, engine.StateSuccess)
 }

@@ -222,3 +222,63 @@ func TestImportClusterConflictAcrossImports(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "k8s_patroni", platform, "existing cluster must be untouched")
 }
+
+// SPEC-050 mini-ADR 5 (WU-051): the connection tuple round-trips through
+// import, stays idempotent, updates in place under the natural key, and an
+// old-format file NULLs it (the CSV is the source of truth for the whole row
+// — never a stale address).
+func TestImportConnectionTuple(t *testing.T) {
+	pool := testutil.MigratedDB(t)
+	connHeader := "instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window,host,port"
+
+	readTuple := func() (host *string, port *int) {
+		t.Helper()
+		err := pool.QueryRow(context.Background(),
+			`SELECT host, port FROM instance WHERE name = 'conn-test'`).Scan(&host, &port)
+		require.NoError(t, err)
+		return host, port
+	}
+
+	// Round-trip + idempotency.
+	withTuple := connHeader + "\nconn-test,conn,test,vm,16.3,40,team,,10.0.0.5,5433\n"
+	rep := importCSV(t, pool, "conn.csv", withTuple)
+	require.Equal(t, 1, rep.New)
+	host, port := readTuple()
+	require.NotNil(t, host)
+	require.Equal(t, "10.0.0.5", *host)
+	require.NotNil(t, port)
+	require.Equal(t, 5433, *port)
+
+	rep = importCSV(t, pool, "conn.csv", withTuple)
+	require.Equal(t, 1, rep.Unchanged, "tuple-bearing re-import is idempotent")
+
+	// Tuple change updates in place.
+	rep = importCSV(t, pool, "conn.csv",
+		connHeader+"\nconn-test,conn,test,vm,16.3,40,team,,10.0.0.6,5433\n")
+	require.Equal(t, 1, rep.Updated)
+	host, _ = readTuple()
+	require.Equal(t, "10.0.0.6", *host)
+
+	// An old-format file imports fine — and NULLs the tuple (absent → NULL).
+	oldFormat := "instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window\n" +
+		"conn-test,conn,test,vm,16.3,40,team,\n"
+	rep = importCSV(t, pool, "conn.csv", oldFormat)
+	require.Equal(t, 1, rep.Updated, "dropping the tuple is a real change")
+	host, port = readTuple()
+	require.Nil(t, host)
+	require.Nil(t, port)
+
+	rep = importCSV(t, pool, "conn.csv", oldFormat)
+	require.Equal(t, 1, rep.Unchanged, "old-format re-import is idempotent")
+}
+
+// The shipped 8-column fixture must import byte-untouched, exactly as before
+// the tuple columns existed — every host/port NULL.
+func TestImportFixtureHasNoTuple(t *testing.T) {
+	pool := testutil.MigratedDB(t)
+	importCSV(t, pool, "instances.csv", fixtureCSV(t))
+	var n int
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM instance WHERE host IS NOT NULL OR port IS NOT NULL`).Scan(&n))
+	require.Zero(t, n)
+}

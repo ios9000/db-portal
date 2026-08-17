@@ -28,9 +28,15 @@ type LocalConfig struct {
 	// (pre-manifest, WU-053): template t runs <Library>/<t>.yml.
 	Library string
 	// Workdir is the root under which each job gets a private 0700 dir for
-	// its generated files (extravars now, inventory from WU-051). Removed on
-	// terminal state unless KeepWorkdir.
+	// its generated files (extravars + inventory). Removed on terminal state
+	// unless KeepWorkdir.
 	Workdir string
+	// Inventory resolves the target instance's connection facts for the
+	// per-job inventory render (mini-ADR 5). Optional: nil renders no
+	// inventory file (adapter-level tests, ops with no instance param); main
+	// always wires the DB-backed store, and a wired source FAILS CLOSED on an
+	// instance with no recorded tuple.
+	Inventory InventorySource
 	// MaxConcurrent caps aggregate running jobs; beyond it jobs hold
 	// StateQueued in FIFO order. <=0 → 8. (Per-instance serialization is the
 	// instance lock's job — this caps load on the portal host, mini-ADR 1.)
@@ -147,9 +153,10 @@ type localJob struct {
 	subs   []chan LogLine
 	done   chan struct{} // closed exactly once, on reaching a terminal state
 
-	playbook string
-	params   map[string]string
-	workdir  string
+	playbook  string
+	params    map[string]string
+	workdir   string
+	inventory []byte // rendered at StartJob; written into the workdir by run
 
 	proc      *os.Process // set once spawned
 	cancelled bool        // Cancel was requested → terminal state is canceled
@@ -169,13 +176,22 @@ type localJob struct {
 // unmapped-tag posture), registers the job queued, and dispatches within the
 // concurrency cap. The job outlives ctx: cancelling the request that started
 // it must not kill it — that is what Cancel is for.
-func (a *LocalAdapter) StartJob(_ context.Context, template string, params map[string]string) (JobID, error) {
+func (a *LocalAdapter) StartJob(ctx context.Context, template string, params map[string]string) (JobID, error) {
 	if !templateNameRE.MatchString(template) {
 		return "", fmt.Errorf("engine: invalid template name %q", template)
 	}
 	playbook := filepath.Join(a.cfg.Library, template+".yml")
 	if info, err := os.Stat(playbook); err != nil || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("engine: no playbook for template %q in library %s", template, a.cfg.Library)
+	}
+
+	// Resolve + render the target inventory NOW, synchronously (mini-ADR 5):
+	// a target with no recorded connection tuple fails closed here — the
+	// existing ErrEngine path finalizes the run failed with this message —
+	// and a job never silently targets localhost by default.
+	inv, err := a.renderJobInventory(ctx, params["instance"])
+	if err != nil {
+		return "", err
 	}
 
 	p := make(map[string]string, len(params))
@@ -185,12 +201,13 @@ func (a *LocalAdapter) StartJob(_ context.Context, template string, params map[s
 
 	id := JobID(fmt.Sprintf("local-%s-%d", a.nonce, a.seq.Add(1)))
 	j := &localJob{
-		status:   JobStatus{ID: id, State: StateQueued},
-		done:     make(chan struct{}),
-		playbook: playbook,
-		params:   p,
-		workdir:  filepath.Join(a.cfg.Workdir, string(id)),
-		maxBytes: a.cfg.MaxLogBytes,
+		status:    JobStatus{ID: id, State: StateQueued},
+		done:      make(chan struct{}),
+		playbook:  playbook,
+		params:    p,
+		workdir:   filepath.Join(a.cfg.Workdir, string(id)),
+		inventory: inv,
+		maxBytes:  a.cfg.MaxLogBytes,
 	}
 
 	a.mu.Lock()
@@ -199,6 +216,24 @@ func (a *LocalAdapter) StartJob(_ context.Context, template string, params map[s
 	a.dispatchLocked()
 	a.mu.Unlock()
 	return id, nil
+}
+
+// renderJobInventory resolves the target's connection facts and renders the
+// per-job inventory (mini-ADR 5). No source or no instance param → nil (no
+// inventory file; a `hosts: target` play then matches nothing). The cluster
+// group stays empty until a manifest can declare `targets: cluster` (WU-053).
+func (a *LocalAdapter) renderJobInventory(ctx context.Context, instance string) ([]byte, error) {
+	if a.cfg.Inventory == nil || instance == "" {
+		return nil, nil
+	}
+	h, err := a.cfg.Inventory.InventoryHost(ctx, instance)
+	if err != nil {
+		return nil, fmt.Errorf("engine: resolve connection info for %q: %w", instance, err)
+	}
+	if h.Host == "" {
+		return nil, fmt.Errorf("engine: instance %q has no connection info; re-import the inventory with host,port", instance)
+	}
+	return renderInventory(h, nil)
 }
 
 // dispatchLocked starts queued jobs while run slots are free. Callers hold
@@ -354,6 +389,17 @@ func (a *LocalAdapter) run(j *localJob) {
 			return
 		}
 		argv = append(argv, "--extra-vars", "@"+evPath)
+	}
+	// The rendered inventory (mini-ADR 5): 0600 like every generated job
+	// file, and --inventory REPLACES Ansible's default inventory sources, so
+	// the job sees exactly the declared hosts.
+	if len(j.inventory) > 0 {
+		invPath := filepath.Join(j.workdir, "inventory.json")
+		if err := os.WriteFile(invPath, j.inventory, 0o600); err != nil {
+			j.finish(StateFailed, fmt.Sprintf("write inventory file: %v", err), nil)
+			return
+		}
+		argv = append(argv, "--inventory", invPath)
 	}
 
 	pr, pw, err := os.Pipe()

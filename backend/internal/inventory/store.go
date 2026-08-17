@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ios9000/db-portal/backend/internal/engine"
 	"github.com/ios9000/db-portal/backend/internal/window"
 )
 
@@ -115,4 +116,35 @@ func (s *Store) GetInstance(ctx context.Context, name string) (Instance, error) 
 	}
 	in.WindowState = windowState(in.MaintenanceWindow)
 	return in, nil
+}
+
+// InventoryHost implements engine.InventorySource (SPEC-050 mini-ADR 5): the
+// connection facts the local engine renders into a per-job inventory, read
+// FRESH at StartJob so a job targets the fleet model as imported now.
+// Addresses and facts only, never credentials. An instance with no recorded
+// tuple comes back with Host "" — the engine fails closed on it.
+func (s *Store) InventoryHost(ctx context.Context, name string) (engine.InventoryHost, error) {
+	var (
+		h    engine.InventoryHost
+		host *string
+		port *int
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT i.name, i.host, i.port, i.env, c.platform, c.name
+		FROM instance i JOIN cluster c ON c.id = i.cluster_id
+		WHERE i.name = $1`, name).
+		Scan(&h.Name, &host, &port, &h.Env, &h.Platform, &h.Cluster)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return engine.InventoryHost{}, fmt.Errorf("%w: %q", ErrNotFound, name)
+	case err != nil:
+		return engine.InventoryHost{}, fmt.Errorf("inventory: connection info for %q: %w", name, err)
+	}
+	if host != nil {
+		h.Host = *host
+	}
+	if port != nil {
+		h.Port = *port
+	}
+	return h, nil
 }

@@ -168,3 +168,39 @@ func TestWindowState(t *testing.T) {
 		}
 	}
 }
+
+// SPEC-050 mini-ADR 5 (WU-051): the engine-facing connection-facts read —
+// per-instance only (least privilege lives in the API shape: a caller can
+// never receive another instance's address from it).
+func TestInventoryHost(t *testing.T) {
+	pool := testutil.MigratedDB(t)
+	importCSV(t, pool, "conn.csv",
+		"instance_name,cluster_name,env,platform,pg_version,size_gb,owner,maintenance_window,host,port\n"+
+			"billing-test,billing,test,vm,16.3,40,team,,10.0.0.5,5433\n"+
+			"hr-test,hr,test,vm,16.4,,hr-team,,10.0.0.9,\n"+
+			"crm-dev,crm,dev,k8s_patroni,16.2,,crm-team,,,\n")
+	s := inventory.NewStore(pool)
+
+	h, err := s.InventoryHost(context.Background(), "billing-test")
+	require.NoError(t, err)
+	require.Equal(t, "billing-test", h.Name)
+	require.Equal(t, "10.0.0.5", h.Host)
+	require.Equal(t, 5433, h.Port)
+	require.Equal(t, "test", h.Env)
+	require.Equal(t, "vm", h.Platform)
+	require.Equal(t, "billing", h.Cluster)
+
+	// Bare host: port comes back 0 (the render defaults it to 5432).
+	h, err = s.InventoryHost(context.Background(), "hr-test")
+	require.NoError(t, err)
+	require.Equal(t, "10.0.0.9", h.Host)
+	require.Zero(t, h.Port)
+
+	// No tuple recorded: Host "" — the engine fails closed on it.
+	h, err = s.InventoryHost(context.Background(), "crm-dev")
+	require.NoError(t, err)
+	require.Empty(t, h.Host)
+
+	_, err = s.InventoryHost(context.Background(), "nope")
+	require.ErrorIs(t, err, inventory.ErrNotFound)
+}

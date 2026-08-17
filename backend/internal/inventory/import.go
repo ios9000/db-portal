@@ -139,17 +139,20 @@ func upsertInstance(ctx context.Context, tx pgx.Tx, clusterID int64, row Row) (r
 		curClusterID           int64
 		curEnv, curVer, curOwn string
 		curSize, curWindow     *string
+		curHost                *string
+		curPort                *int
 	)
 	err := tx.QueryRow(ctx, `
-		SELECT cluster_id, env, pg_version, size_gb::text, owner, maintenance_window
+		SELECT cluster_id, env, pg_version, size_gb::text, owner, maintenance_window, host, port
 		FROM instance WHERE name = $1`, row.InstanceName).
-		Scan(&curClusterID, &curEnv, &curVer, &curSize, &curOwn, &curWindow)
+		Scan(&curClusterID, &curEnv, &curVer, &curSize, &curOwn, &curWindow, &curHost, &curPort)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		_, err = tx.Exec(ctx, `
-			INSERT INTO instance (name, cluster_id, env, pg_version, size_gb, owner, maintenance_window)
-			VALUES ($1, $2, $3, $4, $5::numeric, $6, $7)`,
-			row.InstanceName, clusterID, row.Env, row.PGVersion, row.SizeGB, row.Owner, row.MaintenanceWindow)
+			INSERT INTO instance (name, cluster_id, env, pg_version, size_gb, owner, maintenance_window, host, port)
+			VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9)`,
+			row.InstanceName, clusterID, row.Env, row.PGVersion, row.SizeGB, row.Owner,
+			row.MaintenanceWindow, row.Host, row.Port)
 		if err != nil {
 			return 0, fmt.Errorf("inventory: insert instance %q: %w", row.InstanceName, err)
 		}
@@ -158,23 +161,29 @@ func upsertInstance(ctx context.Context, tx pgx.Tx, clusterID int64, row Row) (r
 		return 0, fmt.Errorf("inventory: look up instance %q: %w", row.InstanceName, err)
 	}
 
+	// The CSV is the source of truth for the whole row, connection tuple
+	// included: an old-format file (columns absent → nil) NULLs a previously
+	// imported tuple, and later launches fail closed until a tuple-bearing
+	// re-import (SPEC-050 mini-ADR 5's "absent → NULL" — never a stale address).
 	if curClusterID == clusterID && curEnv == row.Env && curVer == row.PGVersion &&
-		eqPtr(curSize, row.SizeGB) && curOwn == row.Owner && eqPtr(curWindow, row.MaintenanceWindow) {
+		eqPtr(curSize, row.SizeGB) && curOwn == row.Owner && eqPtr(curWindow, row.MaintenanceWindow) &&
+		eqPtr(curHost, row.Host) && eqPtr(curPort, row.Port) {
 		return rowUnchanged, nil
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE instance
 		SET cluster_id = $2, env = $3, pg_version = $4, size_gb = $5::numeric,
-		    owner = $6, maintenance_window = $7, updated_at = now()
+		    owner = $6, maintenance_window = $7, host = $8, port = $9, updated_at = now()
 		WHERE name = $1`,
-		row.InstanceName, clusterID, row.Env, row.PGVersion, row.SizeGB, row.Owner, row.MaintenanceWindow)
+		row.InstanceName, clusterID, row.Env, row.PGVersion, row.SizeGB, row.Owner,
+		row.MaintenanceWindow, row.Host, row.Port)
 	if err != nil {
 		return 0, fmt.Errorf("inventory: update instance %q: %w", row.InstanceName, err)
 	}
 	return rowUpdated, nil
 }
 
-func eqPtr(a, b *string) bool {
+func eqPtr[T comparable](a, b *T) bool {
 	if a == nil || b == nil {
 		return a == b
 	}

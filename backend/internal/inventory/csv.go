@@ -23,6 +23,11 @@ var header = []string{
 	"pg_version", "size_gb", "owner", "maintenance_window",
 }
 
+// headerConn is header plus the optional trailing connection-tuple columns
+// (SPEC-050 mini-ADR 5, WU-051). A file carries the tuple columns or it
+// doesn't — per-file, never per-row; absent columns import as NULL.
+var headerConn = append(append([]string{}, header...), "host", "port")
+
 // nameRE constrains instance/cluster names (DNS-label-ish): they become
 // CLI, URL and audit identifiers.
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -39,6 +44,8 @@ type Row struct {
 	SizeGB            *string // validated finite number, canonical decimal text; nil when empty
 	Owner             string
 	MaintenanceWindow *string // raw string, semantics owned by WU-022 (O-3); nil when empty
+	Host              *string // connection tuple (SPEC-050 mini-ADR 5); nil when absent/empty
+	Port              *int    // validated 1..65535; nil when absent/empty
 }
 
 // Reject is a quarantined CSV data row with every reason that applies.
@@ -73,8 +80,11 @@ func Parse(r io.Reader) (*ParseResult, error) {
 		}
 		return nil, errors.New("inventory: empty file (missing header)")
 	}
-	if got, err := splitLine(sc.Text()); err != nil || !slices.Equal(got, header) {
-		return nil, fmt.Errorf("inventory: bad header: want exactly %q", strings.Join(header, ","))
+	got, err := splitLine(sc.Text())
+	hasConn := err == nil && slices.Equal(got, headerConn)
+	if err != nil || (!slices.Equal(got, header) && !hasConn) {
+		return nil, fmt.Errorf("inventory: bad header: want exactly %q (optionally + %q)",
+			strings.Join(header, ","), "host,port")
 	}
 
 	res := &ParseResult{}
@@ -89,7 +99,7 @@ func Parse(r io.Reader) (*ParseResult, error) {
 		}
 		res.Total++
 
-		row, reasons := parseRow(raw)
+		row, reasons := parseRow(raw, hasConn)
 		// Would-import checks: only fully valid rows reserve a name or
 		// establish a cluster's platform (first row wins).
 		if len(reasons) == 0 {
@@ -117,14 +127,19 @@ func Parse(r io.Reader) (*ParseResult, error) {
 }
 
 // parseRow validates one data line, accumulating every applicable reason
-// rather than stopping at the first (SPEC-010 behavior 4).
-func parseRow(raw string) (Row, []string) {
+// rather than stopping at the first (SPEC-010 behavior 4). hasConn says the
+// file's header declared the trailing host,port columns.
+func parseRow(raw string, hasConn bool) (Row, []string) {
 	fields, err := splitLine(raw)
 	if err != nil {
 		return Row{}, []string{"malformed CSV: " + err.Error()}
 	}
-	if len(fields) != len(header) {
-		return Row{}, []string{fmt.Sprintf("wrong column count: got %d, want %d", len(fields), len(header))}
+	want := header
+	if hasConn {
+		want = headerConn
+	}
+	if len(fields) != len(want) {
+		return Row{}, []string{fmt.Sprintf("wrong column count: got %d, want %d", len(fields), len(want))}
 	}
 
 	row := Row{
@@ -172,7 +187,37 @@ func parseRow(raw string) (Row, []string) {
 	if w := fields[7]; w != "" {
 		row.MaintenanceWindow = &w
 	}
+	if hasConn {
+		reasons = append(reasons, parseConn(&row, fields[8], fields[9])...)
+	}
 	return row, reasons
+}
+
+// parseConn validates the optional connection tuple (SPEC-050 mini-ADR 5).
+// Both empty is fine (NULL tuple — the local engine fails closed at launch);
+// a port needs a host to attach to; a bare host is allowed (the render
+// defaults the port to 5432, the libpq default).
+func parseConn(row *Row, host, port string) []string {
+	var reasons []string
+	if host != "" {
+		if strings.ContainsAny(host, " \t") || len(host) > 253 {
+			reasons = append(reasons, fmt.Sprintf("host must be a hostname or address, got %q", host))
+		} else {
+			row.Host = &host
+		}
+	}
+	if port != "" {
+		p, err := strconv.Atoi(port)
+		switch {
+		case err != nil || p < 1 || p > 65535:
+			reasons = append(reasons, fmt.Sprintf("port must be an integer in 1..65535, got %q", port))
+		case host == "":
+			reasons = append(reasons, "port without host")
+		default:
+			row.Port = &p
+		}
+	}
+	return reasons
 }
 
 func checkName(field, v string) []string {

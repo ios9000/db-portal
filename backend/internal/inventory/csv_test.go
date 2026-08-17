@@ -182,3 +182,84 @@ func TestParseFixture(t *testing.T) {
 	}
 	require.Len(t, clusters, 6)
 }
+
+// SPEC-050 mini-ADR 5 (WU-051): the optional trailing host,port columns —
+// per-file (header-declared), absent → nil, and the old 8-column format
+// parses exactly as before.
+func TestParseConnColumns(t *testing.T) {
+	connHeader := goodHeader + ",host,port"
+
+	t.Run("tuple round-trips", func(t *testing.T) {
+		res, err := inventory.Parse(strings.NewReader(
+			connHeader + "\nbilling-test,billing,test,vm,16.3,40,team,,10.0.0.5,5433\n"))
+		require.NoError(t, err)
+		require.Empty(t, res.Rejects)
+		require.Len(t, res.Rows, 1)
+		require.NotNil(t, res.Rows[0].Host)
+		require.Equal(t, "10.0.0.5", *res.Rows[0].Host)
+		require.NotNil(t, res.Rows[0].Port)
+		require.Equal(t, 5433, *res.Rows[0].Port)
+	})
+
+	t.Run("empty tuple stays nil", func(t *testing.T) {
+		res, err := inventory.Parse(strings.NewReader(
+			connHeader + "\nbilling-test,billing,test,vm,16.3,40,team,,,\n"))
+		require.NoError(t, err)
+		require.Empty(t, res.Rejects)
+		require.Nil(t, res.Rows[0].Host)
+		require.Nil(t, res.Rows[0].Port)
+	})
+
+	t.Run("bare host defaults the port later", func(t *testing.T) {
+		res, err := inventory.Parse(strings.NewReader(
+			connHeader + "\nbilling-test,billing,test,vm,16.3,40,team,,db1.corp,\n"))
+		require.NoError(t, err)
+		require.Empty(t, res.Rejects)
+		require.Equal(t, "db1.corp", *res.Rows[0].Host)
+		require.Nil(t, res.Rows[0].Port)
+	})
+
+	t.Run("old format has no tuple fields", func(t *testing.T) {
+		res, err := inventory.Parse(strings.NewReader(
+			goodHeader + "\nbilling-test,billing,test,vm,16.3,40,team,\n"))
+		require.NoError(t, err)
+		require.Empty(t, res.Rejects)
+		require.Nil(t, res.Rows[0].Host)
+		require.Nil(t, res.Rows[0].Port)
+	})
+
+	t.Run("old-format row count unchanged by the new header", func(t *testing.T) {
+		// A 10-field row under the 8-column header still quarantines.
+		res, err := inventory.Parse(strings.NewReader(
+			goodHeader + "\nbilling-test,billing,test,vm,16.3,40,team,,10.0.0.5,5433\n"))
+		require.NoError(t, err)
+		require.Len(t, res.Rejects, 1)
+		require.Contains(t, res.Rejects[0].Reasons[0], "wrong column count: got 10, want 8")
+	})
+
+	quarantines := []struct {
+		name, row, reason string
+	}{
+		{"non-integer port", "billing-test,billing,test,vm,16.3,40,team,,10.0.0.5,http", "port must be an integer in 1..65535"},
+		{"zero port", "billing-test,billing,test,vm,16.3,40,team,,10.0.0.5,0", "port must be an integer in 1..65535"},
+		{"overflow port", "billing-test,billing,test,vm,16.3,40,team,,10.0.0.5,70000", "port must be an integer in 1..65535"},
+		{"port without host", "billing-test,billing,test,vm,16.3,40,team,,,5433", "port without host"},
+		{"whitespace host", "billing-test,billing,test,vm,16.3,40,team,,\"bad host\",5433", "host must be a hostname or address"},
+		{"missing conn columns", "billing-test,billing,test,vm,16.3,40,team,", "wrong column count: got 8, want 10"},
+	}
+	for _, tc := range quarantines {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := inventory.Parse(strings.NewReader(connHeader + "\n" + tc.row + "\n"))
+			require.NoError(t, err)
+			require.Empty(t, res.Rows)
+			require.Len(t, res.Rejects, 1)
+			found := false
+			for _, got := range res.Rejects[0].Reasons {
+				if strings.Contains(got, tc.reason) {
+					found = true
+				}
+			}
+			require.True(t, found, "missing reason %q in %v", tc.reason, res.Rejects[0].Reasons)
+		})
+	}
+}
