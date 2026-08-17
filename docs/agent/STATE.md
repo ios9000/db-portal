@@ -58,7 +58,9 @@
   s16 `systemd-run --unit=dbportal-demo` recipe w/ fresh bcrypt of the documented demo
   password (healthz ok, dba1 login 200, new invocation ID) — kill drill portals by EXACT
   PID only. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl. golden flow,
-  vitest 116/116). Commit 28dd420 (6 files, +1375/−41) + docs bookkeeping commit; NO
+  vitest 116/116); **CI GREEN** (run 31988998973 on aee3c94 — the stub-driven local
+  adapter suite ran in CI with no Ansible installed, the SPEC-050 strategy proven).
+  Commit 28dd420 (6 files, +1375/−41) + docs bookkeeping aee3c94; NO
   migration/UI/seam change; MockEngine untouched (ADR-002).
 - **Status (s37, M5 GROOMED — the post-MVP pivot recorded):** wrote **ADR-014** (local
   engine vs Semaphore: why ADR-002's 6-12-month verdict flips post-MVP — the portal already
