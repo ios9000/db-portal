@@ -1396,7 +1396,31 @@ localhost (ping-style playbook) via an isolated portal ([[live-drill-isolation]]
 ADR-014.
 
 ## WU-051 — instance connection tuple + dynamic inventory (mini-ADR 5) — M
-**Status:** TODO.
+**Status:** DONE (s39). Migration 0013 (`instance.host text NULL` + `port int NULL` w/
+`instance_port_range` CHECK); CSV optional trailing `host,port` (per-FILE via the
+extended exact header; absent → NULL incl. on update — the CSV speaks for the whole
+row; port 1..65535, port-without-host quarantined, bare host legal → render defaults
+5432); upsert round-trips + idempotent (`eqPtr` generalized). NEW SEAM:
+`engine.InventorySource` (interface in `engine`, implemented by `inventory.Store`,
+wired in main's classAdapter) — so Adapter seam, params map and `params_digest` stay
+byte-identical; StartJob resolves FRESH + renders `inventory.json` (0600, `--inventory`,
+Ansible stock yaml plugin parses .json) with a `target` group holding exactly the one
+target (`ansible_host` + `dbportal_port/instance/env/platform/cluster`); cluster-group
+arm exists in the render for WU-053, never populated yet; missing tuple → StartJob
+fails closed ("instance %q has no connection info; re-import the inventory with
+host,port"). TESTS: golden render JSON (internal + adapter-level byte-equal on the real
+file), 0600, fleet-never-leaks, no-instance-param compat (`INVENTORY=none`), CSV/import/
+store suites (+`TestInventoryHost`), 0013 pinned in both migrate walks (backfill walk
+now 5 downs), runs-level `TestStartMissingConnectionInfoFinalizesFailed` = REAL local
+adapter + REAL store over the tuple-less fixture (fails pre-spawn → no stub needed),
+audit submitted+finished/failed intact. VM SMOKE (isolated :8095 + scratch
+`portal_wu051_drill`, auth off, engine local, [[live-drill-isolation]]; torn down by
+EXACT PID, demo :8080 untouched): real ansible-playbook `wait_for` reached compose
+pgtarget 127.0.0.1:5433 THROUGH the rendered inventory (`ok: [pgtarget-drill]`, debug
+echoed all dbportal_* facts), run success 0.45s; missing-tuple run → failed w/ the exact
+message + full audit trail; re-import WITH tuple ("updated 1") → next run success (the
+message's recovery path, live); workdir empty after terminal. GATE: CHECK-EXIT:0
+(golangci 0, go test -race all pkgs, vitest 116/116). Fixtures/seed byte-untouched.
 **Goal:** migration 0013 (`instance.host text NULL`, `instance.port int NULL`); CSV
 import optional trailing `host,port` columns (absent → NULL; existing fixtures/tests
 byte-untouched; re-import updates in place); per-job inventory JSON render into the job
@@ -1404,11 +1428,11 @@ workdir 0600 — `target` group with exactly the target instance (`ansible_host`
 `dbportal_*` hostvars), `cluster` group only when the op declares it; NO credentials in
 the file; missing tuple → StartJob fails closed with "instance has no connection info".
 **AC:**
-- [ ] 0013 up/down/up pinned in migrate_test; import round-trips host/port and stays
+- [x] 0013 up/down/up pinned in migrate_test; import round-trips host/port and stays
       idempotent; an old-format CSV imports unchanged.
-- [ ] Inventory render golden-tested (exact JSON for a fixture instance); file mode
+- [x] Inventory render golden-tested (exact JSON for a fixture instance); file mode
       0600; fleet never leaks (a 2nd instance's host absent from the render).
-- [ ] Missing-tuple run finalizes failed with the clear message; audit trail intact.
+- [x] Missing-tuple run finalizes failed with the clear message; audit trail intact.
 **Verify:** `npm run check` green; VM smoke: real playbook pings the compose `pgtarget`
 via a rendered inventory.
 **Context brief:** SPEC-050 mini-ADR 5; `backend/internal/inventory/{import.go,seed.go}`;
@@ -1543,7 +1567,7 @@ the WU-046/049 drill recipes.
 - Inventory: Excel/.xlsx ingestion (MVP is CSV-only — SPEC-010)
 - Patroni-aware dump/restore sequencing (research gotcha #1: cancel semantics too) — **partial DONE WU-042** (chain.Create blocks a restore step onto a k8s_patroni target, ADR-012; full leader/replica pause/detach→restore→reinit sequencing + per-instance role awareness stay post-MVP)
 - PITR; Vacuum/Reindex buttons; approvals workflow (Screen 7); Jira linkage; SSO
-- Portal self-target ban (research gotcha #2) — **DONE WU-042** (declared `PORTAL_PROTECTED_INSTANCES` set seeded w/ DBName, refused at Start + chain.Create, ErrSelfTarget 403, audited guardrail.denied; ADR-012). Auto-detection needs an inventory connection-tuple schema addition (post-MVP).
+- Portal self-target ban (research gotcha #2) — **DONE WU-042** (declared `PORTAL_PROTECTED_INSTANCES` set seeded w/ DBName, refused at Start + chain.Create, ErrSelfTarget 403, audited guardrail.denied; ADR-012). Auto-detection needs an inventory connection-tuple schema addition (post-MVP) — **the tuple EXISTS since WU-051 (0013 host/port)**: auto-detect = match instance.host/port against the portal's own DB endpoint at boot, groomable any time.
 - Bulk/rolling operations (Screen 2 sticky bar); saved views
 - 5-year audit shipping to object storage; SIEM export
 - AuthN: session GC sweep — expired session rows accumulate forever (TTL enforced on read only); periodic delete (filed at s14 grooming) — **DONE WU-044 (s30)** (maintenance sweep `DELETE FROM session WHERE expires_at < now()`, live session never matched; SPEC-044 mini-ADR 4).

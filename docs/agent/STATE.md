@@ -6,13 +6,13 @@
 ## Now
 
 - **RESUME HERE (fresh session — this is the whole resume context; do NOT reconstruct from
-  any prior conversation).** Active WU = **WU-051** (instance connection tuple + dynamic
-  inventory — migration 0013). Read, in order: (1) this "Now" block + "Next action" below;
-  (2) the **WU-051** entry in `docs/agent/BACKLOG.md` and ONLY the files its context brief
-  lists; (3) SPEC-050 mini-ADR 5 (`docs/specs/local-engine.md`) + **ADR-014** in
+  any prior conversation).** Active WU = **WU-052** (extra_vars contract + exec hardening
+  — SPEC-050 mini-ADR 6). Read, in order: (1) this "Now" block + "Next action" below;
+  (2) the **WU-052** entry in `docs/agent/BACKLOG.md` and ONLY the files its context brief
+  lists; (3) SPEC-050 mini-ADR 6 (`docs/specs/local-engine.md`) + **ADR-014** in
   DECISIONS.md (the pivot's why). The older `Status` blocks below are REFERENCE.
 - **Active: PHASE 5 (M5 — Local Ansible engine & playbook platform), groomed s37;
-  WU-050 DONE (s38) — 051..057 remain.** THE PIVOT (user directive 2026-08-12, ADR-014): target user broadens to
+  WU-050 DONE (s38) + WU-051 DONE (s39) — 052..057 remain.** THE PIVOT (user directive 2026-08-12, ADR-014): target user broadens to
   **Ansible playbook developers**; the portal executes playbooks ITSELF via os/exec
   (`ansible-playbook` on the host) behind the UNCHANGED Adapter seam; **Semaphore goes to
   zero** (decommission WU-056, strictly AFTER the WU-055 parity drill); the catalog becomes
@@ -25,6 +25,40 @@
   demo (:8080) and compose dev stack still run. Organizational: security-vetting package
   (ARCHITECTURE §8.2) still awaits the user; NOTE the pivot will amend its engine sections
   (WU-057 reconciles docs — until then ADR-014 wins conflicts, ADR-006 precedence).
+- **Status (s39, WU-051 DONE — instance connection tuple + dynamic inventory, mini-ADR 5):**
+  migration **0013** (`instance.host text NULL` + `port int NULL`, `instance_port_range`
+  CHECK 1..65535; pinned in BOTH migrate walks — the backfill walk is now 5 downs); CSV
+  gains the optional trailing `host,port` columns per-FILE (extended exact header; absent
+  → NULL **including on update** — the CSV speaks for the whole row, a stale address can
+  never linger; port-without-host quarantined, bare host legal); upsert round-trips the
+  tuple under natural-key idempotency (`eqPtr` generalized to `[T comparable]`). NEW SEAM:
+  **`engine.InventorySource`** (interface defined in `engine` — the Alarmer precedent —
+  implemented by `inventory.Store.InventoryHost`, wired in main's classAdapter via the now-
+  shared `invStore`), so the Adapter seam, the params map and `params_digest` stay
+  BYTE-IDENTICAL. `LocalAdapter.StartJob` resolves the tuple FRESH + renders
+  `inventory.json` synchronously (fail closed: no tuple → `instance %q has no connection
+  info; re-import the inventory with host,port` → the existing ErrEngine path finalizes the
+  run failed); run() writes it 0600 into the job workdir + `--inventory` (REPLACES default
+  inventory sources; Ansible's stock yaml plugin parses .json). Render: `target` group =
+  exactly the one target (`ansible_host` + `dbportal_port/instance/env/platform/cluster`
+  hostvars; NULL port → 5432, the libpq default); cluster-group arm exists for WU-053,
+  never populated yet; NEVER the fleet, NO credentials. TESTS: golden render JSON pinned
+  twice (internal render + adapter-level byte-equal on the real on-disk file), 0600 mode,
+  fleet-never-leaks, no-instance-param compat (stub `dump-inventory` directive →
+  `INVENTORY=none`), CSV/import/store suites (+TestInventoryHost, TestImportConnectionTuple,
+  TestImportFixtureHasNoTuple), runs-level TestStartMissingConnectionInfoFinalizesFailed =
+  REAL LocalAdapter + REAL Store over the tuple-less fixture (fails pre-spawn → no stub
+  needed) w/ audit submitted+finished/failed intact. VM SMOKE (isolated :8095 + scratch
+  `portal_wu051_drill`, auth off, engine=local, per [[live-drill-isolation]]; teardown by
+  EXACT PID, demo :8080 healthz 200 after): REAL ansible-playbook `wait_for` reached compose
+  pgtarget 127.0.0.1:5433 THROUGH the rendered inventory (`ok: [pgtarget-drill]`; debug
+  echoed every dbportal_* fact), run success 0.45s job `local-a671b333-1`; missing-tuple run
+  → failed w/ the exact message + full trail; re-import WITH tuple ("updated 1, unchanged
+  1") → next run SUCCESS (the message's recovery path, live); workdir empty post-terminal.
+  GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116). Fixtures + seed
+  byte-untouched; MockEngine/semaphore untouched; SPEC-050 mini-ADR 5 gained WU-051
+  delivery notes; icebox self-target-auto-detect note updated (tuple now exists). NO UI
+  change.
 - **Status (s38, WU-050 DONE — `engine/local` adapter core, the first M5 WU):** the
   os/exec ansible-playbook supervisor behind the UNCHANGED seam, `local.go` in `package
   engine` (mock/semaphore precedent; SPEC-050 header records the deviations). Mechanics:
@@ -586,22 +620,25 @@
 
 ## Next action (be exact)
 
-1. **START WU-051 — instance connection tuple + dynamic inventory (SPEC-050 mini-ADR 5).**
-   Full brief + ACs in BACKLOG (WU-051). Core: migration 0013 (`instance.host text NULL`,
-   `instance.port int NULL`, up/down/up pinned in migrate_test); CSV import optional
-   trailing `host,port` columns (absent → NULL; existing fixtures/tests byte-untouched;
-   re-import updates in place under natural-key idempotency); per-job inventory JSON
-   rendered into the WU-050 job workdir 0600 — `target` group holding exactly the target
-   instance (`ansible_host` + `dbportal_*` hostvars), `cluster` group only when declared,
-   NEVER the fleet, NO credentials; missing tuple → StartJob fails closed ("instance has
-   no connection info"). Golden-test the exact render JSON. Context brief:
-   `backend/internal/inventory/{import.go,seed.go}`, migrations (0002 instance shape),
-   WU-050's workdir code (`engine/local.go`). Then 052 (extra_vars hardening) → 053
-   (manifests) → 054 (UI, delegate) → 055 (parity drill — GATES 056) → 056 (Semaphore
-   removal) → 057 (docs sweep + m5 gate). Do NOT remove any Semaphore code before WU-055's
-   rehearsal passes on `local`. NOTE for 055: ansible-core 2.16.3 is now installed on the
-   VM (apt, s38); WU-050's smoke recipe (stub tests + isolated :8095 drill) is in the
-   BACKLOG done-entry.
+1. **START WU-052 — extra_vars contract + exec hardening (SPEC-050 mini-ADR 6).**
+   Full brief + ACs in BACKLOG (WU-052). Core: the reserved engine-injected `dbportal_*`
+   extra-vars namespace (instance/environment/operation + artifact refs — porting the
+   semaphore forwardVars allowlist to `dbportal_artifact_name`/`dbportal_checksum`);
+   client params rejected on the reserved prefix BEFORE any row; scrubbed child env
+   (allowlist PATH/HOME/LANG/ANSIBLE_* + configured extras — `PORTAL_DB_PASSWORD` must
+   never reach a playbook; the stub can echo env/argv for assertion); extravars 0600 +
+   argv assertion (no param value ever in argv); log caps end-to-end; workdir removal on
+   every terminal path incl. cancel/timeout. `params_digest` auditing unchanged. NOTE
+   from WU-051: inventory hostvars already use `dbportal_env` — keep it distinct from
+   the extra-vars `dbportal_environment` (SPEC-050 mini-ADR 5 delivery notes), and any
+   playbook port (WU-055) reads `dbportal_port` from the INVENTORY, not extra vars.
+   Context brief: SPEC-050 mini-ADR 6; `engine/local.go` (+local_test stub vocabulary);
+   `engine/semaphore.go` (forwardVars); `runs/service.go` (paramsDigest + params build).
+   Then 053 (manifests) → 054 (UI, delegate) → 055 (parity drill — GATES 056) → 056
+   (Semaphore removal) → 057 (docs sweep + m5 gate). Do NOT remove any Semaphore code
+   before WU-055's rehearsal passes on `local`. NOTE for 055: ansible-core 2.16.3 is on
+   the VM (apt, s38); the WU-050/051 smoke recipe (stub tests + isolated :8095 drill +
+   exact-PID teardown) is in each BACKLOG done-entry.
    - s35 postscript: the M4-exit commit's CI came back RED — a pre-existing flake
      (`TestInstanceLockReapsExpiredDeadHolder`: at the 1ms mock delay the run finalizes —
      and release-rides-finalize deletes the lock row — before the test's SELECT on a slow

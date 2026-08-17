@@ -102,6 +102,16 @@ not OOM the portal. (Log persistence stays out of scope — SPEC-013 mini-ADR 3.
   ("instance has no connection info; re-import with host,port") → the existing
   ErrEngine path finalizes the run failed with that message. No run ever silently
   targets localhost by default.
+- *WU-051 delivery notes:* the tuple = the HOST (a bare host is legal — a NULL
+  port renders `dbportal_port: 5432`, the libpq default; a port without a host
+  quarantines at import). Resolution crosses a new `engine.InventorySource`
+  interface (defined in `engine`, implemented by `inventory.Store`, wired in
+  main) so the seam, the params map, and `params_digest` stay byte-identical;
+  the read happens fresh at StartJob. Env hostvar is `dbportal_env` (this
+  section's shorthand), distinct from the extra-vars `dbportal_environment`
+  (mini-ADR 6, WU-052). The file is `inventory.json`, passed as `--inventory`
+  (replaces Ansible's default inventory sources); Ansible's stock yaml plugin
+  parses it (.json is in its default extension list).
 
 ## Mini-ADR 6 — extra_vars contract
 
