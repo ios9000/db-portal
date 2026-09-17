@@ -44,6 +44,33 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
   with exactly ONE owner, who writes only that file (template in its README). The card has a
   single owner — the main (architect) session — and only it folds task records into the card.
 
+## Delegation & model routing
+
+> **Policy (user, 2026-09-17):** "Use sub-agents with less expensive models where appropriate
+> to search and verify information across the codebase and documentation."
+
+- **Cheapest tier that fits** — models are pinned in `.claude/agents/*.md`:
+  `scout` (haiku, read-only) bounded research · `verifier` (haiku) ONE straightforward check →
+  PASS / FAIL / INCONCLUSIVE · `analyst` (sonnet) the escalation tier. Implementation
+  delegation is unchanged (one Sonnet implementer, tight brief). Security-, concurrency- and
+  design-sensitive JUDGEMENT stays with the main session; workers only supply evidence for it.
+- **Stay local** for a single known file, symbol or value, or anything ≤ ~3 tool calls:
+  spawning + briefing a worker costs more than it saves.
+- **Escalate, don't widen.** A worker answering ESCALATE / INCONCLUSIVE / low confidence, or
+  two workers disagreeing → the same brief + their findings to `analyst`; still open → the
+  main session decides. Never answer ambiguity with a bigger fan-out.
+- **Bounded loop:** gather evidence → act → verify → revise → checkpoint. ≤ 3 concurrent
+  workers · ≤ 3 repair attempts per failing check · after 2 iterations without progress STOP
+  and reassess (different approach, escalate, or ask the user). Report incomplete results and
+  coverage gaps explicitly — a partial sweep is never reported as complete, and only an
+  independently checked finding is "verified".
+- **One owner for shared state:** workers return findings in their reply (or their own
+  `docs/agent/tasks/<id>.md`); only the coordinator writes STATE.md / JOURNAL / BACKLOG.
+- **Workflows** for substantial or reusable parallel work: `.claude/workflows/research-sweep.js`
+  (encodes the limits above). State agent count + cost first; every worker call carries an
+  explicit `model`. Routing table, how to check the ACTUAL model used, what is enforced vs.
+  asked: `docs/agent/HARNESS.md` §5–7.
+
 ## Ground rules
 
 - **The repo is the memory.** Anything worth knowing next session must land in a file this
@@ -110,6 +137,8 @@ Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on t
 - `docs/agent/tasks/` — one record per PARALLEL task, one owner each (README = template)
 - `docs/agent/JOURNAL.md` — append-only session log
 - `docs/agent/BACKLOG.md` — context-window-sized work units
+- `.claude/agents/` — routed workers: `scout` + `verifier` (haiku), `analyst` (sonnet)
+- `.claude/workflows/` — named workflows: `research-sweep` (bounded sweep), `m1`–`m4-gate-review`
 - `.claude/hooks/` — `session-state.sh` (SessionStart hook: injects the state card on
   startup | resume | clear | compact), `state-validate.sh` (structure check), `test-harness.sh`
   (self-test in throwaway fixtures)

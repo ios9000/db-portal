@@ -147,5 +147,24 @@ o="$(run_validate "$d")"; [ "$(rc "$o")" -eq 1 ] && has "$o" "loads it into EVER
 d="$(mkrepo v-missing)"; rm "$d/docs/agent/STATE.md"
 o="$(run_validate "$d")"; [ "$(rc "$o")" -eq 1 ] && has "$o" "does not exist"; check "missing STATE.md fails" $?
 
+echo "Delegation routing config (static: what the runtime will enforce)"
+repo="$(cd "$here/../.." && pwd)"
+fm() { awk -v k="$2" 'NR==1 && $0=="---"{on=1;next} on && $0=="---"{exit} on && index($0, k ":")==1 {sub(/^[^:]*:[ \t]*/, ""); print; exit}' "$repo/.claude/agents/$1.md" 2>/dev/null; }
+for spec in scout:haiku verifier:haiku analyst:sonnet; do
+  a="${spec%%:*}"; want="${spec##*:}"
+  [ "$(fm "$a" name)" = "$a" ] && [ "$(fm "$a" model)" = "$want" ] && [ -n "$(fm "$a" description)" ] && [ -n "$(fm "$a" maxTurns)" ]
+  check "agent '$a': model pinned to $want, maxTurns bounded, name/description present" $?
+  case ",$(fm "$a" tools | tr -d ' ')," in *,Edit,* | *,Write,* | *,NotebookEdit,* | ,,) false ;; *) true ;; esac
+  check "agent '$a': explicit tool list without Edit/Write (workers cannot edit shared state with file tools)" $?
+done
+case ",$(fm scout tools | tr -d ' ')," in *,Bash,*) false ;; *) true ;; esac; check "agent 'scout' is read-only (no Bash)" $?
+if command -v node >/dev/null 2>&1; then
+  node "$here/research-sweep.dryrun.js" >"$T/dryrun.txt" 2>&1; drc=$?
+  sed -e 's/^/  /' "$T/dryrun.txt" | grep -E 'FAIL|dry-run:' || true
+  check "research-sweep workflow bounds hold in a dry-run (fake agent, no model calls)" $drc
+else
+  echo "  skip  node not found - research-sweep dry-run NOT executed (coverage gap, not a pass)"
+fi
+
 echo "RESULT: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]
