@@ -1554,6 +1554,7 @@ the WU-046/049 drill recipes.
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
+- STATE.md diet (found s40): the file is ~88 KB / ~40k tokens because ~25 historical `Status (sNN …)` blocks + old HEADS-UPs accreted under "Now"/"Next action"/"Blocked" despite the full-rewrite rule — they duplicate JOURNAL + BACKLOG done-entries. Prune to card + current Now/Next/Blocked + Standing context (history stays in git + JOURNAL). The s40 state card bounds what the SessionStart hook injects, but a full read of STATE.md is still expensive and the Read tool cannot load it in one call.
 - M5-spawned (ADR-014/SPEC-050 deferrals): playbook upload/versioning/signing API (delivery v2 — v1 is git/filesystem); per-playbook RBAC (D2/D3 revisit); `ansible-runner` structured events as an opt-in manifest flag; local artifact-bytes retention owner (open q → decided at WU-055); OpenBao vault integration (the ADR-004 commitment — now has ONE obvious integration point); dry-run/`--check` button (research module 14, cheap under the local engine); separate runner user per env class (guardrail layer 3 hardening)
 - CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today) — **→ WU-045**
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`) — **→ WU-045**

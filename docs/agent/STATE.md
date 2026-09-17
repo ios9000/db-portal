@@ -2,6 +2,37 @@
 
 > Rewritten in full at every checkpoint. This file is the single resume point.
 > If this file and the git tree disagree, the tree wins — then fix this file.
+> The **state card** below is the head of this file: a SessionStart hook injects it on
+> startup / resume / compaction. On conflict: git tree > card > the sections under it.
+> Card rules (when to rewrite, done vs verified, single owner): CLAUDE.md "State card".
+
+<!-- STATE-CARD:BEGIN · injected by .claude/hooks/session-state.sh · budget 5000 bytes (cut at a line boundary beyond that) · single writer = the summary owner · rewrite the whole block, never append -->
+## Working state (card)
+
+- **Last updated:** 2026-09-17T07:20Z (s40) · **Summary owner:** architect = the main interactive session (sole writer of this card)
+- **Goal:** M5 — the portal runs `ansible-playbook` itself (`engine/local`, os/exec) behind the unchanged Adapter seam; manifest-driven playbook library; Semaphore to zero. Why: ADR-014 (`docs/DECISIONS.md`) · spec: SPEC-050 (`docs/specs/local-engine.md`).
+- **Completion criteria:** M5 exit per `docs/ROADMAP.md` §M5 — WU-036 restore rehearsal green on `engine=local` with Semaphore deleted from the tree; drop-a-playbook drill (new op, no Go change); `m5-gate-review` passes. Active WU: every AC in BACKLOG WU-052 + `npm run check` green + CI green.
+- **Active task:** **WU-052** — extra_vars contract + exec hardening (SPEC-050 mini-ADR 6) · status: NOT STARTED (BACKLOG: TODO) · owner: architect (not delegated)
+- **Branch:** main (in sync with origin/main at f3861d8 when written)
+- **Decisions (why → where):**
+  - Local engine replaces Semaphore: the portal already owns the value layer, Semaphore only supervises processes + holds keys → ADR-014.
+  - Params reach a playbook ONLY via `--extra-vars @file` (0600), never argv; the `dbportal_*` namespace is reserved for engine-injected vars → SPEC-050 mini-ADR 6.
+  - Inventory hostvar `dbportal_env` stays distinct from extra-var `dbportal_environment`; playbooks read `dbportal_port` from the INVENTORY → SPEC-050 mini-ADR 5 delivery notes.
+  - No Semaphore code is removed before the WU-055 parity drill passes on `local` → BACKLOG Phase 5 header.
+  - MockEngine stays the dev + test default; CI needs no Ansible (stub binary) → ADR-002, SPEC-050.
+  - s40 (meta): this card + the SessionStart hook + `docs/agent/tasks/` records added; the long history under "Now" is left as reference (pruning filed in BACKLOG Icebox, NOT done).
+- **Done (claimed — BACKLOG/JOURNAL):** M0–M4 exited; M5 groomed (s37, e648457); WU-050 local adapter core (28dd420); WU-051 connection tuple + per-job inventory, migration 0013 (2b2e483). Remaining: WU-052 → 053 → 054 (UI, delegation candidate) → 055 → 056 → 057.
+- **Verified (command → result → evidence):**
+  - WU-051: `npm run check` exit 0 + VM smoke on `local` → JOURNAL s39 line; CI run 31992600859 green on c48ccc3.
+  - WU-050: `npm run check` exit 0 + VM smoke → JOURNAL s38 line; CI run 31988998973 green on aee3c94.
+  - HEAD f3861d8: CI run 31992759517 green (`gh run list`, checked 2026-09-17).
+  - 2026-09-17 `npm run check` → CHECK-EXIT:0: golangci 0 issues + vitest 116/116 ran FRESH; all Go test packages reported `(cached)` = NOT re-executed (Go code unchanged since s39). Whether the cached run had the DB tests un-skipped: UNKNOWN.
+  - s40 state hook: pipe-tests (3 sources + 7 failure-path fixtures) exit 0; LIVE headless `claude -p`: `SessionStart:startup` / `:resume` / `:compact` all fired, 4215 B delivered whole, an unrelated request was answered without drifting to the saved task → JOURNAL s40 line.
+- **Blockers:** none for WU-052. Standing, non-blocking: the security-vetting package (ARCHITECTURE §8.2) awaits the user.
+- **Next step:** start WU-052 — read BACKLOG WU-052 + SPEC-050 mini-ADR 6, then ONLY `backend/internal/engine/local.go` (+ `local_test.go` stub vocabulary), `engine/semaphore.go` (forwardVars), `runs/service.go` (paramsDigest). Detail: "Next action" below.
+- **Unknown:** liveness of the demo (:8080) and the compose dev stack (not probed since s39); anything done on the VM outside git between 2026-08-16 and 2026-09-17. Two untracked July files sit at the repo root (`auto_proof.txt`, `settings.local.json` = the WDFabric permissions template, already ported in s24) — the user's to keep or delete.
+- **Parallel task records:** none (`docs/agent/tasks/`, see its README).
+<!-- STATE-CARD:END -->
 
 ## Now
 

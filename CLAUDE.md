@@ -9,9 +9,13 @@ prevent context loss between sessions. They are not optional.
 
 ## Session protocol — MANDATORY
 
-1. **Start:** read `docs/agent/STATE.md` first. It names the active work unit (WU) and the next
-   action. Trust it over any conversation summary. Then read the WU entry in
-   `docs/agent/BACKLOG.md` and ONLY the files its context brief lists.
+1. **Start:** the state card at the top of `docs/agent/STATE.md` comes first. A SessionStart
+   hook injects it on startup, resume and compaction; if it is not in your context, read the
+   `STATE-CARD` block yourself (STATE.md is large — read the card plus the sections you need,
+   not the whole file). It names the active work unit (WU) and the next action. Trust it over
+   any conversation summary, but never over the user: **a new user request beats the saved
+   task.** Then read the WU entry in `docs/agent/BACKLOG.md` and ONLY the files its context
+   brief lists.
 2. **Work:** one WU per session by default. Do not start a second WU without checkpointing.
    Do not refactor outside the WU's blast radius — file an idea in BACKLOG.md instead.
 3. **Checkpoint** (at any natural boundary, and ALWAYS before context gets heavy):
@@ -20,6 +24,21 @@ prevent context loss between sessions. They are not optional.
    Then: mark it done in BACKLOG.md, update STATE.md to point at the next WU, journal, commit.
 
 Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/STRATEGY.md`.
+
+### State card — MANDATORY
+
+- **When:** rewrite the card (the whole `STATE-CARD` block, fresh UTC timestamp) after every
+  significant milestone or decision, and ALWAYS before handing off — session end, delegating
+  to a subagent, or stopping to ask the user. Do not wait for the full checkpoint ritual.
+- **What:** goal · completion criteria · active task + owner · branch · decisions with their
+  why · done · verified · blockers · next step · last updated. Budget 5000 bytes (the hook
+  cuts the rest). Write `UNKNOWN` rather than guessing or leaving a field out.
+- **Done ≠ verified.** "Done" is a claim. "Verified" needs the command, its result and a link
+  to the evidence (commit, CI run, JOURNAL line, review doc). Keep those links when you
+  rewrite the card; never promote an item to Verified without having run the check.
+- **Parallel work:** every concurrent task gets its own record `docs/agent/tasks/<id>.md`
+  with exactly ONE owner, who writes only that file (template in its README). The card has a
+  single owner — the main (architect) session — and only it folds task records into the card.
 
 ## Ground rules
 
@@ -77,7 +96,11 @@ Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on t
 - `docs/specs/` — per-module specs, written just-in-time before their WU
 - `docs/agent/STRATEGY.md` — the AI-harness development strategy
 - `docs/agent/SESSION-PROTOCOL.md` — start/checkpoint/end rituals, recovery
-- `docs/agent/STATE.md` — CURRENT STATE (overwritten each checkpoint; read first)
+- `docs/agent/STATE.md` — CURRENT STATE; opens with the state card (overwritten each
+  checkpoint; read first)
+- `docs/agent/tasks/` — one record per PARALLEL task, one owner each (README = template)
 - `docs/agent/JOURNAL.md` — append-only session log
 - `docs/agent/BACKLOG.md` — context-window-sized work units
+- `.claude/hooks/session-state.sh` — SessionStart hook that injects the state card
+  (wired in `.claude/settings.json`; startup | resume | compact)
 - `backend/`, `frontend/`, `playbooks/`, `infra/` — created by WU-001

@@ -12,5 +12,20 @@
       "Bash(go run ./cmd/portal migrate status)",
       "Bash(docker compose -f infra/compose.yaml ps)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-state.sh\"",
+            "timeout": 10,
+            "statusMessage": "Loading working state"
+          }
+        ]
+      }
+    ]
   }
 }
