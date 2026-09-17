@@ -1,0 +1,751 @@
+# STATE history — archive (NOT loaded at session start)
+
+> Verbatim blocks moved out of `docs/agent/STATE.md` on 2026-09-17 (s40; source = STATE.md at commit 44c8c50).
+> **History only — nothing here is current state.** Do not read this file at session start and never quote
+> it as current: `grep` it for one specific past fact, then confirm against the code / `git log`.
+> Primary history = `../JOURNAL.md` (one line per event) + the BACKLOG done-entries; this file only keeps the
+> long-form session write-ups that used to accrete in STATE.md.
+> In these blocks, STATE "Standing context" / "HEADS-UP" now mean `../STANDING-CONTEXT.md`.
+> Append-only: old blocks are never edited. Default for new work is NOT to add here (JOURNAL + BACKLOG carry
+> a finished WU); if a checkpoint must retire a long block from STATE.md, append it under a dated heading at the END.
+
+## A. Session status blocks — were under STATE "Now" (newest first, s39 → s19)
+
+- **Status (s39, WU-051 DONE — instance connection tuple + dynamic inventory, mini-ADR 5):**
+  migration **0013** (`instance.host text NULL` + `port int NULL`, `instance_port_range`
+  CHECK 1..65535; pinned in BOTH migrate walks — the backfill walk is now 5 downs); CSV
+  gains the optional trailing `host,port` columns per-FILE (extended exact header; absent
+  → NULL **including on update** — the CSV speaks for the whole row, a stale address can
+  never linger; port-without-host quarantined, bare host legal); upsert round-trips the
+  tuple under natural-key idempotency (`eqPtr` generalized to `[T comparable]`). NEW SEAM:
+  **`engine.InventorySource`** (interface defined in `engine` — the Alarmer precedent —
+  implemented by `inventory.Store.InventoryHost`, wired in main's classAdapter via the now-
+  shared `invStore`), so the Adapter seam, the params map and `params_digest` stay
+  BYTE-IDENTICAL. `LocalAdapter.StartJob` resolves the tuple FRESH + renders
+  `inventory.json` synchronously (fail closed: no tuple → `instance %q has no connection
+  info; re-import the inventory with host,port` → the existing ErrEngine path finalizes the
+  run failed); run() writes it 0600 into the job workdir + `--inventory` (REPLACES default
+  inventory sources; Ansible's stock yaml plugin parses .json). Render: `target` group =
+  exactly the one target (`ansible_host` + `dbportal_port/instance/env/platform/cluster`
+  hostvars; NULL port → 5432, the libpq default); cluster-group arm exists for WU-053,
+  never populated yet; NEVER the fleet, NO credentials. TESTS: golden render JSON pinned
+  twice (internal render + adapter-level byte-equal on the real on-disk file), 0600 mode,
+  fleet-never-leaks, no-instance-param compat (stub `dump-inventory` directive →
+  `INVENTORY=none`), CSV/import/store suites (+TestInventoryHost, TestImportConnectionTuple,
+  TestImportFixtureHasNoTuple), runs-level TestStartMissingConnectionInfoFinalizesFailed =
+  REAL LocalAdapter + REAL Store over the tuple-less fixture (fails pre-spawn → no stub
+  needed) w/ audit submitted+finished/failed intact. VM SMOKE (isolated :8095 + scratch
+  `portal_wu051_drill`, auth off, engine=local, per [[live-drill-isolation]]; teardown by
+  EXACT PID, demo :8080 healthz 200 after): REAL ansible-playbook `wait_for` reached compose
+  pgtarget 127.0.0.1:5433 THROUGH the rendered inventory (`ok: [pgtarget-drill]`; debug
+  echoed every dbportal_* fact), run success 0.45s job `local-a671b333-1`; missing-tuple run
+  → failed w/ the exact message + full trail; re-import WITH tuple ("updated 1, unchanged
+  1") → next run SUCCESS (the message's recovery path, live); workdir empty post-terminal.
+  GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116); **CI GREEN**
+  (run 31992600859 on c48ccc3 — the 0013 walk + inventory suites ran in CI). Fixtures +
+  seed byte-untouched; MockEngine/semaphore untouched; SPEC-050 mini-ADR 5 gained WU-051
+  delivery notes; icebox self-target-auto-detect note updated (tuple now exists). NO UI
+  change. Commits 2b2e483 (code, 14 files +679/−36) + c48ccc3 (docs).
+- **Status (s38, WU-050 DONE — `engine/local` adapter core, the first M5 WU):** the
+  os/exec ansible-playbook supervisor behind the UNCHANGED seam, `local.go` in `package
+  engine` (mock/semaphore precedent; SPEC-050 header records the deviations). Mechanics:
+  fixed argv (params ONLY via `--extra-vars @<workdir>/extravars.json` 0600, semaphore
+  forwardVars allowlist until WU-052), template v0 = `<library>/<template>.yml`
+  (traversal-guarded name regex, missing playbook fails closed at StartJob), own process
+  group + `Pdeathsig` + SIGINT→grace→SIGKILL on cancel/timeout **+ post-exit group
+  SIGKILL reap** (a straggler backgrounded by an exit-0 playbook dies too — tested),
+  FIFO queue over `PORTAL_ENGINE_MAX_CONCURRENT` (queued jobs Started-zero, cancelable
+  in place), `local-<nonce>-<seq>` in-memory JobIDs (restart-forgets → orphan sweep;
+  fresh adapter answers ErrUnknownJob on all 4 methods), ansible exit-code map (1/2/4/5/
+  99/250) + last-output context, merged-pipe replay-then-follow streaming w/ line cap
+  (in-place truncation) + total cap (single marker + tail ring flushed at finish),
+  `DBPORTAL_RESULT` via `resultFromLine` EXTRACTED from semaphore.go (WU-040 field guard
+  shared, parseResultLine behavior identical). Config: `PORTAL_ENGINE_PROD` (NEW, mock
+  default; `semaphore` REFUSED at wiring — single Semaphore block must not span classes,
+  guardrail 3) + `PORTAL_ANSIBLE_BIN/_ENGINE_LIBRARY/_ENGINE_WORKDIR/_ENGINE_MAX_
+  CONCURRENT/_ENGINE_CANCEL_GRACE/_ENGINE_TIMEOUT_CAP`; `config.Validate` local arm
+  fail-closed naming each gap (lib/workdir/binary via LookPath); main.go `classAdapter`
+  builds both classes (mock|local either, semaphore nonprod-only). TESTS: 15 local_test
+  cases under -race driven by a STUB ansible = the test binary re-exec'd (TestMain +
+  `PORTAL_TEST_ANSIBLE_STUB`; `GORACE=atexit_sleep_ms=0` spares the stub's 1s race-
+  runtime exit sleep) — no Ansible in CI; +TestValidateLocalEngine/EngineProdDefaults
+  (config). VM SMOKE (ansible-core 2.16.3 apt-installed — now a host prereq per the
+  pivot; isolated :8095 + scratch DB per [[live-drill-isolation]]): boot refused naming
+  LIBRARY+WORKDIR; local boot → dump on pgtarget → REAL ansible-playbook success 0.6s
+  (`job_id local-fd49abbe-1`), real PLAY/TASK replay over /api/runs/1/logs, artifact
+  registered from the playbook's real result line; cancel mid-`sleep 120` task → 202 →
+  canceled, ZERO leftover ansible/sleep procs, workdir removed; torn down. INCIDENT:
+  teardown `pgrep -x portal` matched the DEMO binary too → demo killed; RESTORED via the
+  s16 `systemd-run --unit=dbportal-demo` recipe w/ fresh bcrypt of the documented demo
+  password (healthz ok, dba1 login 200, new invocation ID) — kill drill portals by EXACT
+  PID only. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl. golden flow,
+  vitest 116/116); **CI GREEN** (run 31988998973 on aee3c94 — the stub-driven local
+  adapter suite ran in CI with no Ansible installed, the SPEC-050 strategy proven).
+  Commit 28dd420 (6 files, +1375/−41) + docs bookkeeping aee3c94; NO
+  migration/UI/seam change; MockEngine untouched (ADR-002).
+- **Status (s37, M5 GROOMED — the post-MVP pivot recorded):** wrote **ADR-014** (local
+  engine vs Semaphore: why ADR-002's 6-12-month verdict flips post-MVP — the portal already
+  owns the value layer, Semaphore's residual role is process supervision + a key store;
+  secrets posture restated with the DB-boundary invariant INTACT and creds moving to
+  service-user-readable host files; guardrail layer 3 restated honestly WEAKER + hardening
+  path; rejected: keep-Semaphore/AWX/CPython-embed/Go-native-SSH/ansible-runner-required);
+  **SPEC-050** (`docs/specs/local-engine.md`, 8 mini-ADRs: process model w/ pgroup+grace+
+  Pdeathsig+concurrency-cap, in-memory JobID w/ nonce (restart-forgets = the existing
+  orphan-sweep story), exit-code map + DBPORTAL_RESULT carried verbatim, replay-then-follow
+  log streaming w/ caps, least-privilege per-job JSON inventory (0013 adds nullable
+  instance.host/port; NO creds in files; missing tuple fails closed), extra_vars @file
+  (never argv) + reserved `dbportal_*` namespace + scrubbed child env, playbook manifests
+  (fail-closed boot loader, path-traversal guard, params schema, patroni-block flag
+  generalizing WU-048), integration invariants unchanged BY CONSTRUCTION; config table;
+  stub-binary test strategy; open questions incl. artifact-bytes destination → WU-055);
+  **BACKLOG Phase 5** = 8 sized WUs w/ ACs + context briefs + icebox deferral line;
+  **ROADMAP M5** + exit criteria. Docs-only session; no Go/FE change; CHECK not run
+  (precedent); **CI GREEN** (run 31983616967 on e648457). Also standing from s36: the pilot
+  distribution package lives at `dist/dbportal-0.0.1-b6e0151.tar.gz` (+.sha256, gitignored,
+  VM-only, rebuildable via `npm run build:release`); pilot plan twin = `PILOT-PLAN.md`
+  inside it.
+- **Status (s34, WU-049 DONE — pilot-packaging fixes; findings 2+3+4):** (A) HIGHs:
+  `infra/portal.env.template` rewritten — every note its own `#` line, header states the HARD
+  RULE (systemd `EnvironmentFile=` does NOT strip trailing comments); NEW regression guard
+  `TestDeployEnvTemplateSystemdSafe` (config pkg → check+CI): value lines must be clean
+  `KEY=VALUE` (no `#`/whitespace/quotes) AND the values round-trip VERBATIM (t.Setenv, exactly
+  as EnvironmentFile= delivers) through `config.Load`+`Validate` — proven red vs the old
+  template. deploy.md §4 migrate recipe = `sudo -u dbportal bash -c 'set -a; .
+  /etc/dbportal/portal.env; set +a; exec /opt/dbportal/portal migrate up'` (+status twin) —
+  source in the target user's shell, no word-split/env_reset/`sudo cat`. (B) LOW:
+  `config.Load` → `(Config, loaded bool, error)`, loaded=true ONLY when a file was actually
+  read; main logs loaded / configured-but-not-found WARN / none (3 callers updated:
+  testutil, semaphore itest, main). LIVE DRILL (isolated, WU-046 s31 recipe; demo :8080
+  untouched): systemd-run EnvironmentFile= env-dump of the fixed template → all 5 typed
+  values clean (the s32 repro inverted); full runbook walk — dbportal user + /opt + /etc,
+  binary + VERBATIM template env (diff-proven: only DB password/name + :18081 filled) + real
+  unit → deploy.md migrate VERBATIM → v12 → `enable --now` → **active, NRestarts=0**, healthz
+  200, API 401, journal `auth mode: ldap` + correct dotenv line; `PORTAL_DOTENV=/typo` →
+  the new WARN live. Teardown: unit stopped/disabled/removed, scratch DB dropped (dirs/user
+  left — above). GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, vitest 116/116);
+  **CI GREEN** (run 31529946640 on 220a496). NO migration/UI/seam change.
+- **Status (s33, WU-048 DONE — Patroni-restore re-validated at fire time; the M4 CRITICAL):**
+  fix site = **`runs.Start`**, not the driver — Start is the fire-time choke point where the
+  self-target ban (service.go) and prod ritual are already re-checked per fire (the exact
+  asymmetry m4-gate finding 1 named), so create-drive/Resume/mid-chain all inherit it and the
+  driver's existing fire-error branch supplies halt + one mail + resumable posture unchanged.
+  Start's instance lookup now JOINs cluster for platform (FRESH read every fire);
+  `restore`+`k8s_patroni` → `RecordGuardrailDenial("patroni-restore")` + `ErrPatroniRestore`
+  before any row (no run, no lock). chain.Create's door 403 kept. Tests RED-then-green
+  (written first; pre-fix the chains reached success with restore fired on Patroni):
+  TestPatroniRestoreRefusedAtStart (runs), TestRePlatformHaltsResumedRestore +
+  TestRePlatformMidChainBlocksRestore (chain — re-platform via in-place cluster_id UPDATE;
+  verify+safety_dump SUCCEED on Patroni proving the block stays narrow; restore step
+  pending/NULL; denial actor `chain:dba-resumer`/`chain:dba-test`). TestStartAcceptsInternalOps
+  retargeted billing-test→crm-test (billing-test is the Patroni fixture — refusal now correct).
+  LIVE DRILL (isolated :8096 + scratch `portal_patroni_drill`, auth off, MockEngine, per
+  [[live-drill-isolation]]; demo :8080 untouched, torn down): restore chain on vm → cancel →
+  halted → REAL `portal import` re-platformed the instance under a NEW k8s_patroni cluster
+  ("updated 1, quarantined 0" — the exact upsertInstance leg) → resume → verify+safety_dump
+  success, restore run=NULL, chain HALTED, `guardrail.denied | patroni-restore: drill-target`
+  on auth_event; door check 403 post-flip. GATE: CHECK-EXIT:0 (golangci 0, go test -race all
+  pkgs, vitest 116/116); **CI GREEN** (run 31423009840 on d909cbb, DB tests ran). Docs:
+  SPEC-042 mini-ADR 6 amended (the falsified "chain.Create is the
+  sole gate" sentence corrected), ADR-012 annotated, BACKLOG WU-048 DONE. NO migration/UI/seam
+  change.
+- **Status (s32, M4 GATE REVIEW — 1 CRITICAL, gate BLOCKED):** authored
+  `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`) mirroring the m3 shape — 5
+  Sonnet reviewers over the M4 diff `24008da..HEAD` (WU-041..047), dimensions
+  concurrency-locks / retention-safety / deploy-hardening / ci-supply-chain-config /
+  seed-loadtest-specs; findings verified INLINE by the architect (no verifier agents), several
+  reproduced empirically on the VM. Committed the script BEFORE running (e463e9a — the
+  RETROSPECTIVE "checkpoint before every workflow run" lesson; the first launch also died with
+  "Login expired" mid-run, 0 tokens — re-ran clean). Run `wf_d38775e1-d1f`: 519k subagent
+  tokens / 189 calls / ~51.7 min. **4 findings, 4 confirmed, 0 refuted, 1 re-graded down, 1
+  CRITICAL.** (1) **CRITICAL** — the naive-Patroni-restore block (`ErrPatroniRestore`) is
+  enforced ONLY at `chain.Create` (chain.go:218); `Resume`/`drive`/`next`/`loadChain` never
+  re-read platform and `runs.Start` has no Patroni check (grep-confirmed sole site). An
+  instance re-platformed `vm→k8s_patroni` by an ordinary re-import between create and resume
+  (`inventory.upsertInstance` UPDATEs cluster_id in place; `resolveCluster` only quarantines a
+  same-name/diff-platform conflict) has its restore step fired by Resume with no block →
+  `pg_restore` behind Patroni's back. Asymmetry: `runs.Start` DOES re-check self-target
+  (service.go:183) + prod-ritual (:193) at every fire — Patroni is the one Create-time
+  guardrail not re-validated. Safety dump still runs (data protected); hazard is Patroni
+  divergence. → **WU-048** (BLOCKS exit). (2)+(3) **HIGH** (one root cause) —
+  `infra/portal.env.template` has trailing inline comments on value lines; systemd
+  `EnvironmentFile=` does NOT strip them (VM-reproduced, systemd 255) → typed config fields
+  (bool/duration, config.go:47-49,64,67) fail `config.Load` → the unit crash-loops, never
+  boots; the SAME comments break `deploy.md`'s `env $(…|grep|xargs)` migrate command (execs
+  `#`, VM-reproduced). WU-046's live drill missed both — it used hand-written clean values,
+  not a verbatim template copy. → **WU-049**. (4) **LOW** (re-graded from MED) —
+  `PORTAL_DOTENV=/missing` logs "loaded dotenv file" though nothing was read (main.go:59;
+  `LocateDotenv` returns it verbatim, `Load` silently skips a missing file); narrow (manual
+  runs only — the unit sets `PORTAL_DOTENV=` empty), no behavior corruption. → **WU-049**.
+  **CLEAN dimensions:** retention-safety + seed-loadtest-specs (0 findings). WHAT HELD: the
+  WU-042 instance lock under every interleaving (+ the WU-043 harness genuinely proves it), no
+  `safety` artifact reapable, the fail-safe non-positive-age guard, the observational audit
+  pass (append-only intact), session GC never touching a live session, the break-glass alarm
+  async/off-hot-path with NO password/token leak + `authn` not importing `notify`,
+  `config.Validate` fail-closed without blocking migrate/import/seed, the `.git`-bounded .env
+  walk, no secret in any infra/CI/deploy file, the seed generator's determinism +
+  import-clean rows. GATE: docs-only session (review doc + BACKLOG + STATE + JOURNAL); no
+  Go/FE change, tree unchanged since e463e9a except docs → CHECK not re-run (m3-gate
+  precedent). Commit pending.
+- **Status (s31, WU-047 DONE — experiment retrospective):** the TRUE LAST WU and the 2nd M4
+  exit deliverable (docs-only). Wrote `docs/agent/RETROSPECTIVE.md` against STRATEGY §8:
+  mined the JOURNAL (31 sessions) + gate reviews + memory files for cited evidence and scored
+  each metric — WU throughput (~47 done entries; rework = 2 literal reopens, WU-001R/011R;
+  escaped defects handled as fix WUs not reopens), **cold-start 3m42s** (s02, user-timed;
+  ≤5min target met), **escaped defects per milestone 17→11→8** (M1→M2→M3, declining; 0
+  guardrail invariants ever escaped), golden-flow = extended-per-milestone canary that never
+  went red in-session (the broader suite caught bugs mid-dev: WU-016 resurrection, WU-023
+  migrate-walk drift). Named the session-loss failure modes + mitigations: ssh-reset (7×; the
+  proof = s21 left NO journal line, killed pre-checkpoint, recovered by s22 → 30 journalled
+  sessions across s01–s31) + tmux/recover-don't-redo; twin-session (14×) + ps/tty checks;
+  compaction (only 2× — checkpoint discipline held). Delegation: 6 UI Sonnet delegations ALL
+  first-pass-green (~100–126k tok / ~5–10min each), architect kept security/concurrency, gates
+  are workflow-scale. 5 concrete "next experiment" changes (CI parity from M0; a twin-session
+  lockfile; delegate UI from WU-001; iceboxed debt gets a target milestone; checkpoint before
+  every workflow run). STRATEGY §8 links the retrospective. GATE: CHECK-EXIT:0 (docs-only —
+  golangci 0, go test -race all pkgs, vitest 116/116). No code change.
+- **Status (s31, WU-046 DONE — packaging for a pilot deployment):** turned the `build:release`
+  binary (ADR-010) into a pilot-deployable, reboot-surviving service (the ROADMAP M4 exit
+  deliverable). Docs/infra/security-hardening, no module → no SPEC. Architect-implemented (auth
+  + config are security-sensitive). **DELIVERABLES:** (1) `infra/dbportal.service` — a REAL
+  (non-transient) systemd unit generalizing the `systemd-run` demo unit: `EnvironmentFile=`
+  (config from a file, never inline), `Restart=on-failure`, **`WantedBy=multi-user.target`**
+  (the reboot-survival guarantee — `enable` links it in), sandbox hardening (NoNewPrivileges/
+  ProtectSystem=strict/PrivateTmp/…), and `Environment=PORTAL_DOTENV=` to DISABLE the WU-045
+  `.env` search on the host (no stray adoption). (2) `infra/portal.env.template` — deploy
+  config, SHAPE ONLY (no secrets), `[REQUIRED]` markers, incl. the WU-041..044 knobs + the
+  object-store lifecycle-expiry note (carried from WU-044: real store reaps bytes, portal reaps
+  the registry, `safety` in an exempt keyspace). (3) `docs/deploy.md` — the fresh-host runbook
+  (build → provision user/dirs → install binary+env+unit → migrate → `enable --now` → verify),
+  incl. break-glass, TLS/CookieSecure, object-store retention, upgrade/rollback. **HARDENING
+  (code):** (a) **break-glass MAIL alarm** (SPEC-020 icebox → DELIVERED): `notify.Mailer.
+  BreakGlassUsed` (D7 content — who/where/when, NEVER the password/token) + a one-method
+  `authn.Alarmer` seam (authn stays a leaf pkg, no notify import) + `Service.Alarm` field wired
+  in main to the Mailer when `PORTAL_NOTIFY_TO` is set; fired **async best-effort off the login
+  path** (a slow/failed SMTP must never block emergency access — the audit row + error log are
+  the durable record, mail only accelerates). (b) **`config.Validate()`** — fail closed on a
+  misconfigured SERVER boot (ldap mode requires `PORTAL_LDAP_URL` + `PORTAL_LDAP_BIND_TEMPLATE`,
+  else a door nobody can open) with a clear message, BEFORE the pool/port; called after the
+  subcommand dispatch so `migrate`/`import`/`seed` skip it. (c) **version provenance** — new
+  `var Commit`/`var BuildDate` stamped by `build-release.sh` via `-ldflags -X`; `portal version`
+  prints `db-portal 0.0.1 (commit <sha>, built <ts>)`; build-release also emits a `.sha256`
+  checksum. TESTS (-race): TestBreakGlassFiresMailAlarm (fake Alarmer: break-glass fires w/ the
+  observed remote, normal login does NOT), TestValidate (ldap missing-vars errors naming each;
+  fully-configured/fake/off OK). **VERIFY DRILLS** (standalone binary + dev-PG scratch DB
+  `portal_pilot_drill` + shared mailpit; demo :8080 + dev DB UNTOUCHED, torn down): config-
+  validate fail-closed live ("PORTAL_AUTH_MODE=ldap requires PORTAL_LDAP_URL,
+  PORTAL_LDAP_BIND_TEMPLATE"); auth-on GET /api/instances→401; **break-glass login → mailpit
+  "[db-portal] SECURITY: break-glass account used"** (body mentions break-glass + remote,
+  password NOT leaked); normal dba1 login → NO alarm; `portal version` shows commit/date;
+  `PORTAL_DOTENV=` → "no dotenv file found". SYSTEMD (ungated only — `systemctl start/stop/
+  restart` are ask-gated): `systemd-analyze verify infra/dbportal.service` clean (only the
+  deploy-time `/opt/dbportal/portal` path warns, not a syntax error); drill unit `enable` →
+  **is-enabled=enabled** (multi-user.target symlink present), `is-active=inactive` (deliberately
+  NOT started — no :8080 conflict), disable+rm clean, **demo still active**. **LIVE SYSTEMD
+  DRILL (user-authorized, done s31): the real `infra/dbportal.service` + dbportal user +
+  /opt/dbportal + /etc/dbportal, isolated on :18081 + scratch DB — `systemctl start` → active
+  (User=dbportal, MainPID bound :18081), healthz 200, auth-on 401, break-glass→mailpit alarm
+  UNDER systemd; `restart` → active w/ a NEW MainPID (Restart works); `stop` → inactive; full
+  teardown clean; demo :8080 UNTOUCHED. The earlier "standalone only" caveat is RETIRED — the
+  service ran under systemd end-to-end.** GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs incl.
+  e2e golden flow + new authn/config tests, vitest 116/116); **CI GREEN** (run 29788985814,
+  ~2.5m). NO migration, NO UI change; MockEngine + service seam UNCHANGED. Commit 1659571
+  (12 files) + this bookkeeping.
+- **Status (s31, WU-045 DONE — docs-recon + cold-start + CI hardening):** the ROADMAP M4
+  "docs-vs-reality reconciliation" exit item + the accumulated CI/supply-chain debt, in one M
+  WU (docs/CI, no module → no SPEC; report = `docs/agent/reviews/wu-045-reconciliation.md`).
+  **RECONCILE (7 drifts resolved):** (R1) `frontend/src/index.css` header claimed "hex values
+  pending the brief extract on this machine" — the brief has been on the VM since 2026-07-07;
+  rewrote the comment + aligned `--border` #e2e8f0→**#e5e7eb** (the brief's one exact hex; env/
+  status palettes are named semantically there, kept as a documented WCAG-AA set). (R2) demo-
+  m1.md header "live-verified 2026-07-08" refreshed (the golden-flow twin is the standing
+  proof; last live re-walk s13). (R3) **`config.LocateDotenv` foreign-.env footgun (M1-gate
+  item 16)**: the upward walk hit the filesystem root → could adopt a stray parent `.env`, and
+  nothing logged which file loaded. FIX = bound the walk at the **repo root** (nearest ancestor
+  with `.git`; go.mod is NOT the boundary — it's in backend/, one level below where `.env`
+  lives) + a **`PORTAL_DOTENV`** explicit-path/disable override; `main` logs the resolved path
+  ("loaded dotenv file" / "no dotenv file found"). 4 new tests (override, finds-repo-root-from-
+  subdir, **stops-at-repo-root** = the footgun, outside-repo-checks-CWD-only w/ self-skip
+  guard). (R4) `.env.example` gained the WU-041..044 knobs (LOCK_TTL, PROTECTED_INSTANCES,
+  MAINTENANCE_INTERVAL, ARTIFACT_RETENTION, AUDIT_RETENTION). (R5) ARCHITECTURE §7 lock +
+  Patroni-restore items marked **delivered** (ADR-012). (R6) SPEC-043 mini-ADR 1 + load_test.go
+  "skips in CI" **superseded** (CI now has Postgres; the harness's parallelism assertion is
+  `>=2`, runner-robust). (R7) ROADMAP M3 marked **Exited** (s22/WU-036; twin demo-m3.md).
+  MATCHED (no drift): migrations 0001–0012, VM golangci **2.12.2** == CLAUDE.md == CI pin, Go
+  1.26.4, ADR-011/012/013, all config knobs+defaults, guardrail invariants. FILED→WU-046: the
+  prod `.env` deploy template + object-store lifecycle rule. **CI (`.github/workflows/
+  check.yml`):** added a **Postgres 16 service** (health-gated) + `PORTAL_DB_*` env so DB tests
+  + the golden flow + the load/stampede harness **RUN** in CI instead of skipping (ADR-011 gap);
+  **pinned golangci-lint to v2.12.2** (installer script AND binary, not `curl|sh` from HEAD —
+  M1-gate item 14); bumped actions to node24 majors (**checkout/setup-node/setup-go @v7**) +
+  `setup-go cache-dependency-path: backend/go.sum`. **COLD-START DRILL** (throwaway
+  portal/portal PG on :55432 + fresh `git clone` of the committed tree; dev PG :5432 + demo
+  :8080 UNTOUCHED, both torn down): fresh clone (no `.env`) → `npm install` → `npm ci` → `go
+  build ./...` → `migrate up` (→ **v12**) → `npm run check` (golden flow 1.9s + config/runs/
+  schedule/maintenance DB tests all RAN not-skipped — process-env DB config = **CI parity
+  proof**; vitest 116/116) → `build:release` (19M) → run → **healthz 200**, boot log shows the
+  R3 line "no dotenv file found" — every step exit 0. GATE: CHECK-EXIT:0 in place (golangci 0,
+  go test -race ALL pkgs incl. e2e golden flow + config new tests + load/stampede, vitest
+  116/116); **CI GREEN** (run 29785515001, ~4m, DB tests ran). NO migration/API/UI/seam change;
+  MockEngine + service code UNCHANGED. Commit 0f65751 (12 files) + this bookkeeping.
+- **Status (s30, WU-044 DONE — maintenance & retention jobs):** the periodic-sweep subsystem a
+  long-running deployment needs (SPEC-044 = docs/specs/maintenance.md, JIT; ADR-013). A new
+  `internal/maintenance.Service` on the scheduler's tick lifecycle — `go maint.Run(ctx)` in
+  main, sweeps ONCE at boot then every `PORTAL_MAINTENANCE_INTERVAL` (default 1h).
+  Architect-implemented (data deletion + audit integrity + retention policy = sensitive).
+  Three best-effort passes: **(1) session GC** `DELETE FROM session WHERE expires_at < now()`
+  (live session structurally excluded — complements SPEC-020's lazy per-token expiry); **(2)
+  artifact retention enforcement** deletes `standard` registry artifacts past
+  `PORTAL_ARTIFACT_RETENTION` (default 90d = 2160h) AND writes an `artifact.reaped` audit_event
+  (actor `maintenance`, linked to the origin run) in ONE modifying-CTE statement — `safety` is
+  structurally unselectable (WHERE `retention_class='standard'`), a non-positive age DISABLES
+  the pass (zero would reap everything — fail-safe); **(3) audit retention** is OBSERVATIONAL
+  — audit_event/auth_event are append-only BY TRIGGER (0003–0005: DELETE can't succeed), so
+  the policy (ADR-013) is retain-in-DB, cold-storage archival post-MVP; the pass reports the
+  oldest-event age and logs when it exceeds `PORTAL_AUDIT_RETENTION` (default 365d = 8760h),
+  mutating NOTHING. **Object bytes:** per ADR-004 the portal never issues `mc rm` — byte TTL
+  is the object store's lifecycle-expiry (engine-side, safety-exempt, → WU-046 runbook); a
+  reaped non-NULL location is logged WARN, never silently orphaned; under the pilot's
+  MockEngine `location` is NULL so there's nothing to expire. **(4) dump.yml finding-8:**
+  post-`pg_dump` tasks wrapped in a `block:`/`always: file state=absent` so a failed upload
+  never orphans real dump bytes (`--syntax-check` EXIT:0 in the runner image). NO migration
+  (existing tables; audit_event needs no CHECK change — the `run.cancel_requested` precedent).
+  3 new config knobs (safe defaults). TESTS (-race): session expired-reaped/live-kept,
+  artifact standard-reaped/safety-preserved/age-boundary/disabled/orphan-object-count, audit
+  no-mutation + age report + DELETE-still-raises, Run boot-sweep + disabled-returns. LIVE DRILL
+  (isolated portal :8097 + scratch DB portal_maint_drill, auth off, tight interval/retention;
+  demo :8080 + dev `portal` DB untouched): seeded 3 sessions/3 artifacts → boot sweep → 1
+  session (live kept), 2 artifacts (old-standard reaped w/ `artifact.reaped` audit
+  actor=maintenance env=test, young-standard + 100d safety kept), `DELETE FROM audit_event`
+  still ERRORs "append-only". Drill torn down, scratch DB dropped. GATE: CHECK-EXIT:0 (golangci
+  0, fmt clean, go test -race ALL pkgs incl. e2e golden flow + new maintenance pkg, vitest
+  116/116). Diff = SPEC-044 + maintenance.go + maintenance_test.go + config (3 knobs) + main
+  (wiring) + dump.yml + ADR-013. No API/UI/seam change; MockEngine + service code UNCHANGED.
+- **Status (s29, WU-043 DONE — load test):** WU-042's instance lock + WU-016's
+  single-finalizer are now PROVEN under contention at the ROADMAP M4 scale (25–50 concurrent
+  dumps). Deliverable = a skip-gated Go harness (SPEC-043 = docs/specs/load-test.md, JIT)
+  driving the REAL `runs.Service` over MockEngine on a scratch DB seeded with WU-041's
+  `inventory.GenerateEstate` — so it joins `go test -race ./...` (runs on the VM, skips in CI
+  like the itest), NO new binary/lifecycle (mini-ADR 1). Architect-implemented (backend
+  test-only, concurrency-sensitive). `runs/load_test.go`: **B1** 50 dumps across 50 DISTINCT
+  instances → all 50 succeed, each exactly one `run.submitted` + one `run.finished` (WU-016
+  exactly-once under load), zero orphans/zero leaked locks, **peak concurrency 50/50** (proven
+  from committed started/finished timestamps via a sweep-line, NOT a racy live sample —
+  mini-ADR 3); **B2** 40 concurrent at ONE instance → 1 win + 39 `ErrInstanceLocked`, exactly
+  1 run row, lock frees on finalize, next Start succeeds (the WU-042 lock test's shape at
+  load); **B3** mixed 20×3 → per-instance 1 win + K-1 conflict, global exactly-once +
+  zero-orphan. `schedule/stampede_test.go` **B4**: 25 due schedules, ONE sequential `fireDue`
+  → all 25 fire, zero orphans (the boot-stampede icebox item — VALIDATED, no fix needed).
+  `PORTAL_LOADTEST_INSTANCES` env grows the estate for a pilot-scale drill with the SAME
+  committed code. LIVE DRILL (isolated scratch DBs via MigratedDB, auto-dropped; dev `portal`
+  DB + demo :8080 untouched): `PORTAL_LOADTEST_INSTANCES=500 go test -race` → seeded 500
+  instances (0 quarantined), 50 concurrent dumps peak 50/50, ≈386–406 runs/s, exactly-once,
+  zero orphans. **Findings filed with verdicts:** F1 default pgxpool `MaxConns=max(4,NumCPU)`
+  is ADEQUATE (conns held only per-tx/per-poll, never a goroutine's lifetime → 50 dumps
+  overlapped fully without exhaustion or deadlock; explicit `PORTAL_DB_MAX_CONNS` floor → WU-046
+  nice-to-have); F2 scheduler stampede self-rate-limits (sequential `fireDue`) → no spreading
+  needed for the pilot. GATE: CHECK-EXIT:0 (golangci 0, fmt clean, go test -race ALL pkgs incl.
+  e2e golden flow + the new load/stampede tests, vitest 116/116 — one intermittent frontend
+  `EventSource`/jsdom flake in RunDetail.test.tsx seen once, green on 3 re-runs, NOT mine).
+  Diff = SPEC-043 + load_test.go + stampede_test.go (test-only). NO migration/API/UI/seam
+  change; MockEngine + service code UNCHANGED (the WU is the harness, not a fix).
+- **Status (s28, WU-042 DONE — concurrency locks):** "at most one live op per instance" is
+  now STRUCTURAL, enforced at the single choke point `runs.Service.Start` so button +
+  scheduler + chain-step all inherit it (ARCHITECTURE §concurrency "hierarchical TTL locks
+  (M4)"; SPEC-042 = docs/specs/concurrency-locks.md; ADR-012). Migration 0012 adds
+  `instance_lock` (PK instance_id) — a lock ROW, not a pg advisory lock (survives restarts,
+  auditable, carries expires_at). ACQUIRE rides Start's existing run-insert tx: a conflict
+  rolls the WHOLE tx back → no run, no audit, a clean 409 (same "nothing created" posture as
+  the prod ritual). RELEASE rides finalize's own tx (after the RowsAffected==0 winner guard)
+  → atomic with the terminal run state, so EVERY terminal path frees the lock and a crashed
+  holder is reclaimed at boot by SweepOrphans→finalize (crash-heal needs no TTL). The TTL is
+  only a backstop and the steal predicate (`expires_at < now() AND NOT EXISTS live holder`)
+  NEVER takes a still-live holder's lock — so a misconfigured-short TTL can't cause two
+  concurrent ops (the load-bearing safety property). `PORTAL_LOCK_TTL` default 30m. Folded
+  two research gotchas at the assemblers: **#2 self-target ban** — declared
+  `PORTAL_PROTECTED_INSTANCES` (seeded with PORTAL_DB_NAME so the portal DB is protected out
+  of the box; inventory has NO connection tuple → auto-detect is impossible, post-MVP) →
+  ErrSelfTarget 403 at Start + chain.Create; **#1 naive-Patroni-restore** — chain.Create
+  refuses a restore step onto a k8s_patroni target → ErrPatroniRestore 403 (dumps stay
+  allowed; full pause/detach→restore→reinit sequencing post-MVP, ADR-012). Both refusals
+  audited `guardrail.denied` on auth_event (0012 extends the 0006 CHECK). Scheduler KEEPS its
+  run-table overlap probe as a cheap early-out AND maps ErrInstanceLocked → skipped_overlap,
+  closing the probe's TOCTOU window. Guardrails/ritual/audit/golden-flow UNCHANGED — the lock
+  is a gate in front. TESTS (-race): N-goroutine contention (1 win + N-1 conflict, only 1 run
+  row), TTL reap of a dead holder, never-steal-from-live-holder, release-on-finalize,
+  self-target + Patroni refusals with denial rows, scheduler lock-skip, 409/403 handler maps,
+  config protected-set; 0012 up/down/up pinned; migrate down-walk +1 step. LIVE HTTP DRILL
+  (isolated portal :8098 + scratch DB portal_lock_drill, auth off, crm-test declared
+  protected; demo :8080 + dev DB untouched): two concurrent dumps on billing-test → 1×201
+  (run id 1) + 1×409 "already running", only ONE run row (the 409'd insert consumed id 2 on
+  rollback — cosmetic gap); run 1 success → lock freed → next dump 201; dump on protected
+  crm-test → 403 self-target; restore onto billing-test (k8s_patroni) → 403 patroni, restore
+  onto hr-test (vm) → 201 running (block is narrow); auth_event held both guardrail.denied
+  rows. Drill torn down, scratch DB dropped. GATE: CHECK-EXIT:0 (golangci 0, fmt clean, go
+  test -race all pkgs incl. e2e golden flow, vitest 116/116). Diff = 0012 + 6 src + 6 test +
+  SPEC + ADR-012 (826 insertions). No UI change; MockEngine + seam UNCHANGED (ADR-002).
+- **Status (s27, WU-041 DONE — staging seed):** the first M4 WU, a deterministic
+  realistic-estate generator (SPEC-041 = docs/specs/staging-seed.md, JIT). Architect-
+  implemented directly (S, no UI, backend-only → delegation overhead > diff, per the
+  WU-023/030 carve-out). DESIGN: a PURE `inventory.GenerateEstate(n, seed) string` emits a
+  valid SPEC-010 CSV that the new `portal seed [--instances N] [--seed S]` subcommand feeds
+  through the EXISTING `inventory.Import` — idempotency (natural key), cluster resolution,
+  validation, and the report all inherited; the seed can't drift from the import contract
+  (a reject = generator bug, asserted 0). NO migration/API/UI; the 8-row test fixtures
+  untouched. Env mix computed up front + shuffled so ratios hold EXACTLY (prod
+  max(1,18%)/test 32%/dev remainder-dominant); clusters=max(5,n/8), each ONE platform
+  (two-platform cluster self-quarantines); names `<cluster>-<env>-<NN>`; prod always
+  windowed (WU-023 parser coverage). RNG = math/rand/v2 PCG(seed,seed), fixed call order →
+  byte-identical output. 4 tests (determinism, parses-clean, distribution, DB idempotency).
+  LIVE CLI DRILL (isolated scratch DB portal_seed_drill, PORTAL_DB_NAME override; dev
+  `portal` DB + demo :8080 untouched): `portal seed --instances 500 --seed 41` → 500 new/0
+  quarantined; RE-run → 0 new/500 unchanged (idempotent); distribution = dev 250/test
+  160/prod 90 (non-prod dominates, prod non-empty), 62 clusters (31 patroni/31 vm), all 90
+  prod windowed. Scratch DB dropped. GATE: CHECK-EXIT:0 (golangci 0, go test -race all pkgs
+  incl. inventory FRESH + e2e, vitest 116/116). Diff = main.go (+40) + seed.go + seed_test.go
+  + SPEC. **The seed is now available for the WU-043 load test.**
+- **Status (s26, PHASE 4 GROOMED — M4 decomposed into 7 WUs):** with all M3-gate
+  fixes landed, groomed the M4 "Hardening" phase against the ROADMAP M4 exit criteria +
+  the icebox debt. Filed **WU-041** (staging seed, S) → **WU-042** (concurrency locks:
+  instance TTL lock across all launch paths + portal self-target ban + naive-replica
+  block, M — generalizes the scheduler's instance-only overlap probe) → **WU-043** (load
+  test, 25–50 concurrent mock dumps, M — validates 042 scales) → **WU-044** (maintenance
+  & retention: audit 1y + artifact enforcement preserving 'safety' + session GC + dump.yml
+  finding-8 orphan fix, M) → **WU-045** (docs-vs-reality reconciliation + cold-start + CI
+  hardening — folds the CI/supply-chain + .env-walk + token-reconcile + demo-m1-header
+  icebox debt, M) → **WU-046** (packaging for pilot: systemd unit + .env template + deploy
+  runbook + break-glass mail alarm, M) → **WU-047** (experiment retrospective, STRATEGY §8,
+  S — strictly last). Promoted icebox items annotated `→ WU-0xx` in place. M4 exit gate =
+  a milestone review (author `m4-gate-review` skill mirroring the m3 pattern) after 047.
+  Docs-only session; no Go/FE change (BACKLOG/STATE/JOURNAL only).
+- **Status (s26, WU-040 DONE — LOW bundle, items 5/6/7; ALL M3-gate fixes landed):**
+  three real-but-cheap defects in ONE S WU (M1 precedent). Go-test-shaped, no live stack.
+  (5) `parseResultLine` (semaphore.go) rejected an empty `Name` but returned the Artifact
+  with `r.SHA256`/`r.SizeBytes` UNCHECKED → a name-only line registered a dead
+  empty-checksum, un-restorable row; the guard is now
+  `Name=="" || SHA256=="" || SizeBytes<=0 → nil` (run still succeeds, nil = no registry
+  row). LOW because verify.yml:37 already fail-closes on an empty checksum (dead row, not
+  a dangerous restore). (6) 0009's backfill omitted `retention_class` → a `goose
+  down`→`up` walk silently reclassified every `'safety'` row `'standard'`; FIXED IN PLACE
+  in 0009 (safe — goose won't re-run an applied migration on prod; only a dev/test
+  down→up re-runs it) with in-SQL `CASE WHEN r.operation='safety_dump' THEN 'safety' ELSE
+  'standard' END`, mirroring finalize's catalog stamp (service.go:399-402) exactly. (7)
+  `job_id text` (0003) had no uniqueness → NEW migration **0011_job_id_unique.sql** =
+  `CREATE UNIQUE INDEX run_job_id_unique ON run (job_id) WHERE job_id IS NOT NULL` (0003
+  can't be retro-edited; PG NULLs distinct → queued runs unaffected). TESTS: 3 cases →
+  TestSemaphoreSuccessNoArtifact; TestArtifactBackfillWalk now adds a safety_dump row +
+  asserts 'safety' preserved across the walk (down-count 2→3, 0011+0010 above 0009); new
+  TestJobIDUniqueConstraint (dup non-null rejected w/ "run_job_id_unique", multiple NULLs
+  OK); TestMigrateUpDown pins 0011 up/down (new `indexExists` helper). Gate GREEN:
+  CHECK-EXIT:0 (golangci 0, go test -race all pkgs FRESH incl. db/engine/runs, golden
+  flow not-skipped 2.04s, vitest 116/116). Diff = 4 files + 1 migration, 100 insertions.
+  No UI, no seam/API change; MockEngine untouched (ADR-002).
+- **Status (s26, WU-039 DONE — restore.yml re-fetch footgun):** the MEDIUM
+  playbook-honesty fix (M3-gate item 4). `restore.yml`'s fetch used `creates:
+  {{ staging_path }}` on a DETERMINISTIC path on the persistent shared `/artifacts`
+  volume — an interrupted fetch (timeout / runner restart / killed container) leaves a
+  PARTIAL file there; the next attempt saw it exists → SKIPPED the fetch → hashed the
+  partial → checksum mismatch → the operator told their GOOD backup is "tampered",
+  worst on the product's own Resume-after-halt path. FIX (playbook-only): dropped the
+  `creates:` guard and added a `clear any stale staging file` task (`file: state:
+  absent`) BEFORE the fetch, so the fetch always runs and a partial can never
+  masquerade as the fetched artifact. `dump.yml`/`verify.yml` confirmed footgun-free
+  (dump staging name = `now()`+`random`, unique per run, no `creates:`; verify streams
+  `mc cat | sha256sum`, no staging file). All 3 playbooks `--syntax-check` EXIT:0 in the
+  runner image. LIVE DRILL (isolated portal :8099 + portal_drill039, semaphore engine;
+  demo :8080 untouched): planted a 2000-byte partial at `/artifacts/restore-<name>` →
+  restore → **chain SUCCESS**, restore task `ok=9 changed=4 skipped=0` (clear→changed,
+  fetch→changed NOT skipped, checksum assert→ok), widget back 4 rows; corrupt object →
+  chain HALTED at verify (steps 2+3 run_id null, target untouched, ONE mail); fix +
+  resume → SUCCESS. GATE GREEN: CHECK-EXIT:0 (regression, no Go/FE change; vitest
+  116/116). No migration, no UI, no seam change. Drill torn down, scratch DB dropped.
+- **Status (s26, WU-038 DONE — schedule.Create launchable gate):** the MEDIUM
+  guardrail-honesty fix. `schedule.Create` (schedule.go) tested catalog EXISTENCE
+  only (`catalog.ByID`, which finds the non-launchable restore-chain steps too), so
+  `POST /api/schedules {operation:"restore"}` (or verify/safety_dump) returned 201
+  where SPEC-031 behavior 5 promises 400. The guardrail HELD (executor.fire never
+  sets Internal → runs.Start rejected the fire) but the schedule was permanently,
+  silently broken: every tick → fire()'s `default:` branch → `last_fire_status='error'`,
+  no run, no chain, no mail, next_fire_at advancing forever. FIX: one line — Create now
+  mirrors runs.Start's `!op.Launchable` gate (`op, ok := catalog.ByID; if !ok ||
+  !op.Launchable → runs.ErrUnknownOperation`); the schedules handler already maps that
+  to 400 "unknown operation", so a non-launchable op is refused at the door, same as
+  the button path. `TestCreateValidation` extended to cover the three existing-but-non-
+  launchable ids (previously only the absent "explode"); the entry's `count==0`
+  assertion already proves no failed create writes a row. Gate GREEN: CHECK-EXIT:0
+  (golangci 0, schedule pkg FRESH under -race 10.3s, golden flow TestGoldenFlow PASS
+  not-skipped, vitest 116/116). No migration, no UI, no seam change. Go-test-shaped,
+  no live stack touched (dev stack still up from s22).
+- **Status (s25, WU-037 DONE — transient-error resilience):** the two M3-gate
+  HIGHs are one mock-to-real root cause, fixed together — an assumption true under
+  MockEngine ("any engine error == job lost") that a real adapter behind the
+  unchanged seam quietly broke. (1) `runs.Service.watch` (service.go) now treats
+  ONLY `engine.ErrUnknownJob` as a fatal finalize-failed; every other Status error
+  (conn-refused / 5xx / timeout / decode) is transient → bounded retry with
+  exponential backoff (new field `MaxStatusErrors` default 30, cap 30s) then an
+  HONEST give-up ("engine status unavailable after N attempts", never the old lying
+  "engine lost the job"). The "engine lost the job" message now means EXACTLY a lost
+  job. (2) `chain.drive` (driver.go) no longer exits its goroutine on the first DB
+  read error and wedges the chain `state='running'` forever — all three reads (load
+  / `next()` / step-watch) retry via `loadChain`/`nextRetry`/`watchRun` up to
+  `MaxReadErrors` (default 30, cap 15s), then **halt + notify** (Resume works,
+  the DBA is mailed) instead of a silent exit. Chose bounded-retry-then-halt over a
+  periodic sweep (self-halts promptly, symmetric with the watcher, no ticker/lifecycle
+  surface added to main.go; the boot sweep still covers process death — main.go
+  UNCHANGED). 5 new -race tests drive the real goroutines with injected transient
+  errors (2 runs recover/give-up, 1 ErrUnknownJob, 2 chain self-heal/honest-halt).
+  Gate GREEN: CHECK-EXIT:0 (golangci 0, go test -race all pkgs, golden flow
+  TestGoldenFlow PASS not-skipped, vitest 116/116). No UI, no migration, no seam
+  change. Dev stack still up (mailpit/postgres 9d, minio/pgtarget/semaphore 3-4d).
+- **Status (s24, M3 GATE RECOVERED + CHECKPOINTED):** s23 (session `36caf224`,
+  today 2026-07-16) ran the multi-agent M3 gate — workflow `wf_49ca1969-37a`, 5
+  Sonnet reviewers, 605k tok / 205 calls / ~19.4 min, findings verified INLINE by
+  the architect (M1/M2 light shape, no verifier agents) — and produced
+  `docs/agent/reviews/m3-gate.md`: **8 findings, 8 confirmed, 0 refuted, 4 re-graded
+  down, NO criticals → GATE PASSES with fix WUs.** An ssh reset killed s23 before
+  it could checkpoint (STATE/JOURNAL unwritten; the doc + `.claude/workflows/
+  m3-gate-review.js` uncommitted) — SAME failure mode as s21→s22
+  ([[twin-session-hazard]]). s24 recovered it: no twin (`ps`: one `claude`, pts/1),
+  confirmed the workflow genuinely completed (5 subagent transcripts under session
+  36caf224) and spot-verified BOTH HIGHs against real code (service.go:267-272
+  finalizes on ANY `Status` err incl. transient — should be ErrUnknownJob only;
+  driver.go:31-33/50-54/108-112 wedges the chain `running` on any transient DB err,
+  sweep boot-only, Resume 409-forever, no mail) → both REAL. Committed the two
+  artifacts (**3a76918**); filed **WU-037** (2 HIGH — transient-error resilience,
+  one mock-to-real root cause) / **WU-038** (schedule launchable gate, MED) /
+  **WU-039** (restore.yml re-fetch footgun, MED) / **WU-040** (LOW bundle:
+  parse/backfill/job_id); finding 8 (staging orphan) → M4. What HELD: EVERY
+  guardrail invariant — no restore-without-safety-dump, no bare restore over
+  /api/runs or the scheduler, no forged-webhook outcome, no `location` crossing the
+  seam, no secret reachable, audit append-only, one-mail-per-halt. No Go/FE change
+  this session (docs-only recovery; gate CHECK not re-run — tree unchanged since
+  c13de14 except docs). Also s24: pre-approved ALL Bash in the gitignored
+  `.claude/settings.local.json` (bare `Bash` allow at the top; deny + ask
+  guardrails kept — sudo/rm-rf/force-push blocked, systemctl stop / docker compose
+  down / volume rm / .env writes still gated) to end the per-command prompting.
+- **Status (s22, WU-036 CLOSED — the product's loop is closed):** the SAME portal
+  drives a REAL `pg_restore` of a REAL dump onto a live Postgres target through
+  the `verify → safety_dump → restore` chain, behind the UNCHANGED engine.Adapter
+  seam. SPEC-036 = `docs/specs/restore-playbook.md`; human twin + M3 exit evidence
+  = **`docs/demo-m3.md`** (8 beats, 13.5 min budgeted ≤ the 15-min AC).
+  **SPEC-036's open question is RESOLVED: Semaphore DOES forward the task
+  `environment` as ansible `--extra-vars`** (mini-ADR 1 holds; the
+  `lookup('env',…)` fallback dropped; no code change) — pinned by running verify
+  first as the extra-vars smoke test, plus both mini-ADR 6 failure paths (no
+  environment → preflight fails with ok=0; wrong checksum → assert fails, zero
+  target contact). Bootstrap now yields **verify=4, restore=5** (dump 3, smoke 1).
+  Rehearsal (isolated portal :8099, release binary): dump pgtarget → `DROP TABLE
+  widget` → POST /api/restore → chain success → **widget back, 4 rows, original
+  timestamps**; the `'safety'` artifact is itself `pg_restore --list`-restorable
+  and its minio sha == its registry checksum. Tamper → chain HALTS at verify with
+  steps 2+3 `run_id: null` (never created), target untouched, exactly ONE chain
+  mail; fix + resume → success. Mock-vs-semaphore: same binary, same chain, only
+  `location` differs (NULL vs `s3://…`). All 5 secrets absent from DB/log/task
+  output. O-4 annotated RESOLVED in DECISIONS.md (dump half WU-034 + restore half
+  WU-036) — a SPEC-036 scope item slice (a) had missed. Gate CHECK-EXIT:0
+  (docs-only session, no Go/FE change). Drill torn down; demo :8080 untouched
+  (same PID 2506685, healthz 200).
+- **s22 also recovered s21's lost bookkeeping:** s21 committed slice (a) as
+  868425a and an **ssh reset killed it before it could checkpoint** (no
+  STATE/JOURNAL entry, commit unpushed). Tree was clean, no twin (`ps` + ancestry
+  per [[twin-session-hazard]]); slice (a) re-verified rather than trusted (gate
+  CHECK-EXIT:0 + `--syntax-check` EXIT:0 on all 3 playbooks), then pushed.
+  SLICE (a) = SPEC-036 (6 mini-ADRs); `playbooks/verify.yml` (step 1 — `mc cat |
+  sha256sum` vs expected checksum, ZERO target contact); `playbooks/restore.yml`
+  (step 3 — `mc cp` → RE-verify sha256 → `pg_restore --clean --if-exists
+  --no-owner --no-privileges --single-transaction`); `semaphore.go` `StartJob`
+  forwards the fail-closed allowlist `forwardVars = {artifact_name, checksum}` as
+  the task `environment` — `instance`/`artifact_id` never cross, params-free ops
+  post a byte-identical body (+2 tests); `semaphore-bootstrap.sh` creates the
+  verify + restore templates. NO migration, NO UI, NO chain/catalog/recipe change;
+  MockEngine + all tests untouched (ADR-002).
+- **Status (s20, WU-035 CLOSED):** the SAME portal now stores a REAL pg_dump in
+  object storage. Twin-recovery session (see checkpoint log): adopted ~82 min of
+  a parked twin's uncommitted, coherent WU-035 work after `ps`/`who`/per-pts
+  `sshd` checks + SPEC verification, SIGTERM-reaped the idle twin, gated + drilled
+  + committed. NO Go/FE change — the SPEC-034 result line already carries
+  `location`; only its value changed (path → `s3://…` URL), opaque to the portal.
+  compose gained `minio` (RELEASE.2025-09-07, :9000 API/:9001 console, `miniodata`
+  vol) + `createbuckets` one-shot (mc mb --ignore-existing; minio has no
+  healthcheck so the one-shot IS the readiness gate); the runner image bakes `mc`
+  (RELEASE.2025-08-13); bootstrap folds `MC_HOST_dbportal` (jq @uri credentialed
+  alias) + `MC_CONFIG_DIR=/tmp/.mc` + `DBPORTAL_BUCKET` into pgtarget-env (id 3,
+  engine-side, ADR-004); `playbooks/dump.yml` uploads `mc cp` AFTER the sha/size
+  stat, `mc stat --json` asserts stored size == local, THEN emits the result line
+  (`location='s3://'~bucket~'/'~name`), then best-effort staging `rm`
+  (failed_when:false) — the `artifacts` volume is STAGING ONLY now. O-1 annotated
+  RESOLVED in DECISIONS.md. Gate GREEN (CHECK-EXIT:0, golangci 0, vitest 116/116).
+- **Status (s19, WU-034 CLOSED):** the SAME portal now drives a REAL `pg_dump`
+  of a compose target through Semaphore. slice (a) = infra + playbook (compose
+  `pgtarget` postgres:16 seeded widget/ledger/ledger_totals via
+  `infra/fixtures/pgtarget-init.sql`, host :5433; custom runner image
+  `infra/semaphore.Dockerfile` = v2.17.39 + postgresql16-client + writable
+  `/artifacts` owned 1001:0, compose `build:`s it as `dbportal-semaphore:v2.17.39-pg16`;
+  `artifacts` named volume; `playbooks/dump.yml` = `pg_dump --format=custom
+  --no-owner --no-privileges`, creds via engine-side libpq env — NO secret in
+  the playbook, ADR-004; emits ONE `DBPORTAL_RESULT=<base64 json
+  {name,size_bytes,sha256,location}>` line; bootstrap `pgtarget-env` env (id 3)
+  + `dump` template (**id 3**); `dev-targets.csv` NOT `instances.csv` — 8-row
+  test coupling). slice (b) = Go: `engine.Artifact` gains `Location`;
+  `semaphore.go` `Status` parses the result line on terminal SUCCESS
+  (regex `DBPORTAL_RESULT=([A-Za-z0-9+/=]+)` → base64 → json; nil on
+  missing/bad/no-name, run still success); `finalize` writes `artifact.location`
+  (`NULLIF($,'')`, so mock stays NULL). Tests: engine stub-HTTP parse cases +
+  a fixed StatusMapping /output route + runs `TestArtifactLocationPersisted`
+  (real Location stored) — mock's `TestArtifactRegisteredOnSuccess` still NULL.
+  Live drill (isolated portal :8099 + portal_drill, semaphore engine,
+  `dump:3,smoke:1`): dump on pgtarget → success, registry row REAL
+  sha256/size/location (checksum == file's `sha256sum`), `pg_restore --list`
+  OK; bad-creds dump → failed + no artifact + notify mail; no secrets in
+  DB/log. Gate GREEN (CHECK-EXIT:0, golangci 0 issues, itest ran LIVE, vitest
+  116/116). Drill torn down; demo :8080 untouched.
+  (s18/WU-033's SemaphoreAdapter + webhook detail now lives in Standing context.)
+
+## B. "If revisiting" pointers for finished WUs — were sub-bullets of STATE "Next action" item 1
+
+   - s35 postscript: the M4-exit commit's CI came back RED — a pre-existing flake
+     (`TestInstanceLockReapsExpiredDeadHolder`: at the 1ms mock delay the run finalizes —
+     and release-rides-finalize deletes the lock row — before the test's SELECT on a slow
+     CI runner; docs-only commit, code identical to a green run; mechanism repro'd with a
+     50ms gap, then the repro deleted). Fixed via the serialize-test pattern (300ms delay),
+     commit 1906a6b, **CI GREEN** (run 31532284785). main is green end-to-end; the flake was
+     test-vantage only, the lock release semantics are correct — M4 EXIT unaffected.
+   - WU-048 (s33) is DONE — Patroni fire-time re-validation. If revisiting: the check is in
+     `runs.Service.Start` (service.go, after the self-target ban — `opRestore`/
+     `platformPatroni` consts, platform JOINed fresh in Start's instance lookup); chain.Create
+     keeps the door 403 (chain.go:218 area, comment updated). Tests:
+     runs/restore_gate_test.go (TestPatroniRestoreRefusedAtStart) + chain/chain_lock_test.go
+     (TestRePlatformHaltsResumedRestore, TestRePlatformMidChainBlocksRestore). SPEC-042
+     mini-ADR 6 amended; ADR-012 annotated. NO migration.
+   - M4 GATE ARTIFACTS (s32): record `docs/agent/reviews/m4-gate.md`; workflow
+     `.claude/workflows/m4-gate-review.js` (skill `m4-gate-review`, committed e463e9a before
+     the run). Run `wf_d38775e1-d1f` = 519k tok / 189 calls / ~51.7 min, 5 Sonnet reviewers
+     over `24008da..HEAD`, verified inline (2 findings VM-reproduced empirically). To re-run
+     after WU-048/049: same workflow, or `Skill m4-gate-review`.
+   - WU-047 (s31) is DONE — the retrospective is `docs/agent/RETROSPECTIVE.md` (STRATEGY §8
+     links it). All 7 M4 build WUs done; the gate fix WUs (048/049) are the remaining work.
+   - (DONE s31, user-authorized) The live `systemctl start/restart/stop` drill under the real
+     `infra/dbportal.service` ran clean (service active under systemd, break-glass→mailpit,
+     restart recovery, full teardown, demo untouched) — the WU-046 systemd path is fully
+     exercised now; nothing outstanding there.
+   - WU-046 (s31) is DONE — pilot packaging. If revisiting: `infra/dbportal.service` (systemd
+     unit), `infra/portal.env.template` (deploy env), `docs/deploy.md` (runbook); break-glass
+     mail = `notify.BreakGlassUsed` + `authn.Alarmer`/`Service.Alarm` (async off the login
+     path, wired in main); `config.Validate()` fail-closed (ldap needs URL+bind template);
+     version Commit/BuildDate stamped by build-release (`-ldflags`) + `.sha256`. Tests in
+     authn/service_test.go + config/config_test.go. NO migration/UI change.
+   - Cold-start recipe (reusable, from WU-045 s31): throwaway `portal/portal` Postgres on a
+     spare port + `git clone /root/db-portal <tmp>` (no `.env` → process-env config, CI/prod-
+     like) → `npm install` → `cd frontend && npm ci` → `go build ./...` → `migrate up` →
+     `npm run check` → `build:release` → run → `curl /healthz`. Drill scripts lived in the
+     scratchpad (`coldstart.sh`, `appdrill.sh`), torn down; re-author from these recipes.
+   - WU-045 (s31) is DONE — docs-recon + cold-start + CI hardening. If revisiting: report =
+     `docs/agent/reviews/wu-045-reconciliation.md`; `config.LocateDotenv` now bounds the walk
+     at `.git` + honors `PORTAL_DOTENV` (tests in config_test.go); `check.yml` has a Postgres
+     service + pinned golangci v2.12.2 + `@v7` actions. NO migration/API/UI change.
+   - WU-044 (s30) is DONE — maintenance & retention. If revisiting: `internal/maintenance`
+     Service (`maintenance.go`), `go maint.Run(ctx)` in main; sweeps = session GC + `standard`
+     artifact reap (audited `artifact.reaped`, `safety` preserved) + audit-age OBSERVATION
+     (append-only, never mutated). Config: `PORTAL_MAINTENANCE_INTERVAL` (1h),
+     `PORTAL_ARTIFACT_RETENTION` (2160h/90d, non-positive disables), `PORTAL_AUDIT_RETENTION`
+     (8760h/365d, observational). Policy = ADR-013; object-store byte TTL deferred to WU-046
+     (store lifecycle, ADR-004). dump.yml has the block/always orphan fix. NO migration. Tests
+     in maintenance_test.go.
+   - WU-043 (s29) is DONE — load test. If revisiting: the harness is `runs/load_test.go`
+     (B1 distinct-instance parallelism + exactly-once, B2 same-instance contention at scale,
+     B3 mixed) + `schedule/stampede_test.go` (B4 boot-stampede), skip-gated via MigratedDB,
+     seeded by `inventory.GenerateEstate`. `PORTAL_LOADTEST_INSTANCES` env grows the estate for
+     a pilot-scale drill. SPEC-043 F1 (pool adequate → `PORTAL_DB_MAX_CONNS` a WU-046
+     nice-to-have) + F2 (stampede self-rate-limits, no fix) are filed with verdicts. No code
+     change — test-only.
+   - WU-042 (s28) is DONE — concurrency locks. If revisiting: the lock is `instance_lock`
+     (0012, PK instance_id); acquire = `runs.acquireInstanceLock` in Start's run-insert tx
+     (lock.go), release = `DELETE ... WHERE run_id` in finalize's tx; `PORTAL_LOCK_TTL` 30m,
+     `PORTAL_PROTECTED_INSTANCES` (self-target, seeded w/ DBName). Errors ErrInstanceLocked
+     (409) / ErrSelfTarget (403) / ErrPatroniRestore (403), all in runs pkg. Tests in
+     runs/lock_test.go, chain/chain_lock_test.go, schedule/lock_test.go. ADR-012 + SPEC-042.
+   - WU-041 (s27) is DONE — staging seed. If revisiting: `inventory.GenerateEstate(n, seed)`
+     (seed.go) is a pure SPEC-010 CSV generator; `portal seed [--instances N] [--seed S]`
+     feeds it through the existing `inventory.Import`. Defaults N=500/seed=41. No schema/UI.
+   - Phase 4 is GROOMED: all 7 WUs have ACs + context briefs in BACKLOG; the header note
+     carries the execution-order rationale. Promoted icebox debt is annotated `→ WU-0xx`.
+   - Milestone bookkeeping still open: mark M3 EXIT in ROADMAP.md (demo-m3.md is the exit
+     twin) when convenient; not blocking.
+   - Organizational note reached (BACKLOG + ROADMAP): the **security vetting
+     package** (ARCHITECTURE §8.2) becomes submittable at M3 exit — surface to the user.
+   - WU-040 (s26) is DONE — the LOW bundle. If revisiting: item 5 = the
+     `Name/SHA256/SizeBytes` guard in `parseResultLine` (semaphore.go); item 6 = the
+     in-place `CASE … safety_dump …` in 0009's backfill (edited the applied migration on
+     purpose — only a down→up re-runs it); item 7 = new migration **0011_job_id_unique.sql**
+     (partial unique index `run_job_id_unique`). Tests in semaphore_test.go + migrate_test.go.
+   - WU-039 (s26) is DONE — restore.yml re-fetch footgun. If revisiting: the fix is the
+     `clear any stale staging file` task + dropped `creates:` in restore.yml's fetch;
+     dump.yml/verify.yml were confirmed footgun-free (not changed). Live-drilled on
+     :8099/portal_drill039 (planted-partial → chain success; corrupt → halt; resume →
+     success). The M3-gate finding 8 (dump.yml staging `rm` after `mc cp` orphans bytes
+     on failure) is deferred to M4, NOT this WU.
+   - WU-038 (s26) is DONE — the schedule launchable gate. If revisiting: the fix is
+     `schedule.go` Create's opening gate (`!ok || !op.Launchable`); the schedules
+     handler already maps `runs.ErrUnknownOperation` → 400 (no handler change was
+     needed). Test lives in `TestCreateValidation` (schedule_test.go).
+   - WU-037 (s25) is DONE — the two HIGHs. If revisiting: the shared `backoff`
+     helper is duplicated in runs/service.go + chain/driver.go (packages stay
+     decoupled by design); `MaxStatusErrors`/`MaxReadErrors` are Service fields
+     tests dial low for fast give-up.
+
+## C. Housekeeping — was STATE "Next action" item 2
+
+2. Housekeeping (carried): the demo-m1.md header refresh + ROADMAP M3 exit mark are DONE
+   (WU-045 s31). Still open, not blocking: migrate the persistent dev `portal` DB from 0010
+   → 0012 only if a future live drill on THAT db needs 0011/0012 (`cd backend && go run
+   ./cmd/portal migrate up`); tests/drills use fresh scratch DBs that get 0012 on `up`.
+
+## D. Checkpoint log — was STATE "Checkpoint log (last 3, newest first)" (frozen at s30; JOURNAL is the log now)
+
+- 2026-07-17 — **WU-044 DONE (s30) — maintenance & retention jobs (SPEC-044, ADR-013)**: the
+  periodic-sweep subsystem, on the scheduler's tick lifecycle (`go maint.Run(ctx)`; boot sweep
+  then every `PORTAL_MAINTENANCE_INTERVAL`, default 1h). New `internal/maintenance.Service`,
+  three best-effort passes: session GC (`DELETE ... expires_at < now()`, live never matched),
+  `standard` artifact reap past `PORTAL_ARTIFACT_RETENTION` (default 90d) with an
+  `artifact.reaped` audit_event (actor maintenance, origin-run-linked) in ONE modifying-CTE —
+  `safety` structurally unselectable, non-positive age disables (fail-safe), and audit-age
+  OBSERVATION (append-only ledgers retained in-DB, cold-storage archival post-MVP; mutates
+  nothing). Object bytes = the store's lifecycle-expiry (engine-side, ADR-004; → WU-046);
+  reaped non-NULL location logged WARN. dump.yml finding-8 fixed (post-`pg_dump` tasks in a
+  `block:`/`always:`; syntax-check EXIT:0). NO migration; 3 config knobs. -race tests per
+  sweep + LIVE DRILL (isolated :8097/portal_maint_drill, torn down): 3 sessions→1 live-kept, 3
+  artifacts→2 (old-standard reaped+audited, young+safety kept), DELETE audit_event still
+  ERRORs append-only. GATE CHECK-EXIT:0 (golangci 0, -race all pkgs incl. e2e golden flow,
+  vitest 116/116). Active → **WU-045** (docs-recon + cold-start + CI).
+- 2026-07-17 — **WU-043 DONE (s29) — load test (concurrent mock dumps)**: WU-042's instance
+  lock + WU-016's single-finalizer PROVEN under contention at the ROADMAP M4 scale. A
+  skip-gated Go harness (SPEC-043) drives the REAL `runs.Service` over MockEngine on a
+  scratch DB seeded with WU-041's `GenerateEstate`, so it joins `go test -race ./...` (VM
+  runs it, CI skips like the itest) — no new binary/lifecycle. `runs/load_test.go`: B1 (50
+  distinct instances → all succeed, exactly-once audit, peak concurrency 50/50 from committed
+  timestamps), B2 (40 at one instance → 1 win + 39 `ErrInstanceLocked`, 1 run row, lock frees
+  on finalize), B3 (mixed 20×3 → per-instance 1 win + K-1 conflict, global exactly-once +
+  zero-orphan). `schedule/stampede_test.go` B4 (25 due schedules, one sequential `fireDue` →
+  all fire, zero orphans). LIVE DRILL `PORTAL_LOADTEST_INSTANCES=500 go test -race`: seeded
+  500 (0 quarantined), 50 concurrent peak 50/50, ≈386–406 runs/s, exactly-once, zero orphans.
+  Findings filed w/ verdicts: F1 default pgxpool `max(4,NumCPU)` adequate (`PORTAL_DB_MAX_CONNS`
+  → WU-046 nice-to-have); F2 stampede self-rate-limits (no spreading needed). GATE
+  CHECK-EXIT:0 (golangci 0, fmt clean, -race all pkgs incl. e2e golden flow, vitest 116/116).
+  Test-only diff (SPEC + 2 test files); no migration/API/UI/seam change. Active → **WU-044**
+  (maintenance & retention jobs).
+- 2026-07-17 — **WU-042 DONE (s28) — concurrency locks + self-target ban + Patroni-restore
+  block (SPEC-042, ADR-012)**: "one live op per instance" made structural at the single
+  choke point runs.Service.Start (button + scheduler + chain-step inherit it). Migration
+  0012 `instance_lock` (PK instance_id) — a lock ROW (survives restarts, auditable, TTL), not
+  a pg advisory lock. Acquire rides Start's run-insert tx (conflict → whole tx rolls back:
+  clean 409, no run); release rides finalize's own tx (atomic w/ terminal state → every path
+  frees it, boot sweep reclaims a crash — no TTL needed for crash-heal). TTL is a backstop
+  and the steal predicate NEVER takes a still-live holder (safe under any TTL);
+  PORTAL_LOCK_TTL 30m. Self-target ban = declared PORTAL_PROTECTED_INSTANCES seeded w/ DBName
+  (ErrSelfTarget 403); Patroni-block at chain.Create for a restore step on k8s_patroni
+  (ErrPatroniRestore 403, dumps allowed); both audited guardrail.denied on auth_event (0012
+  extends the CHECK). Scheduler keeps its probe + maps ErrInstanceLocked → skipped_overlap.
+  Guardrails/ritual/audit/golden-flow UNCHANGED. -race tests (contention 1+N-1, TTL reap,
+  never-steal-live, self-target/Patroni refusals, scheduler skip, 409/403 maps) + LIVE HTTP
+  drill (isolated :8098, torn down): 2 concurrent dumps → 1×201+1×409; self-target crm-test
+  → 403; restore onto Patroni → 403, onto VM → 201. GATE CHECK-EXIT:0 (golangci 0, -race all
+  pkgs incl. e2e, vitest 116/116). Commit 2bb4b52. Active → **WU-043** (load test).

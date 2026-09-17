@@ -9,13 +9,14 @@ prevent context loss between sessions. They are not optional.
 
 ## Session protocol — MANDATORY
 
-1. **Start:** the state card at the top of `docs/agent/STATE.md` comes first. A SessionStart
-   hook injects it on startup, resume and compaction; if it is not in your context, read the
-   `STATE-CARD` block yourself (STATE.md is large — read the card plus the sections you need,
-   not the whole file). It names the active work unit (WU) and the next action. Trust it over
-   any conversation summary, but never over the user: **a new user request beats the saved
-   task.** Then read the WU entry in `docs/agent/BACKLOG.md` and ONLY the files its context
-   brief lists.
+1. **Start:** the state card at the top of `docs/agent/STATE.md` comes first: it names the
+   active work unit (WU) and the next action. A SessionStart hook injects it on startup,
+   resume, /clear and compaction; if it is not in your context, read STATE.md yourself (it is
+   small: current state only). Trust the card over any conversation summary, but never over
+   the user: **a new user request beats the saved task.** Then read the WU entry in
+   `docs/agent/BACKLOG.md` and ONLY the files its context brief lists. Do NOT open
+   `docs/agent/archive/` or `docs/agent/STANDING-CONTEXT.md` at start-up — `grep` them later
+   for the one fact a WU needs.
 2. **Work:** one WU per session by default. Do not start a second WU without checkpointing.
    Do not refactor outside the WU's blast radius — file an idea in BACKLOG.md instead.
 3. **Checkpoint** (at any natural boundary, and ALWAYS before context gets heavy):
@@ -30,6 +31,9 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
 - **When:** rewrite the card (the whole `STATE-CARD` block, fresh UTC timestamp) after every
   significant milestone or decision, and ALWAYS before handing off — session end, delegating
   to a subagent, or stopping to ask the user. Do not wait for the full checkpoint ritual.
+- **Check:** `npm run check:state` (in `npm run check`, CI and the pre-commit hook) validates
+  STRUCTURE only — size, one card, required fields, task-record references. It cannot know
+  whether the card is current or true; timestamp/commit-count notes are heuristics, not verdicts.
 - **What:** goal · completion criteria · active task + owner · branch · decisions with their
   why · done · verified · blockers · next step · last updated. Budget 5000 bytes (the hook
   cuts the rest). Write `UNKNOWN` rather than guessing or leaving a field out.
@@ -96,11 +100,17 @@ Task runner = root `package.json` npm scripts (ADR-007). Run from repo root on t
 - `docs/specs/` — per-module specs, written just-in-time before their WU
 - `docs/agent/STRATEGY.md` — the AI-harness development strategy
 - `docs/agent/SESSION-PROTOCOL.md` — start/checkpoint/end rituals, recovery
-- `docs/agent/STATE.md` — CURRENT STATE; opens with the state card (overwritten each
-  checkpoint; read first)
+- `docs/agent/STATE.md` — CURRENT STATE only; opens with the state card (overwritten each
+  checkpoint; read first; ≤ 16 KB enforced)
+- `docs/agent/STANDING-CONTEXT.md` — stable per-subsystem facts + dev-stack heads-ups (live
+  reference; on demand, never at start-up)
+- `docs/agent/archive/` — history moved out of STATE.md, verbatim (on demand only; never
+  quote as current)
+- `docs/agent/HARNESS.md` — what the agent harness enforces vs. asks, live-test + rollback
 - `docs/agent/tasks/` — one record per PARALLEL task, one owner each (README = template)
 - `docs/agent/JOURNAL.md` — append-only session log
 - `docs/agent/BACKLOG.md` — context-window-sized work units
-- `.claude/hooks/session-state.sh` — SessionStart hook that injects the state card
-  (wired in `.claude/settings.json`; startup | resume | compact)
+- `.claude/hooks/` — `session-state.sh` (SessionStart hook: injects the state card on
+  startup | resume | clear | compact), `state-validate.sh` (structure check), `test-harness.sh`
+  (self-test in throwaway fixtures)
 - `backend/`, `frontend/`, `playbooks/`, `infra/` — created by WU-001

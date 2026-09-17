@@ -8,7 +8,7 @@ disposable.
 
 > Scope: the MockEngine pilot (ADR-002 forever-default). Wiring a real Semaphore
 > engine (+ its target/object-store creds, ADR-004) is out of scope here — see
-> `.env.example` and the SPEC-033/034/035 heads-up in `docs/agent/STATE.md`.
+> `.env.example` and the SPEC-033/034/035 heads-ups in `docs/agent/STANDING-CONTEXT.md` §2.
 
 ## 0. Prerequisites
 

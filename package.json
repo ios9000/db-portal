@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
-    "check": "npm run check:be && npm run check:fe",
+    "check": "npm run check:state && npm run check:be && npm run check:fe",
+    "check:state": "bash .claude/hooks/state-validate.sh && bash .claude/hooks/test-harness.sh",
     "check:be": "cd backend && golangci-lint run ./... && golangci-lint fmt --diff ./... && go test -race ./...",
     "check:fe": "cd frontend && npm run lint && npm run typecheck && npm run test:run",
     "fmt": "npm run fmt:be && npm run fmt:fe",

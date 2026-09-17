@@ -11,3 +11,15 @@ if echo "$staged" | grep -q '^frontend/src/'; then
   echo "pre-commit: frontend (prettier + lint)"
   (cd frontend && npx prettier --check src && npm run --silent lint)
 fi
+# Every checkpoint commits STATE.md, so this is the checkpoint gate for the state files.
+# STRUCTURE only (size, one card, required fields, task-record refs) — it cannot tell whether
+# the content is current. Deletions count too (a removed task record), hence no diff-filter.
+touched=$(git diff --cached --name-only)
+if echo "$touched" | grep -q -E '^(docs/agent/STATE\.md|docs/agent/tasks/|CLAUDE\.md|\.claude/hooks/)'; then
+  echo "pre-commit: state structure (well-formed, not 'is it current')"
+  bash .claude/hooks/state-validate.sh --quiet
+fi
+if echo "$touched" | grep -q '^\.claude/hooks/'; then
+  echo "pre-commit: state harness self-test"
+  bash .claude/hooks/test-harness.sh >/dev/null || { echo "harness self-test failed — run: bash .claude/hooks/test-harness.sh"; exit 1; }
+fi

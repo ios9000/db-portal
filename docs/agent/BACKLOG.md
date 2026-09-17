@@ -890,7 +890,7 @@ diagnosis); a genuinely corrupt object still halts at verify; `ansible-playbook
 --syntax-check` clean; a live restore drill (demo-m3.md recipe) still passes end-to-end.
 **Context brief:** docs/agent/reviews/m3-gate.md item 4; playbooks/restore.yml (fetch task
 + staging_path + the mismatch message); playbooks/dump.yml (staging); STATE note "the
-artifacts volume is STAGING ONLY now"; docs/demo-m3.md (drill recipe).
+artifacts volume is STAGING ONLY now" (now `docs/agent/STANDING-CONTEXT.md` §2); docs/demo-m3.md (drill recipe).
 
 ### WU-040 · M3-gate fix: LOW bundle (parse/backfill/job_id) — S · `done (2026-07-16, s26)`
 The three re-graded-down LOWs (gate items 5, 6, 7) — real, cheap, each needs a dev-only
@@ -987,8 +987,8 @@ TTL + is auditable — likely the lock table).
 **Verify:** -race contention tests (N goroutines Start same instance → 1 success + N-1
 conflict; TTL reap; self-target refusal); golden flow green; `npm run check` green. — DONE.
 **Context brief:** schedule/executor.go (overlap probe :80-132), runs/service.go (Start,
-finalize, SweepOrphans), migrations head, research gotchas #1/#2 (STATE "Standing context"
-+ icebox), ARCHITECTURE §concurrency; architect-implemented (concurrency-sensitive).
+finalize, SweepOrphans), migrations head, research gotchas #1/#2 (STATE "Standing context" —
+now `docs/agent/STANDING-CONTEXT.md` — + icebox), ARCHITECTURE §concurrency; architect-implemented (concurrency-sensitive).
 **How built:** migration 0012 `instance_lock` (PK instance_id) — the ARCHITECTURE
 §concurrency TTL lock; acquire in Start's run-insert tx (conflict → tx rollback, clean 409,
 no run), release in finalize's tx (atomic w/ terminal state → every path frees it, boot
@@ -1554,7 +1554,7 @@ the WU-046/049 drill recipes.
 
 ## Icebox (ideas & discovered debt — one line each, groom later)
 
-- STATE.md diet (found s40): the file is ~88 KB / ~40k tokens because ~25 historical `Status (sNN …)` blocks + old HEADS-UPs accreted under "Now"/"Next action"/"Blocked" despite the full-rewrite rule — they duplicate JOURNAL + BACKLOG done-entries. Prune to card + current Now/Next/Blocked + Standing context (history stays in git + JOURNAL). The s40 state card bounds what the SessionStart hook injects, but a full read of STATE.md is still expensive and the Read tool cannot load it in one call.
+- **DONE s40** (88 KB → 9 KB: current state stays in STATE.md, stable facts → `docs/agent/STANDING-CONTEXT.md`, history verbatim → `docs/agent/archive/STATE-history.md`; `npm run check:state` fails STATE.md > 16 KB) — STATE.md diet (found s40): the file is ~88 KB / ~40k tokens because ~25 historical `Status (sNN …)` blocks + old HEADS-UPs accreted under "Now"/"Next action"/"Blocked" despite the full-rewrite rule — they duplicate JOURNAL + BACKLOG done-entries. Prune to card + current Now/Next/Blocked + Standing context (history stays in git + JOURNAL). The s40 state card bounds what the SessionStart hook injects, but a full read of STATE.md is still expensive and the Read tool cannot load it in one call.
 - M5-spawned (ADR-014/SPEC-050 deferrals): playbook upload/versioning/signing API (delivery v2 — v1 is git/filesystem); per-playbook RBAC (D2/D3 revisit); `ansible-runner` structured events as an opt-in manifest flag; local artifact-bytes retention owner (open q → decided at WU-055); OpenBao vault integration (the ADR-004 commitment — now has ONE obvious integration point); dry-run/`--check` button (research module 14, cheap under the local engine); separate runner user per env class (guardrail layer 3 hardening)
 - CI: add a Postgres service to check.yml so DB-backed tests + the golden-flow e2e stop skipping there (ADR-011 gap; VM gate covers them today) — **→ WU-045**
 - Bump GH Actions action versions (checkout/setup-go/setup-node emit node20-deprecation warnings); same pass: fix setup-go cache miss (`cache-dependency-path: backend/go.sum`) — **→ WU-045**

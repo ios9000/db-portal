@@ -14,7 +14,9 @@ The checklist form of `STRATEGY.md`. Every development session follows this shap
 4. State (to the user, one paragraph): what you're doing, expected deliverable this session.
 
 Do NOT: re-read the whole docs tree, re-derive past decisions, or start by "getting an
-overview of the codebase" — the context brief exists so you don't have to.
+overview of the codebase" — the context brief exists so you don't have to. Do NOT open
+`docs/agent/archive/` or `STANDING-CONTEXT.md` at start-up: they are on-demand lookups
+(`grep` for the one fact you need), and the archive is history — never quote it as current.
 
 ## B. During work
 
@@ -33,6 +35,11 @@ overview of the codebase" — the context brief exists so you don't have to.
    evidence links kept, `UNKNOWN` stated, ≤ 5000 bytes). The card is ALSO rewritten between
    checkpoints — after any significant milestone/decision and before every handoff.
    Card owner only: fold finished `docs/agent/tasks/*.md` records in and delete them.
+   NOTHING ACCRETES in STATE.md: the finished WU's write-up goes to its JOURNAL line + BACKLOG
+   done-entry, a fact that stays true goes to `STANDING-CONTEXT.md`, and STATE.md is rewritten
+   to the new current state. The pre-commit hook runs `state-validate.sh` on this commit: it
+   checks STRUCTURE (size ≤ 16 KB, one card, required fields, task-record refs) — whether the
+   content is CURRENT is still your review against `git log` + the tree, not the script's.
 3. Append ONE line to `docs/agent/JOURNAL.md` (format in that file), including verification
    evidence if a WU was completed.
 4. If the WU is done: flip its BACKLOG.md status to `done`, set STATE.md to the next WU.

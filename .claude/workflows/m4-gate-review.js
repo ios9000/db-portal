@@ -322,7 +322,7 @@ main.go (the seed subcommand flags/wiring), backend/internal/runs/load_test.go +
 backend/internal/schedule/stampede_test.go (the harness itself), and the SPEC/doc surface:
 docs/specs/{staging-seed,concurrency-locks,load-test,maintenance}.md vs the shipped code,
 docs/DECISIONS.md (ADR-012/013), docs/ARCHITECTURE.md + docs/ROADMAP.md M4 edits,
-docs/agent/RETROSPECTIVE.md, and docs/agent/STATE.md's M4 claims.
+docs/agent/RETROSPECTIVE.md, and the M4 claims in docs/agent/archive/STATE-history.md (moved out of STATE.md, s40).
 Hunt for (SEED): a generated CSV row that \`inventory.Import\` would actually REJECT
 (so the "0 rejects" claim is false) — bad env value, a name collision, a two-platform cluster
 that self-quarantines unexpectedly, a windows-string prod row the WU-023 parser rejects;

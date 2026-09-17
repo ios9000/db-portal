@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart hook — puts the concise working-state card into Claude's context.
-# Wired in .claude/settings.json for: startup | resume | compact.
+# Wired in .claude/settings.json for: startup | resume | clear | compact.
 #
 # Contract: plain stdout of a SessionStart hook is added to the context. This script
 # ALWAYS exits 0 (a state problem is reported in the output, never as a hook failure)
@@ -8,6 +8,10 @@
 #
 # Source of truth: the STATE-CARD block at the top of docs/agent/STATE.md, plus one
 # line per parallel task record in docs/agent/tasks/. Rules: CLAUDE.md "State card".
+# Start-up loads the card ONLY - never the history archive or the standing-context file
+# (state-validate.sh fails if this script starts reading them).
+#
+# Self-test (isolated fixtures, no tracked file is touched): bash .claude/hooks/test-harness.sh
 #
 # Pipe-test:
 #   echo '{"source":"startup"}' | CLAUDE_PROJECT_DIR="$PWD" bash .claude/hooks/session-state.sh
@@ -73,6 +77,7 @@ emit() {
   case "$src" in
     compact) echo "Context was just compacted: re-anchor on this card and run SESSION-PROTOCOL.md section D before further edits. The user's latest request in the summary still outranks the saved task." ;;
     resume) echo "Resumed session: the conversation above may be older than this card - compare it with 'Last updated'." ;;
+    clear) echo "Context was cleared by the user: treat the next message as a NEW request. The saved task below is background only - do not resume it unless the user asks." ;;
   esac
 
   state="$root/$STATE_REL"
@@ -106,9 +111,15 @@ emit() {
   last="$(git -C "$root" log -1 --format=%H -- "$STATE_REL" 2>/dev/null)"
   if [ -n "$last" ]; then
     behind="$(git -C "$root" rev-list --count "$last..HEAD" 2>/dev/null)"
-    [ "${behind:-0}" -gt 0 ] 2>/dev/null && echo "NOTE: $behind commit(s) landed after $STATE_REL was last committed - the card may lag the tree."
+    [ "${behind:-0}" -gt 0 ] 2>/dev/null && echo "HEURISTIC: $behind commit(s) landed after $STATE_REL was last committed - a hint that the card MAY lag the tree, not proof either way (code-only commits after a checkpoint are normal; a card can also be stale with 0 here)."
   fi
-  [ -n "$(git -C "$root" status --porcelain -- "$STATE_REL" 2>/dev/null)" ] && echo "NOTE: $STATE_REL has uncommitted edits."
+  [ -n "$(git -C "$root" status --porcelain -- "$STATE_REL" 2>/dev/null)" ] && echo "HEURISTIC: $STATE_REL has uncommitted edits (newer than its last commit)."
+
+  # Structure only (size, one card, required fields, task-record refs) - not currency.
+  local validator="$root/.claude/hooks/state-validate.sh"
+  if [ -f "$validator" ] && ! bash "$validator" --root "$root" --quiet >/dev/null 2>&1; then
+    echo "WARNING: $STATE_REL fails STRUCTURAL validation - run 'npm run check:state' and fix it before relying on the card."
+  fi
 
   echo
   echo "--- state card: $STATE_REL ---"
