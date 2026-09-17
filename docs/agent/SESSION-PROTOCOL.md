@@ -50,7 +50,8 @@ overview of the codebase" — the context brief exists so you don't have to. Do 
 1. Trust order: `git log`/`git diff` > STATE.md > JOURNAL.md > conversation summary.
 2. `git status` — uncommitted changes? Read the diff before touching anything; decide
    continue / commit-as-wip / discard, and journal the decision.
-3. On a `wip/` branch? STATE.md's "Resume point" says exactly where to pick up.
+3. On a `wip/` branch? The state card's **Branch** + **Next step** (detail: STATE.md "Next
+   action") say exactly where to pick up; the hook flags it if the card names another branch.
 4. If STATE.md contradicts the tree (says WU done but code absent, etc.): believe the tree,
    fix STATE.md, journal the discrepancy — that's a protocol failure worth recording.
 

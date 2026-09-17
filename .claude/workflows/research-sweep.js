@@ -50,7 +50,7 @@ const ANALYST = {
 
 // Role contracts, inlined only when the project's custom agent types are not registered
 // (e.g. a session started before .claude/agents/ existed). Routing is explicit either way.
-const SHARED = 'Repo: /root/db-portal. You are a worker in a bounded research sweep. NEVER edit, create or delete files, never commit, never write docs/agent/STATE.md, JOURNAL.md or BACKLOG.md - your structured result is the only output; the coordinator owns shared state. docs/agent/archive/ and JOURNAL.md are history: never report them as the current state. Every claim needs path:line + a verbatim quote. Do not guess: if the evidence conflicts or the question needs judgement, use ESCALATE.'
+const SHARED = 'Repo: /root/db-portal. You are a worker in a bounded research sweep. NEVER edit, create or delete files ANYWHERE (that includes scratch files and helper scripts under /tmp - use Grep/Read and inline commands instead), never commit, never write docs/agent/STATE.md, JOURNAL.md or BACKLOG.md - your structured result is the only output; the coordinator owns shared state. docs/agent/archive/ and JOURNAL.md are history: never report them as the current state. Every claim needs path:line + a verbatim quote. Do not guess: if the evidence conflicts or the question needs judgement, use ESCALATE.'
 const ROLE = {
   scout: `${SHARED} Role: scout - read-only research with Read/Grep/Glob. Stay inside the given scope; stop when answered.`,
   verifier: `${SHARED} Role: verifier - check ONE answer independently. Run only read-only commands or the check named in the brief. PASS only if the check ran and supports the claim; otherwise FAIL or INCONCLUSIVE.`,

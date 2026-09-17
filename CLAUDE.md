@@ -84,7 +84,7 @@ Full ritual: `docs/agent/SESSION-PROTOCOL.md`. Strategy rationale: `docs/agent/S
   everything, including "unrelated" WUs.
 - **Small commits, always shippable.** Commit at every green state. Never leave a session with
   uncommitted work — if forced to stop mid-WU, commit to a `wip/WU-xxx` branch and record the
-  exact resume point in STATE.md.
+  exact resume point in STATE.md (the card's **Branch** + **Next step**).
 - **Secrets never enter the repo, the portal DB, or logs.** Dev credentials live in
   `.env` (gitignored); `.env.example` documents shape only.
 
